@@ -63,6 +63,17 @@ object Store {
             save(state.value)
         }
         if (state.value.version < 3) { state.value = state.value.migrateToV3(); save(state.value) }
+        val aiTypes = listOf("ai_antigravity", "ai_codex", "ai_grok", "ai_grok_bot")
+        val cleaned = state.value.items.filterNot { it.type == "ai_usage" }
+        if (cleaned.none { it.type in aiTypes }) {
+            state.value = state.value.copy(
+                items = cleaned + aiTypes.map { ItemConfig(newId(), it, Section.SHOWN) }
+            )
+            save(state.value)
+        } else if (cleaned.size != state.value.items.size) {
+            state.value = state.value.copy(items = cleaned)
+            save(state.value)
+        }
         if (raw == null) save(state.value)
     }
 
@@ -165,6 +176,10 @@ object Defaults {
             ItemConfig(Store.newId(), "calendar", Section.SHOWN, display = Display.ICON),
             ItemConfig(Store.newId(), "timer", Section.SHOWN, display = Display.ICON),
             ItemConfig(Store.newId(), "caffeine", Section.SHOWN, display = Display.ICON),
+            ItemConfig(Store.newId(), "ai_antigravity", Section.SHOWN),
+            ItemConfig(Store.newId(), "ai_codex", Section.SHOWN),
+            ItemConfig(Store.newId(), "ai_grok", Section.SHOWN),
+            ItemConfig(Store.newId(), "ai_grok_bot", Section.SHOWN),
         ),
     )
 }

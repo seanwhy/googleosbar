@@ -674,4 +674,32 @@
         <item quantity="one">+%1$d more</item>
         <item quantity="other">+%1$d more</item>
     </plurals>
+    <!-- AI usage -->
+    <string name="item_ai_usage_title">AI usage</string>
+    <string name="item_ai_usage_desc">Antigravity, Codex &amp; Grok quotas</string>
+    <string name="trigger_ai_usage">Show when AI quota usage is above %1$s</string>
+    <string name="trigger_ai_usage_short">Above %1$s</string>
+    <string name="ai_usage_waiting">Waiting for probe snapshot…</string>
+    <string name="ai_usage_status">Status</string>
+    <string name="ai_usage_subtitle">Quotas &amp; Rolling Limits</string>
+    <string name="ai_usage_state_desc">AI usage: %1$s</string>
+    <string name="ai_usage_antigravity_claude">Claude in Antigravity</string>
+    <string name="ai_usage_antigravity_gemini">Gemini in Antigravity</string>
+    <string name="ai_usage_5h_limit">5-Hour limit</string>
+    <string name="ai_usage_weekly_limit">Weekly limit</string>
+    <string name="ai_usage_unlimited">Active / Normal</string>
+    <string name="ai_usage_codex">Codex (%1$s)</string>
+    <string name="ai_usage_grok">Grok (%1$s)</string>
+    <string name="ai_usage_cycle">Cycle usage</string>
+    <string name="ai_usage_today_tokens">Today tokens</string>
+    <string name="ai_usage_options_path">Snapshot file path</string>
+    <string name="ai_usage_options_path_help">Optional custom path to ai_usage_snapshot.json</string>
+    <string name="item_ai_antigravity_title">Antigravity</string>
+    <string name="item_ai_antigravity_desc">Antigravity 5h &amp; weekly remaining quota ring</string>
+    <string name="item_ai_codex_title">Codex</string>
+    <string name="item_ai_codex_desc">OpenAI Codex 5h &amp; weekly remaining quota ring</string>
+    <string name="item_ai_grok_title">Grok</string>
+    <string name="item_ai_grok_desc">Grok weekly remaining quota ring</string>
+    <string name="item_ai_grok_bot_title">Grok Bot</string>
+    <string name="item_ai_grok_bot_desc">Grok Bot independent remaining quota ring</string>
 </resources>

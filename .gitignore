@@ -9,3 +9,5 @@ local.properties
 app/build/
 executables/
 __pycache__/
+ai_usage_snapshot.json
+*.tmp

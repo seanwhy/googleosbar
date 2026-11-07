@@ -12,8 +12,8 @@ android {
         applicationId = "com.meridian11.books.bentobar"
         minSdk = 34
         targetSdk = 37
-        versionCode = 21
-        versionName = "1.7.1"
+        versionCode = 23
+        versionName = "1.7.3"
     }
 
     // Release signing from ~/.config/bentobar (never committed). Absent -> unsigned release build.
@@ -69,4 +69,16 @@ dependencies {
     implementation(libs.androidx.compose.ui.tooling.preview)
     debugImplementation(libs.androidx.compose.ui.tooling)
     testImplementation("junit:junit:4.13.2")
+}
+
+val copyDebugApkToDownload by tasks.registering(Copy::class) {
+    from(layout.buildDirectory.dir("outputs/apk/debug")) {
+        include("*.apk")
+    }
+    into(rootProject.projectDir.resolve("../Download"))
+    rename("app-debug.apk", "BentoBar-debug.apk")
+}
+
+tasks.matching { it.name == "assembleDebug" || it.name == "packageDebug" }.configureEach {
+    finalizedBy(copyDebugApkToDownload)
 }

@@ -94,6 +94,7 @@ import com.meridian11.books.bentobar.data.TextSize
 import com.meridian11.books.bentobar.items.BarRoute
 import com.meridian11.books.bentobar.items.BarSlider
 import com.meridian11.books.bentobar.items.ItemState
+import com.meridian11.books.bentobar.items.QuotaRing
 import com.meridian11.books.bentobar.items.Stands
 import com.meridian11.books.bentobar.items.Tone
 import com.meridian11.books.bentobar.util.Fonts
@@ -566,8 +567,9 @@ private fun ItemView(entry: StripEntry, look: StripLook, events: StripEvents, gl
     }
     val rtl = androidx.compose.ui.platform.LocalLayoutDirection.current == LayoutDirection.Rtl
     val context by rememberUpdatedState { events.context(entry.item, bounds) }
-    val showIcon = route == null && (display != Display.TEXT || s.text.isNullOrEmpty())
-    val showText = slider == null && display != Display.ICON && !s.text.isNullOrEmpty()
+    val quotaRing = s.quotaRing?.takeIf { display != Display.ICON }
+    val showIcon = route == null && (display != Display.TEXT || (s.text.isNullOrEmpty() && quotaRing == null))
+    val showText = slider == null && quotaRing == null && display != Display.ICON && !s.text.isNullOrEmpty()
     Row(
         Modifier.fillMaxHeight()
             // The slot is read during placement (before this frame draws), the bounds after layout.
@@ -651,7 +653,12 @@ private fun ItemView(entry: StripEntry, look: StripLook, events: StripEvents, gl
                 SymIcon(s.icon, size = look.iconSp, filled = s.filled, color = color)
             }
         }
-        if (showIcon && (showText || slider != null) && (s.image != null || !s.icon.isNullOrEmpty())) Spacer(Modifier.width(5.dp))
+        if (showIcon && (showText || slider != null || quotaRing != null) && (s.image != null || !s.icon.isNullOrEmpty())) {
+            Spacer(Modifier.width(if (quotaRing != null) 3.5.dp else 5.dp))
+        }
+        if (quotaRing != null) {
+            QuotaRingBadge(quotaRing, look.iconSp, look.fg, look.lightText)
+        }
         if (slider != null) {
             VolumeTrack(slider, held, handle = hovered || held != null, look = look, rtl = rtl,
                 modifier = if (!events.slidable) Modifier
@@ -956,5 +963,93 @@ private fun DayBadge(day: Int, size: TextUnit, fg: Color, bg: Color) {
         Text("$day", color = bg.copy(alpha = 1f), maxLines = 1,
             style = TextStyle(fontFamily = Fonts.bar, fontSize = (size.value * 0.68f).sp, lineHeight = (size.value * 0.68f).sp,
                 fontWeight = androidx.compose.ui.text.font.FontWeight.Bold, fontFeatureSettings = "tnum"))
+    }
+}
+
+/**
+ * Option C: Concentric Dual-Track Progress Ring with centered remaining percentage number.
+ * Outer ring represents weekly remaining percentage; optional inner ring represents 5-hour remaining percentage.
+ */
+@Composable
+private fun QuotaRingBadge(ring: QuotaRing, iconSp: TextUnit, fg: Color, lightText: Boolean = true) {
+    val boxSize = (iconSp.value + 7.5f).dp
+    val pct = ring.outerPercent.coerceIn(0, 100)
+    val innerPct = ring.innerPercent?.coerceIn(0, 100)
+    val lowOuter = pct <= 20
+    val lowInner = innerPct != null && innerPct <= 20
+    val warnPink = if (lightText) Color(0xFFFF4D94) else Color(0xFFD81B60)
+    val outerColor = if (lowOuter) warnPink else fg
+    val innerColor = if (lowInner) warnPink else fg.copy(alpha = 0.78f)
+    val fontScale = when {
+        pct >= 100 -> 0.44f
+        innerPct != null -> 0.50f
+        else -> 0.55f
+    }
+    Box(Modifier.size(boxSize), contentAlignment = Alignment.Center) {
+        Canvas(Modifier.size(boxSize)) {
+            val outerStroke = 1.9.dp.toPx()
+            val outerRadius = (size.minDimension - outerStroke) / 2f
+            val centerOffset = Offset(size.width / 2f, size.height / 2f)
+
+            // Outer track & progress arc (Weekly remaining)
+            drawCircle(
+                color = outerColor.copy(alpha = 0.22f),
+                radius = outerRadius,
+                center = centerOffset,
+                style = androidx.compose.ui.graphics.drawscope.Stroke(width = outerStroke)
+            )
+            if (pct > 0) {
+                drawArc(
+                    color = outerColor,
+                    startAngle = -90f,
+                    sweepAngle = 360f * (pct / 100f),
+                    useCenter = false,
+                    topLeft = Offset(centerOffset.x - outerRadius, centerOffset.y - outerRadius),
+                    size = Size(outerRadius * 2f, outerRadius * 2f),
+                    style = androidx.compose.ui.graphics.drawscope.Stroke(
+                        width = outerStroke,
+                        cap = androidx.compose.ui.graphics.StrokeCap.Round
+                    )
+                )
+            }
+
+            // Inner track & progress arc (5-Hour remaining)
+            if (innerPct != null) {
+                val innerStroke = 1.15.dp.toPx()
+                val innerRadius = outerRadius - outerStroke / 2f - 1.05.dp.toPx() - innerStroke / 2f
+                drawCircle(
+                    color = innerColor.copy(alpha = 0.20f),
+                    radius = innerRadius,
+                    center = centerOffset,
+                    style = androidx.compose.ui.graphics.drawscope.Stroke(width = innerStroke)
+                )
+                if (innerPct > 0) {
+                    drawArc(
+                        color = innerColor,
+                        startAngle = -90f,
+                        sweepAngle = 360f * (innerPct / 100f),
+                        useCenter = false,
+                        topLeft = Offset(centerOffset.x - innerRadius, centerOffset.y - innerRadius),
+                        size = Size(innerRadius * 2f, innerRadius * 2f),
+                        style = androidx.compose.ui.graphics.drawscope.Stroke(
+                            width = innerStroke,
+                            cap = androidx.compose.ui.graphics.StrokeCap.Round
+                        )
+                    )
+                }
+            }
+        }
+        Text(
+            text = "$pct",
+            color = outerColor,
+            maxLines = 1,
+            style = TextStyle(
+                fontFamily = Fonts.bar,
+                fontSize = (iconSp.value * fontScale).sp,
+                lineHeight = (iconSp.value * fontScale).sp,
+                fontWeight = androidx.compose.ui.text.font.FontWeight.Bold,
+                fontFeatureSettings = "tnum"
+            )
+        )
     }
 }

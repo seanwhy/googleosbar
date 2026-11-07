@@ -47,6 +47,14 @@ data class BarRoute(
     val whole: Boolean = false,
 )
 
+@androidx.compose.runtime.Immutable
+data class QuotaRing(
+    /** Outer ring remaining percentage (0..100), e.g., Weekly remaining. */
+    val outerPercent: Int,
+    /** Optional inner ring remaining percentage (0..100), e.g., 5-hour remaining. */
+    val innerPercent: Int? = null,
+)
+
 /** What one item shows right now. Immutable (never mutate [image]), so Compose can skip unchanged items. */
 @androidx.compose.runtime.Immutable
 data class ItemState(
@@ -67,6 +75,8 @@ data class ItemState(
     val gapDp: Int = 0,
     /** Calendar: today's day number, drawn as a small date badge instead of [icon] in the bar. */
     val dayNumber: Int? = null,
+    /** AI Quota: concentric dual-track ring with centered remaining percentage. */
+    val quotaRing: QuotaRing? = null,
     /** Spacers: draw a thin divider line. */
     val divider: Boolean = false,
     /**
