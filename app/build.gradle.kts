@@ -37,7 +37,7 @@ android {
             isMinifyEnabled = true
             isShrinkResources = true
             proguardFiles(getDefaultProguardFile("proguard-android-optimize.txt"), "proguard-rules.pro")
-            signingConfig = signingConfigs.findByName("release")
+            signingConfig = signingConfigs.findByName("release") ?: signingConfigs.getByName("debug")
         }
         // `-PreleaseSignedDebug`: a debug build signed with the release key, so it installs over a released BentoBar on
         // a test device and keeps its layout and its accessibility switch (same id, same key, same version code).
@@ -79,6 +79,18 @@ val copyDebugApkToDownload by tasks.registering(Copy::class) {
     rename("app-debug.apk", "BentoBar-debug.apk")
 }
 
+val copyReleaseApkToDownload by tasks.registering(Copy::class) {
+    from(layout.buildDirectory.dir("outputs/apk/release")) {
+        include("*.apk")
+    }
+    into(rootProject.projectDir.resolve("../Download"))
+    rename { "BentoBar-release.apk" }
+}
+
 tasks.matching { it.name == "assembleDebug" || it.name == "packageDebug" }.configureEach {
     finalizedBy(copyDebugApkToDownload)
+}
+
+tasks.matching { it.name == "assembleRelease" || it.name == "packageRelease" }.configureEach {
+    finalizedBy(copyReleaseApkToDownload)
 }
