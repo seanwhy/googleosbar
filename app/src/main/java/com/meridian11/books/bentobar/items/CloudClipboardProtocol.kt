@@ -630,6 +630,7 @@ object CloudClipboardFiles {
         val unreadable: Boolean = false,
         val networkMissing: Boolean = false,
         val localPath: String? = null,
+        val sourceUri: String? = null,
         val streamProvider: (() -> InputStream)? = null,
     )
 
@@ -657,19 +658,21 @@ object CloudClipboardFiles {
         val rawPath = file.path.replace('\\', '/')
         val candidates = LinkedHashSet<String>()
         candidates.add(rawPath)
-        when {
-            rawPath.startsWith("/storage/emulated/0/") -> {
-                val rel = rawPath.removePrefix("/storage/emulated/0/")
+        val envRoot = runCatching { android.os.Environment.getExternalStorageDirectory()?.path?.trimEnd('/') }
+            .getOrNull()
+            ?.takeIf { it.isNotEmpty() }
+        val knownPrefixes = listOfNotNull(
+            "/storage/emulated/10/",
+            "/storage/emulated/0/",
+            "/sdcard/",
+            envRoot?.let { "$it/" },
+        ).distinct()
+        for (prefix in knownPrefixes) {
+            if (rawPath.startsWith(prefix)) {
+                val rel = rawPath.removePrefix(prefix)
                 candidates.add("/storage/emulated/10/$rel")
-            }
-            rawPath.startsWith("/storage/emulated/10/") -> {
-                val rel = rawPath.removePrefix("/storage/emulated/10/")
                 candidates.add("/storage/emulated/0/$rel")
-            }
-            rawPath.startsWith("/sdcard/") -> {
-                val rel = rawPath.removePrefix("/sdcard/")
-                candidates.add("/storage/emulated/10/$rel")
-                candidates.add("/storage/emulated/0/$rel")
+                if (envRoot != null) candidates.add("$envRoot/$rel")
             }
         }
         val files = candidates.map { File(it) }
@@ -1789,6 +1792,7 @@ object CloudClipboardStore {
 @Serializable
 data class RemoteDeviceNetwork(
     val name: String = "",
+    val addresses: List<String> = emptyList(),
     val ipv4: List<String> = emptyList(),
     val ipv6: List<String> = emptyList(),
     val mac: String = "",
@@ -1796,6 +1800,9 @@ data class RemoteDeviceNetwork(
 
 @Serializable
 data class RemoteDeviceInventory(
+    val hostname: String = "",
+    val os: String = "",
+    val arch: String = "",
     val networks: List<RemoteDeviceNetwork> = emptyList(),
 )
 
@@ -1810,6 +1817,7 @@ data class DirectTargetEndpoint(
 @Serializable
 data class RemoteDeviceSummary(
     val id: String = "",
+    val displayName: String = "",
     val name: String = "",
     val hostname: String = "",
     val platform: String = "",
@@ -1826,27 +1834,41 @@ data class RemoteDeviceSummary(
     val inventory: RemoteDeviceInventory = RemoteDeviceInventory(),
 ) {
     val displayTitle: String
-        get() = name.ifBlank { hostname.ifBlank { id } }
+        get() = displayName.trim().ifBlank {
+            inventory.hostname.trim().ifBlank {
+                name.trim().ifBlank {
+                    hostname.trim().ifBlank {
+                        platformLabel
+                    }
+                }
+            }
+        }
 
     val platformLabel: String
-        get() = when {
-            platform.equals("windows", ignoreCase = true) || os.contains("windows", ignoreCase = true) -> "Windows"
-            platform.equals("darwin", ignoreCase = true) || os.contains("mac", ignoreCase = true) || os.contains("darwin", ignoreCase = true) -> "macOS"
-            platform.equals("linux", ignoreCase = true) || os.contains("linux", ignoreCase = true) -> "Linux"
-            platform.equals("android", ignoreCase = true) || os.contains("android", ignoreCase = true) -> "Android"
-            else -> os.ifBlank { platform.ifBlank { "PC" } }
+        get() {
+            val rawOs = os.ifBlank { inventory.os }
+            return when {
+                platform.equals("windows", ignoreCase = true) || rawOs.contains("windows", ignoreCase = true) -> "Windows"
+                platform.equals("darwin", ignoreCase = true) || rawOs.contains("mac", ignoreCase = true) || rawOs.contains("darwin", ignoreCase = true) -> "macOS"
+                platform.equals("linux", ignoreCase = true) || rawOs.contains("linux", ignoreCase = true) -> "Linux"
+                platform.equals("android", ignoreCase = true) || rawOs.contains("android", ignoreCase = true) -> "Android"
+                else -> rawOs.ifBlank { platform.ifBlank { "PC" } }
+            }
         }
 
     val isDesktopTarget: Boolean
-        get() = !revoked && !platform.equals("android", ignoreCase = true) && !os.contains("android", ignoreCase = true)
+        get() {
+            val rawOs = os.ifBlank { inventory.os }
+            return !revoked && !platform.equals("android", ignoreCase = true) && !rawOs.contains("android", ignoreCase = true)
+        }
 
     val lanIpv4Addresses: List<String>
         get() {
             val out = LinkedHashSet<String>()
             for (net in inventory.networks) {
-                for (raw in net.ipv4) {
+                for (raw in (net.ipv4 + net.addresses)) {
                     val ip = raw.substringBefore('/').trim()
-                    if (ip.isNotEmpty() && !ip.startsWith("127.") && !ip.startsWith("169.254.")) {
+                    if (ip.isNotEmpty() && !ip.contains(':') && !ip.startsWith("127.") && !ip.startsWith("169.254.")) {
                         out.add(ip)
                     }
                 }

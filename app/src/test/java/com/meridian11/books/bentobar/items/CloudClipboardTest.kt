@@ -724,23 +724,23 @@ class CloudClipboardTest {
                 },
                 {
                   "id": "win-pc-1",
-                  "name": "Workstation",
-                  "hostname": "WORKSTATION",
+                  "displayName": "Workstation",
                   "platform": "windows",
-                  "os": "windows",
+                  "os": "Windows 10 Pro",
                   "sourceIp": "198.51.100.10",
                   "online": true,
                   "directPort": 19878,
                   "keyboardActive": true,
                   "inventory": {
+                    "hostname": "WORKSTATION",
                     "networks": [
-                      {"name": "eth0", "ipv4": ["192.168.1.50/24", "127.0.0.1/8"]}
+                      {"name": "eth0", "addresses": ["192.168.1.50/24", "127.0.0.1/8", "fe80::1"]}
                     ]
                   }
                 },
                 {
                   "id": "revoked-pc",
-                  "name": "Old PC",
+                  "displayName": "Old PC",
                   "platform": "windows",
                   "revoked": true
                 }
@@ -752,6 +752,7 @@ class CloudClipboardTest {
         assertEquals(1, parsed.size)
         val win = parsed[0]
         assertEquals("win-pc-1", win.id)
+        assertEquals("Workstation", win.displayTitle)
         assertEquals("Windows", win.platformLabel)
         assertTrue(win.isDesktopTarget)
         assertEquals(listOf("192.168.1.50"), win.lanIpv4Addresses)
@@ -904,6 +905,33 @@ class CloudClipboardTest {
         )
         assertNotNull(fileProviderUri)
         assertTrue(fileProviderUri!!.path.endsWith("/Codes/test.txt"))
+
+        val tempFile = java.io.File.createTempFile("refresh-perm-", ".txt")
+        try {
+            tempFile.writeText("after-permission-grant")
+            val unreadableBeforeGrant = CloudClipboardFiles.ClipboardFileSource(
+                displayName = tempFile.name,
+                size = 0L,
+                exists = false,
+                unreadable = true,
+                localPath = tempFile.absolutePath,
+                sourceUri = "content://com.android.providers.downloads.documents/document/msf%3A99999",
+                streamProvider = null,
+            )
+            val beforePlan = CloudClipboardFiles.planSources(listOf(unreadableBeforeGrant))
+            assertTrue(beforePlan.accepted.isEmpty())
+
+            val refreshedAfterGrant = CloudClipboardItem.fileToSource(tempFile).copy(sourceUri = unreadableBeforeGrant.sourceUri)
+            assertFalse(refreshedAfterGrant.unreadable)
+            assertTrue(refreshedAfterGrant.exists)
+            assertEquals(22L, refreshedAfterGrant.size)
+            assertEquals(unreadableBeforeGrant.sourceUri, refreshedAfterGrant.sourceUri)
+            val afterPlan = CloudClipboardFiles.planSources(listOf(refreshedAfterGrant))
+            assertEquals(1, afterPlan.accepted.size)
+            assertEquals(tempFile.name, afterPlan.accepted[0].name)
+        } finally {
+            tempFile.delete()
+        }
     }
 }
 

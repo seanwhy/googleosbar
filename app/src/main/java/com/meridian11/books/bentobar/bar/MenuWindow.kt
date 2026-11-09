@@ -67,6 +67,7 @@ class MenuWindow(
 
     private val dialog = object : ComponentDialog(service, R.style.Theme_BentoBar_Menu) {
         override fun dispatchKeyEvent(event: KeyEvent): Boolean {
+            if (com.meridian11.books.bentobar.items.RemoteKeyboardItem.onKeyEvent(event)) return true
             if (event.keyCode == KeyEvent.KEYCODE_ESCAPE) {
                 if (event.action == KeyEvent.ACTION_UP) onEscape()
                 return true

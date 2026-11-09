@@ -88,6 +88,7 @@ object RemoteKeyboardItem : ItemType(
         val activeChannelLabel: String = "连接中…",
         val verifiedDirectEndpoint: DirectTargetEndpoint? = null,
         val sentKeyCount: Long = 0L,
+        val ackedKeyCount: Long = 0L,
         val lastKeyLabel: String = "",
         val targetReceiverReady: Boolean = true,
     )
@@ -113,6 +114,7 @@ object RemoteKeyboardItem : ItemType(
     @Volatile private var lastDeviceSyncMs = 0L
     @Volatile private var lastEscDownMs = 0L
     @Volatile private var consecutiveEscCount = 0
+    @Volatile private var lastHandledEventKey = ""
 
     private fun ensureInitialized() {
         if (initialized) return
@@ -232,6 +234,11 @@ object RemoteKeyboardItem : ItemType(
      */
     fun onKeyEvent(event: KeyEvent): Boolean {
         val session = activeSessionState.value ?: return false
+        if (event.eventTime > 0L) {
+            val dedupKey = "${event.action}:${event.keyCode}:${event.eventTime}:${event.repeatCount}"
+            if (dedupKey == lastHandledEventKey) return true
+            lastHandledEventKey = dedupKey
+        }
         val cfg = activeConfig()
         val exitShortcut = exitShortcutOf(cfg)
 
@@ -453,7 +460,17 @@ object RemoteKeyboardItem : ItemType(
             if (directEp != null) {
                 val ok = RemoteKeyboardClient.sendDirectUdp(directEp, payloadBytes) ||
                     RemoteKeyboardClient.sendDirectTcp(directEp, payloadBytes)
-                if (!ok) {
+                if (ok) {
+                    activeSessionState.value?.let { cur ->
+                        if (cur.target.id == session.target.id) {
+                            activeSessionState.value = cur.copy(
+                                ackedKeyCount = cur.ackedKeyCount + batch.size,
+                                activeChannelLabel = "直连 (${directEp.host}:${directEp.port})",
+                            )
+                        }
+                    }
+                    errorMessageState.value = null
+                } else {
                     errorMessageState.value = "局域网直连发送失败 (${directEp.host}:${directEp.port})"
                 }
             } else {
@@ -469,6 +486,13 @@ object RemoteKeyboardItem : ItemType(
             RemoteKeyboardClient.sendDirectUdp(directEp, payloadBytes)
             if (session.verifiedDirectEndpoint != null) {
                 if (RemoteKeyboardClient.sendDirectTcp(directEp, payloadBytes)) {
+                    activeSessionState.value?.let { cur ->
+                        if (cur.target.id == session.target.id) {
+                            activeSessionState.value = cur.copy(
+                                ackedKeyCount = cur.ackedKeyCount + batch.size,
+                            )
+                        }
+                    }
                     return
                 }
                 // Direct TCP dropped: clear verified endpoint and fall back to VPS relay
@@ -491,12 +515,13 @@ object RemoteKeyboardItem : ItemType(
                     val label = if (cur.verifiedDirectEndpoint != null) {
                         cur.activeChannelLabel
                     } else if (reply.targetReceiverReady) {
-                        "VPS 极速中转"
+                        "VPS 极速中转 (对端已连接)"
                     } else {
-                        "VPS 中转 (对端待升级接收器)"
+                        "VPS 中转 (等待对端轮询)"
                     }
                     activeSessionState.value = cur.copy(
                         activeChannelLabel = label,
+                        ackedKeyCount = cur.ackedKeyCount + (reply.accepted.takeIf { it > 0 } ?: batch.size),
                         targetReceiverReady = reply.targetReceiverReady,
                     )
                 }
@@ -642,7 +667,7 @@ object RemoteKeyboardItem : ItemType(
         val subtitle = when {
             session != null -> "映射中 → ${session!!.target.displayTitle} · ${session!!.activeChannelLabel}"
             loading -> "正在从 vps.why.band 同步设备列表…"
-            id.isRegistered -> "已连接 (${id.displayName.ifBlank { id.deviceId }}) · 退出键 ${exitShortcut.format()}"
+            id.isRegistered -> "已连接 (${id.displayName.ifBlank { "本机" }}) · 退出键 ${exitShortcut.format()}"
             else -> "未注册设备 · 请先在设置或云剪切板中绑定 VPS"
         }
 
@@ -694,6 +719,8 @@ object RemoteKeyboardItem : ItemType(
                                     append(active.activeChannelLabel)
                                     append(" · 已发 ")
                                     append(active.sentKeyCount)
+                                    append(" / 已达 ")
+                                    append(active.ackedKeyCount)
                                     append(" 键")
                                     if (active.lastKeyLabel.isNotBlank()) {
                                         append(" (")
@@ -849,25 +876,13 @@ object RemoteKeyboardItem : ItemType(
             }
 
             MenuDivider()
-            MenuEntry(
-                icon = Sym.CONTENT_COPY,
-                label = "复制 Windows 接收端一键升级命令",
-                sub = "在目标 Windows 电脑的管理员 PowerShell 中运行一次即可启用键盘接收与局域网直连",
-            ) {
-                val baseUrl = id.vpsUrl.ifBlank { CloudClipboardProtocol.DEFAULT_VPS_URL }.trimEnd('/')
-                val cmd = "irm $baseUrl/download/update-keyboard-windows.ps1 | iex"
-                runCatching {
-                    val cm = Env.app.getSystemService(ClipboardManager::class.java)
-                    cm?.setPrimaryClip(android.content.ClipData.newPlainText("NetTransfer Keyboard Update", cmd))
-                }
-                // Also push to Cloud Clipboard if registered so the user can paste it right on Windows!
-                if (id.isRegistered) {
-                    deviceExecutor.execute {
-                        runCatching { CloudClipboardClient.pushText(id, cmd) }
-                    }
-                    toastOnMain("已复制升级命令并同步到云剪切板，可在 Windows 直接粘贴运行")
-                } else {
-                    toastOnMain("已复制 Windows 升级命令到本机剪贴板")
+            if (session != null) {
+                MenuEntry(
+                    icon = Sym.BOLT,
+                    label = "一键发送测试按键 (\"ok\") 到 ${session!!.target.displayTitle}",
+                    sub = "用于排查链路：在对端打开记事本，点击此项应立即键入 ok",
+                ) {
+                    sendTextAsKeystrokes("ok")
                 }
             }
             MenuEntry(
@@ -1030,7 +1045,7 @@ object RemoteKeyboardItem : ItemType(
             Spacer(Modifier.height(4.dp))
             InfoRow(
                 label = "VPS 凭证状态",
-                value = if (id.isRegistered) "已注册 (${id.displayName} · ID ${id.deviceId.take(10)})" else "未注册设备",
+                value = if (id.isRegistered) "已注册 (${id.displayName.ifBlank { "本机" }})" else "未注册设备",
                 valueColor = if (id.isRegistered) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant,
             )
             InfoRow(

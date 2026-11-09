@@ -70,6 +70,11 @@ class BarService : AccessibilityService() {
     override fun onServiceConnected() {
         Env.init(this)
         Env.service = this
+        runCatching {
+            serviceInfo = serviceInfo?.apply {
+                flags = flags or android.accessibilityservice.AccessibilityServiceInfo.FLAG_REQUEST_FILTER_KEY_EVENTS
+            }
+        }
         bar?.stop() // connected again without an unbind: the old strip's windows mustn't stay up
         bar = BarController(this).also { it.start() }
         Chips.update(this)
@@ -981,12 +986,23 @@ class BarController(private val service: AccessibilityService) {
                 strip.relayout()
             }
             main.postDelayed({
-                val snapshot = CloudClipboardItem.readLocalClipboardSnapshot()
-                if (strip.shown && hadNotFocusable) {
-                    strip.params.flags = originalFlags
-                    strip.relayout()
+                val firstSnapshot = CloudClipboardItem.readLocalClipboardSnapshot()
+                if (!firstSnapshot.isEmpty) {
+                    if (strip.shown && hadNotFocusable) {
+                        strip.params.flags = originalFlags
+                        strip.relayout()
+                    }
+                    CloudClipboardItem.pushCapturedClip(firstSnapshot, fromShortcut = true)
+                } else {
+                    main.postDelayed({
+                        val secondSnapshot = CloudClipboardItem.readLocalClipboardSnapshot()
+                        if (strip.shown && hadNotFocusable) {
+                            strip.params.flags = originalFlags
+                            strip.relayout()
+                        }
+                        CloudClipboardItem.pushCapturedClip(secondSnapshot, fromShortcut = true)
+                    }, 120L)
                 }
-                CloudClipboardItem.pushCapturedClip(snapshot, fromShortcut = true)
             }, 100L)
         }, copySettleMs)
     }
