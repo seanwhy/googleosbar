@@ -96,7 +96,7 @@ fun AddPage(onAdded: (String) -> Unit) {
     val groups = listOf(
         AddGroup(R.string.add_group_system, listOf("cpu", "network", "memory", "battery", "storage", "heat", "devices", "displays")),
         AddGroup(R.string.add_group_time, listOf("calendar", "event", "clock", "timer", "countdown")),
-        AddGroup(R.string.add_group_tools, listOf("caffeine", "media", "sound", "clipboard", "tools", "ai_antigravity", "ai_codex", "ai_grok", "ai_grok_bot", "shortcut", "folder", "app", "text", "spacer")),
+        AddGroup(R.string.add_group_tools, listOf("caffeine", "media", "sound", "clipboard", "cloud_clipboard", "remote_keyboard", "tools", "ai_antigravity", "ai_codex", "ai_grok", "ai_grok_bot", "shortcut", "folder", "app", "text", "spacer")),
         // The only items that go online, in a group that says so.
         AddGroup(R.string.add_group_online, listOf("weather", "air", "flight", "stocks", "fx"), caption = R.string.add_group_online_caption),
     )
@@ -345,6 +345,14 @@ fun SetupPage(activity: Activity, setup: SetupState, onTurnOn: () -> Unit) {
             OnlineSwitch(Online.Service.FRANKFURTER, online, stringResource(R.string.setup_online_fx), stringResource(R.string.setup_online_fx_first))
             Text(stringResource(R.string.setup_online_off_note), style = MaterialTheme.typography.bodySmall,
                 color = MaterialTheme.colorScheme.onSurfaceVariant)
+        }
+        Step(9, "文件读取权限（云剪切板上传文件）", setup.fileAccess, optional = true) {
+            Body("授予「所有文件访问权限」后，云剪切板可直接读取并上传您在文件管理器中复制的任意本地文件。")
+            if (setup.fileAccess) {
+                StepLink(stringResource(R.string.setup_open_setting)) { MainActivity.requestFilePermissions(activity) }
+            } else {
+                StepAction(stringResource(R.string.setup_turn_on)) { MainActivity.requestFilePermissions(activity) }
+            }
         }
     }
 }

@@ -28,6 +28,8 @@ data class SetupState(
     val mediaAccess: Boolean = false,
     /** Optional: Android's approximate location, which Weather's My location needs. */
     val location: Boolean = false,
+    /** Optional: All files access, for Cloud Clipboard local file upload. */
+    val fileAccess: Boolean = false,
     /** Installed from a download: Android guards the accessibility and notification access switches until they are allowed in App info. */
     val sideloaded: Boolean = false,
 )
@@ -58,6 +60,7 @@ object Setup {
             usageAccess = Usage.granted(app),
             mediaAccess = MediaAccess.granted(app),
             location = app.checkSelfPermission(Manifest.permission.ACCESS_COARSE_LOCATION) == PackageManager.PERMISSION_GRANTED,
+            fileAccess = com.meridian11.books.bentobar.items.CloudClipboardItem.hasAllFilesAccess(app),
             sideloaded = Env.sideloaded(),
         )
         // A running timer's alarm is exact only while exact alarms are allowed and used: follow a change.

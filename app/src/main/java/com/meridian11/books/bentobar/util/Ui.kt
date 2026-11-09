@@ -163,6 +163,113 @@ fun SymIcon(
                         cap = StrokeCap.Round
                     )
                 }
+                "brand:cloud_clipboard" -> {
+                    // Clipboard board outline
+                    drawRoundRect(
+                        color = color,
+                        topLeft = Offset(4.5f * s, 4.6f * s),
+                        size = Size(15f * s, 16.8f * s),
+                        cornerRadius = CornerRadius(2.6f * s, 2.6f * s),
+                        style = Stroke(width = 2.0f * s)
+                    )
+                    // Top clipboard clamp
+                    drawRoundRect(
+                        color = color,
+                        topLeft = Offset(8.5f * s, 2.1f * s),
+                        size = Size(7f * s, 3.4f * s),
+                        cornerRadius = CornerRadius(1.5f * s, 1.5f * s)
+                    )
+                    // Upward transfer arrow (left)
+                    drawLine(
+                        color = color,
+                        start = Offset(9.5f * s, 17.2f * s),
+                        end = Offset(9.5f * s, 9.6f * s),
+                        strokeWidth = 1.9f * s,
+                        cap = StrokeCap.Round
+                    )
+                    drawLine(
+                        color = color,
+                        start = Offset(7.5f * s, 11.7f * s),
+                        end = Offset(9.5f * s, 9.5f * s),
+                        strokeWidth = 1.9f * s,
+                        cap = StrokeCap.Round
+                    )
+                    drawLine(
+                        color = color,
+                        start = Offset(11.5f * s, 11.7f * s),
+                        end = Offset(9.5f * s, 9.5f * s),
+                        strokeWidth = 1.9f * s,
+                        cap = StrokeCap.Round
+                    )
+                    // Downward transfer arrow (right)
+                    drawLine(
+                        color = color,
+                        start = Offset(14.5f * s, 9.6f * s),
+                        end = Offset(14.5f * s, 17.2f * s),
+                        strokeWidth = 1.9f * s,
+                        cap = StrokeCap.Round
+                    )
+                    drawLine(
+                        color = color,
+                        start = Offset(12.5f * s, 15.1f * s),
+                        end = Offset(14.5f * s, 17.3f * s),
+                        strokeWidth = 1.9f * s,
+                        cap = StrokeCap.Round
+                    )
+                    drawLine(
+                        color = color,
+                        start = Offset(16.5f * s, 15.1f * s),
+                        end = Offset(14.5f * s, 17.3f * s),
+                        strokeWidth = 1.9f * s,
+                        cap = StrokeCap.Round
+                    )
+                }
+                "brand:remote_keyboard" -> {
+                    // Wireless transmit waves above the keyboard
+                    drawArc(
+                        color = color,
+                        startAngle = 215f,
+                        sweepAngle = 110f,
+                        useCenter = false,
+                        topLeft = Offset(7.2f * s, 2.0f * s),
+                        size = Size(9.6f * s, 7.6f * s),
+                        style = Stroke(width = 1.85f * s, cap = StrokeCap.Round),
+                    )
+                    drawArc(
+                        color = color,
+                        startAngle = 220f,
+                        sweepAngle = 100f,
+                        useCenter = false,
+                        topLeft = Offset(9.2f * s, 4.4f * s),
+                        size = Size(5.6f * s, 4.8f * s),
+                        style = Stroke(width = 1.85f * s, cap = StrokeCap.Round),
+                    )
+                    // Keyboard rounded chassis
+                    drawRoundRect(
+                        color = color,
+                        topLeft = Offset(2.2f * s, 8.8f * s),
+                        size = Size(19.6f * s, 12.2f * s),
+                        cornerRadius = androidx.compose.ui.geometry.CornerRadius(2.6f * s, 2.6f * s),
+                        style = Stroke(width = if (filled) 2.2f * s else 1.9f * s),
+                    )
+                    // Keycap row 1
+                    val keyRadius = 1.05f * s
+                    for (cx in listOf(6.2f, 10.0f, 14.0f, 17.8f)) {
+                        drawCircle(color = color, radius = keyRadius, center = Offset(cx * s, 12.3f * s))
+                    }
+                    // Keycap row 2
+                    for (cx in listOf(6.2f, 10.0f, 14.0f, 17.8f)) {
+                        drawCircle(color = color, radius = keyRadius, center = Offset(cx * s, 15.1f * s))
+                    }
+                    // Spacebar
+                    drawLine(
+                        color = color,
+                        start = Offset(7.6f * s, 18.0f * s),
+                        end = Offset(16.4f * s, 18.0f * s),
+                        strokeWidth = 2.0f * s,
+                        cap = StrokeCap.Round,
+                    )
+                }
             }
         }
         return

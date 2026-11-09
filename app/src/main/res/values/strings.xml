@@ -702,4 +702,14 @@
     <string name="item_ai_grok_desc">Grok weekly remaining quota ring</string>
     <string name="item_ai_grok_bot_title">Grok Bot</string>
     <string name="item_ai_grok_bot_desc">Grok Bot independent remaining quota ring</string>
+    <!-- Cloud clipboard -->
+    <string name="item_cloud_clipboard_title">云剪切板</string>
+    <string name="item_cloud_clipboard_desc">快捷键一键复制所选内容上传云服务器，点击气泡快捷收发云端剪切板</string>
+    <string name="trigger_cloud_clipboard">当云剪切板已连接或有云端内容时显示</string>
+    <string name="trigger_cloud_clipboard_short">有云端内容时</string>
+    <!-- Remote keyboard mapping -->
+    <string name="item_remote_keyboard_title">远程键盘映射</string>
+    <string name="item_remote_keyboard_desc">一键接管本机键盘并原封不动控制远端电脑（直连/VPS 中转，按组合键或点状态栏退出）</string>
+    <string name="trigger_remote_keyboard">当远程键盘映射正在进行时显示</string>
+    <string name="trigger_remote_keyboard_short">键盘映射开启时</string>
 </resources>

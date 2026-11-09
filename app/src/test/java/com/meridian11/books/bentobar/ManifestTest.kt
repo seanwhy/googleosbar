@@ -44,6 +44,12 @@ class ManifestTest {
             "android.permission.SCHEDULE_EXACT_ALARM",
             "android.permission.QUERY_ADVANCED_PROTECTION_MODE",
             "android.permission.PACKAGE_USAGE_STATS",
+            "android.permission.MANAGE_EXTERNAL_STORAGE",
+            "android.permission.READ_EXTERNAL_STORAGE",
+            "android.permission.WRITE_EXTERNAL_STORAGE",
+            "android.permission.READ_MEDIA_IMAGES",
+            "android.permission.READ_MEDIA_VIDEO",
+            "android.permission.READ_MEDIA_AUDIO",
         ), manifest.all("uses-permission").map { it.attr("name") }.toSet())
     }
 

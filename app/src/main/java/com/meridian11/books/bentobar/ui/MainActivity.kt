@@ -80,6 +80,14 @@ class MainActivity : ComponentActivity() {
             // First opening, service still off: the disclosure comes up by itself, in the app's normal
             // use, not behind a page someone has to find. Once answered, only Turn on brings it back.
             disclosure = Store.consent.value == Store.Consent.NOT_ASKED && !serviceOn(this) && !turnedOn(this) && !Env.advancedProtection()
+            if (!disclosure && Store.config.value.items.any { it.type == "cloud_clipboard" && it.section != com.meridian11.books.bentobar.data.Section.OFF }) {
+                val missing = runtimeFilePermissions().filter {
+                    runCatching { checkSelfPermission(it) != PackageManager.PERMISSION_GRANTED }.getOrDefault(false)
+                }
+                if (missing.isNotEmpty()) {
+                    runCatching { requestPermissions(missing.toTypedArray(), 2) }
+                }
+            }
         } else {
             page = savedInstanceState.getInt(STATE_PAGE); selected = savedInstanceState.getString(STATE_SELECTED)
             disclosure = savedInstanceState.getBoolean(STATE_DISCLOSURE)
@@ -123,6 +131,19 @@ class MainActivity : ComponentActivity() {
             // Location only for a layout with an item of My location: this activity is exported, and another app's intent mustn't ask it.
             if (perm == android.Manifest.permission.ACCESS_COARSE_LOCATION && !HereRules.mayAsk(Store.config.value.items)) return@let
             if (checkSelfPermission(perm) != PackageManager.PERMISSION_GRANTED) requestPermissions(arrayOf(perm), 1)
+        }
+        if (intent.getBooleanExtra(EXTRA_REQUEST_FILES, false)) {
+            val missing = runtimeFilePermissions().filter {
+                runCatching { checkSelfPermission(it) != PackageManager.PERMISSION_GRANTED }.getOrDefault(false)
+            }
+            if (missing.isNotEmpty()) {
+                runCatching { requestPermissions(missing.toTypedArray(), 2) }
+            }
+            if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.R &&
+                !android.os.Environment.isExternalStorageManager()
+            ) {
+                openAllFilesAccess(this)
+            }
         }
         if (intent.action == "android.service.quicksettings.action.QS_TILE_PREFERENCES") page = 2
     }
@@ -265,6 +286,7 @@ class MainActivity : ComponentActivity() {
         const val EXTRA_ITEM = "item"
         const val EXTRA_EDIT = "edit"
         const val EXTRA_REQUEST = "request"
+        const val EXTRA_REQUEST_FILES = "request_files"
         private const val STATE_PAGE = "page"
         private const val STATE_SELECTED = "selected"
         private const val STATE_DISCLOSURE = "disclosure"
@@ -285,6 +307,63 @@ class MainActivity : ComponentActivity() {
             context.startActivity(Intent(context, MainActivity::class.java)
                 .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_SINGLE_TOP)
                 .putExtra(EXTRA_REQUEST, permission))
+        }
+
+        fun runtimeFilePermissions(): Array<String> =
+            if (android.os.Build.VERSION.SDK_INT >= 33) {
+                arrayOf(
+                    android.Manifest.permission.READ_MEDIA_IMAGES,
+                    android.Manifest.permission.READ_MEDIA_VIDEO,
+                    android.Manifest.permission.READ_MEDIA_AUDIO,
+                    android.Manifest.permission.READ_EXTERNAL_STORAGE,
+                )
+            } else {
+                arrayOf(
+                    android.Manifest.permission.READ_EXTERNAL_STORAGE,
+                    android.Manifest.permission.WRITE_EXTERNAL_STORAGE,
+                )
+            }
+
+        fun openAllFilesAccess(context: Context): Boolean {
+            if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.R) {
+                val pkgUri = Uri.fromParts("package", context.packageName, null)
+                val appIntent = Intent(Settings.ACTION_MANAGE_APP_ALL_FILES_ACCESS_PERMISSION, pkgUri)
+                if (Env.launch(appIntent, quiet = true)) return true
+                val allIntent = Intent(Settings.ACTION_MANAGE_ALL_FILES_ACCESS_PERMISSION)
+                if (Env.launch(allIntent, quiet = true)) return true
+            }
+            openAppInfo(context)
+            return true
+        }
+
+        fun requestFilePermissions(context: Context) {
+            val act = current
+            val perms = runtimeFilePermissions()
+            val missingRuntime = perms.filter {
+                runCatching { context.checkSelfPermission(it) != PackageManager.PERMISSION_GRANTED }.getOrDefault(false)
+            }
+            if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.R &&
+                !android.os.Environment.isExternalStorageManager()
+            ) {
+                if (act != null && missingRuntime.isNotEmpty()) {
+                    runCatching { act.requestPermissions(missingRuntime.toTypedArray(), 2) }
+                }
+                openAllFilesAccess(context)
+                return
+            }
+            if (missingRuntime.isNotEmpty()) {
+                if (act != null) {
+                    runCatching { act.requestPermissions(missingRuntime.toTypedArray(), 2) }
+                } else {
+                    context.startActivity(
+                        Intent(context, MainActivity::class.java)
+                            .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_SINGLE_TOP)
+                            .putExtra(EXTRA_REQUEST_FILES, true)
+                    )
+                }
+            } else {
+                openAllFilesAccess(context)
+            }
         }
 
         fun serviceComponent(context: Context) = ComponentName(context, BarService::class.java)

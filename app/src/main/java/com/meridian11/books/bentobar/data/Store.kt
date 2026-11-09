@@ -74,6 +74,18 @@ object Store {
             state.value = state.value.copy(items = cleaned)
             save(state.value)
         }
+        if (state.value.items.none { it.type == "cloud_clipboard" }) {
+            state.value = state.value.copy(
+                items = state.value.items + ItemConfig(newId(), "cloud_clipboard", Section.SHOWN, display = Display.ICON)
+            )
+            save(state.value)
+        }
+        if (state.value.items.none { it.type == "remote_keyboard" }) {
+            state.value = state.value.copy(
+                items = state.value.items + ItemConfig(newId(), "remote_keyboard", Section.SHOWN)
+            )
+            save(state.value)
+        }
         if (raw == null) save(state.value)
     }
 
@@ -176,6 +188,8 @@ object Defaults {
             ItemConfig(Store.newId(), "calendar", Section.SHOWN, display = Display.ICON),
             ItemConfig(Store.newId(), "timer", Section.SHOWN, display = Display.ICON),
             ItemConfig(Store.newId(), "caffeine", Section.SHOWN, display = Display.ICON),
+            ItemConfig(Store.newId(), "cloud_clipboard", Section.SHOWN, display = Display.ICON),
+            ItemConfig(Store.newId(), "remote_keyboard", Section.SHOWN),
             ItemConfig(Store.newId(), "ai_antigravity", Section.SHOWN),
             ItemConfig(Store.newId(), "ai_codex", Section.SHOWN),
             ItemConfig(Store.newId(), "ai_grok", Section.SHOWN),

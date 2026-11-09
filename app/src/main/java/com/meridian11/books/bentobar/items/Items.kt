@@ -17,7 +17,7 @@ object Items {
     val all: List<ItemType> = listOf(
         CpuItem, NetworkItem, BatteryItem, MemoryItem, StorageItem, HeatItem, DevicesItem, DisplaysItem,
         CalendarItem, EventItem, ClockItem, TimerItem, CountdownItem,
-        CaffeineItem, MediaItem, SoundItem, ClipboardItem, ToolsItem,
+        CaffeineItem, MediaItem, SoundItem, ClipboardItem, CloudClipboardItem, RemoteKeyboardItem, ToolsItem,
         AntigravityItem, CodexItem, GrokItem, GrokBotItem,
         ShortcutItem, FolderItem, AppItem, TextItem, SpacerItem,
         WeatherItem, AirItem, FlightItem, StocksItem, FxItem, AiUsageItem,

@@ -42,10 +42,13 @@ import com.meridian11.books.bentobar.data.Position
 import com.meridian11.books.bentobar.data.Section
 import com.meridian11.books.bentobar.data.Store
 import com.meridian11.books.bentobar.data.TextSize
+import android.view.accessibility.AccessibilityNodeInfo
 import com.meridian11.books.bentobar.items.Caffeine
 import com.meridian11.books.bentobar.items.Chips
+import com.meridian11.books.bentobar.items.CloudClipboardItem
 import com.meridian11.books.bentobar.items.DisplaysItem
 import com.meridian11.books.bentobar.items.Env
+import com.meridian11.books.bentobar.items.RemoteKeyboardItem
 import com.meridian11.books.bentobar.items.Items
 import com.meridian11.books.bentobar.items.MenuHost
 import com.meridian11.books.bentobar.items.Ticker
@@ -59,7 +62,7 @@ import java.util.concurrent.Executors
 /**
  * BentoBar's accessibility service. It reads only SystemUI's status bar window (layout and text
  * colour), draws BentoBar's items in overlay windows on top of it, and performs the global
- * actions of the Tools menu when asked. It doesn't observe keys, touches or other apps' windows.
+ * actions of the Tools menu when asked.
  */
 class BarService : AccessibilityService() {
     private var bar: BarController? = null
@@ -75,6 +78,7 @@ class BarService : AccessibilityService() {
     }
 
     override fun onAccessibilityEvent(event: AccessibilityEvent) { bar?.onEvent(event) }
+    override fun onKeyEvent(event: KeyEvent): Boolean = bar?.onKeyEvent(event) ?: false
     override fun onInterrupt() {}
 
     override fun onConfigurationChanged(newConfig: Configuration) {
@@ -943,6 +947,130 @@ class BarController(private val service: AccessibilityService) {
     /** See [updateAwake]. Deprecated in favor of FLAG_KEEP_SCREEN_ON, which needs a visible window. */
     @Suppress("DEPRECATION")
     private val screenLock = pm.newWakeLock(PowerManager.SCREEN_BRIGHT_WAKE_LOCK, "BentoBar:keepAwake").apply { setReferenceCounted(false) }
+
+    // ---- remote keyboard mapping & cloud clipboard shortcut ----------------------------------
+
+    fun onKeyEvent(event: KeyEvent): Boolean {
+        if (RemoteKeyboardItem.onKeyEvent(event)) return true
+        if (!CloudClipboardItem.matchesShortcut(event)) return false
+        captureSelectedTextAndPush()
+        return true
+    }
+
+    private data class SelectionCapture(
+        val directText: String?,
+        val performedCopy: Boolean,
+    )
+
+    private fun captureSelectedTextAndPush() {
+        val capture = findSelectedTextOrCopy()
+        if (!capture.directText.isNullOrBlank()) {
+            CloudClipboardItem.pushCapturedText(capture.directText, fromShortcut = true)
+            return
+        }
+        // Let the target app finish handling ACTION_COPY while it still owns window focus,
+        // then briefly make the strip focusable so Android 10+ allows reading ClipboardManager.primaryClip
+        // (including copied content:// or file:// URIs).
+        val copySettleMs = if (capture.performedCopy) 60L else 10L
+        main.postDelayed({
+            val originalFlags = strip.params.flags
+            val hadNotFocusable = (originalFlags and WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE) != 0
+            if (strip.shown && hadNotFocusable) {
+                strip.params.flags = (originalFlags and WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE.inv()) or
+                    WindowManager.LayoutParams.FLAG_NOT_TOUCH_MODAL
+                strip.relayout()
+            }
+            main.postDelayed({
+                val snapshot = CloudClipboardItem.readLocalClipboardSnapshot()
+                if (strip.shown && hadNotFocusable) {
+                    strip.params.flags = originalFlags
+                    strip.relayout()
+                }
+                CloudClipboardItem.pushCapturedClip(snapshot, fromShortcut = true)
+            }, 100L)
+        }, copySettleMs)
+    }
+
+    private fun findSelectedTextOrCopy(): SelectionCapture {
+        var extracted: String? = null
+        var copiedAny = false
+        val selectedNodes = ArrayList<AccessibilityNodeInfo>()
+
+        fun extractFromNode(node: AccessibilityNodeInfo?): Boolean {
+            if (node == null) return false
+            val start = node.textSelectionStart
+            val end = node.textSelectionEnd
+            val raw = node.text
+            if (start >= 0 && end >= 0 && start != end) {
+                val lo = minOf(start, end)
+                val hi = maxOf(start, end)
+                if (raw != null && lo >= 0 && hi <= raw.length) {
+                    val sub = raw.subSequence(lo, hi).toString().trim()
+                    if (sub.isNotEmpty() && extracted == null) {
+                        extracted = sub
+                    }
+                }
+                if (node.performAction(AccessibilityNodeInfo.ACTION_COPY)) {
+                    copiedAny = true
+                }
+                return true
+            }
+            if ((node.isSelected || node.isChecked) && selectedNodes.size < 8) {
+                selectedNodes.add(node)
+            }
+            return false
+        }
+
+        // 1. Check focused nodes first (most accurate for the active editor/browser)
+        val inputFocused = runCatching { service.findFocus(AccessibilityNodeInfo.FOCUS_INPUT) }.getOrNull()
+        val a11yFocused = runCatching { service.findFocus(AccessibilityNodeInfo.FOCUS_ACCESSIBILITY) }.getOrNull()
+        extractFromNode(inputFocused)
+        if (extracted == null) extractFromNode(a11yFocused)
+
+        // 2. Walk the accessibility node tree starting with the active/focused window first
+        val visited = HashSet<AccessibilityNodeInfo>()
+        fun walk(node: AccessibilityNodeInfo?, depth: Int) {
+            if (node == null || depth > 28 || !visited.add(node)) return
+            extractFromNode(node)
+            for (i in 0 until node.childCount) {
+                walk(runCatching { node.getChild(i) }.getOrNull(), depth + 1)
+            }
+        }
+
+        if (extracted == null) {
+            val orderedRoots = buildList {
+                runCatching { service.rootInActiveWindow }.getOrNull()?.let { add(it) }
+                val wins = runCatching { service.windows }.getOrNull().orEmpty()
+                wins.filter { it.isFocused || it.isActive }.forEach { w ->
+                    runCatching { w.root }.getOrNull()?.let { add(it) }
+                }
+                wins.filterNot { it.isFocused || it.isActive }.forEach { w ->
+                    runCatching { w.root }.getOrNull()?.let { add(it) }
+                }
+            }
+            for (root in orderedRoots) {
+                walk(root, 0)
+                if (extracted != null) break
+            }
+        }
+
+        // 3. Even if textSelectionStart/End wasn't exposed (e.g. WebView/Chrome canvas or selected file items), trigger ACTION_COPY
+        if (!copiedAny) {
+            if (inputFocused?.performAction(AccessibilityNodeInfo.ACTION_COPY) == true) {
+                copiedAny = true
+            } else if (a11yFocused?.performAction(AccessibilityNodeInfo.ACTION_COPY) == true) {
+                copiedAny = true
+            } else {
+                for (sel in selectedNodes) {
+                    if (sel.performAction(AccessibilityNodeInfo.ACTION_COPY)) {
+                        copiedAny = true
+                        break
+                    }
+                }
+            }
+        }
+        return SelectionCapture(extracted, copiedAny)
+    }
 
     // ---- tests (adb only) --------------------------------------------------------------------
 
