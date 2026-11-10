@@ -234,6 +234,20 @@ object RemoteKeyboardItem : ItemType(
         return false
     }
 
+    override val usesWheel: Boolean
+        get() = isMappingActive
+
+    override fun onScroll(item: ItemConfig, steps: Int) {
+        val session = activeSessionState.value ?: return
+        if (session.target.isMac) {
+            if (steps > 0) {
+                sendGesture("swipe_up_4")
+            } else if (steps < 0) {
+                sendGesture("swipe_down_4")
+            }
+        }
+    }
+
     /**
      * Intercepts physical keystrokes from `BarService.onKeyEvent(event)`:
      * - When mapping is inactive: checks if the pressed shortcut matches any target device's
@@ -274,11 +288,38 @@ object RemoteKeyboardItem : ItemType(
         val exitShortcut = exitShortcutOf(cfg)
 
         // Special handling for Overview / Task Switcher key when controlling macOS
-        if (session.target.isMac && (event.keyCode == KeyEvent.KEYCODE_APP_SWITCH || event.keyCode == KeyEvent.KEYCODE_WINDOW)) {
-            if (event.action == KeyEvent.ACTION_DOWN && event.repeatCount == 0) {
-                sendGesture("swipe_up_4")
+        if (session.target.isMac) {
+            val isOverviewKey = event.keyCode == KeyEvent.KEYCODE_APP_SWITCH ||
+                event.keyCode == KeyEvent.KEYCODE_WINDOW ||
+                event.keyCode == KeyEvent.KEYCODE_F5
+
+            if (isOverviewKey) {
+                if (event.action == KeyEvent.ACTION_DOWN && event.repeatCount == 0) {
+                    sendGesture("swipe_up_4")
+                }
+                return true
             }
-            return true
+
+            // Also support Alt + Arrow keys as direct macOS gestures:
+            // Alt + Up -> Mission Control (四指上推)
+            // Alt + Down -> App Exposé (四指下滑)
+            // Alt + Left -> Space Left (四指左滑)
+            // Alt + Right -> Space Right (四指右滑)
+            if (event.isAltPressed && !event.isCtrlPressed && !event.isShiftPressed) {
+                val gesture = when (event.keyCode) {
+                    KeyEvent.KEYCODE_DPAD_UP -> "swipe_up_4"
+                    KeyEvent.KEYCODE_DPAD_DOWN -> "swipe_down_4"
+                    KeyEvent.KEYCODE_DPAD_LEFT -> "space_left"
+                    KeyEvent.KEYCODE_DPAD_RIGHT -> "space_right"
+                    else -> null
+                }
+                if (gesture != null) {
+                    if (event.action == KeyEvent.ACTION_DOWN && event.repeatCount == 0) {
+                        sendGesture(gesture)
+                    }
+                    return true
+                }
+            }
         }
 
         if (event.action == KeyEvent.ACTION_DOWN) {
@@ -1294,15 +1335,19 @@ object RemoteKeyboardItem : ItemType(
 
         Spacer(Modifier.height(8.dp))
         Column(Modifier.fillMaxWidth().padding(vertical = 4.dp)) {
-            Text("触控板多指手势映射 (macOS 专属)", style = MaterialTheme.typography.labelLarge)
+            Text("macOS 专属手势与快捷触发指南", style = MaterialTheme.typography.labelLarge)
             Text(
-                text = "当接管 macOS 电脑时，触控板四指手势自动映射为 Mac 原生功能：\n" +
-                    "• 四指向上推 / Chromebook F5 窗口键 → 调度中心 (Mission Control)\n" +
-                    "• 四指向下滑 → 应用程序窗口 (App Exposé)\n" +
-                    "• 四指向左滑 → 切换到左侧桌面空间\n" +
-                    "• 四指向右滑 → 切换到右侧桌面空间\n" +
-                    "• 四指捏合 → 启动台 (Launchpad)\n" +
-                    "• 四指张开 → 显示桌面",
+                text = "接管 macOS 电脑时，可通过以下多种快捷方式触发 Mac 系统手势：\n\n" +
+                    "1. 状态栏双指滑动手势（物理触控板滑动图标）：\n" +
+                    "   • 在状态栏「远程键盘」图标上双指上滑 → 调度中心 (Mission Control)\n" +
+                    "   • 在状态栏「远程键盘」图标上双指下滑 → 应用程序窗口 (App Exposé)\n\n" +
+                    "2. 键盘专属手势键（100% 极速直达，无需切手）：\n" +
+                    "   • Alt + Up 或 笔记本 F5 窗口概览键 → 调度中心 (Mission Control)\n" +
+                    "   • Alt + Down → 应用程序窗口 (App Exposé)\n" +
+                    "   • Alt + Left → 切换到左侧桌面空间\n" +
+                    "   • Alt + Right → 切换到右侧桌面空间\n" +
+                    "   • Mac 原生 Control + 方向键 亦完全保持支持\n\n" +
+                    "3. 状态栏点击弹出菜单快捷手势按钮（一键点按触发）",
                 style = MaterialTheme.typography.bodySmall,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
             )
