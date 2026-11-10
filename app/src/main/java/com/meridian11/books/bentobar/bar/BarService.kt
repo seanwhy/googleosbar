@@ -72,8 +72,7 @@ class BarService : AccessibilityService() {
         Env.service = this
         runCatching {
             serviceInfo = serviceInfo?.apply {
-                flags = flags or android.accessibilityservice.AccessibilityServiceInfo.FLAG_REQUEST_FILTER_KEY_EVENTS or
-                    android.accessibilityservice.AccessibilityServiceInfo.FLAG_REQUEST_MULTI_FINGER_GESTURES
+                flags = flags or android.accessibilityservice.AccessibilityServiceInfo.FLAG_REQUEST_FILTER_KEY_EVENTS
             }
         }
         bar?.stop() // connected again without an unbind: the old strip's windows mustn't stay up
@@ -81,11 +80,6 @@ class BarService : AccessibilityService() {
         Chips.update(this)
         com.meridian11.books.bentobar.ui.Setup.refresh(this)
         Log.i(TAG, "service connected")
-    }
-
-    override fun onGesture(gestureEvent: android.accessibilityservice.AccessibilityGestureEvent): Boolean {
-        if (RemoteKeyboardItem.onGesture(gestureEvent.gestureId)) return true
-        return super.onGesture(gestureEvent)
     }
 
     override fun onAccessibilityEvent(event: AccessibilityEvent) { bar?.onEvent(event) }

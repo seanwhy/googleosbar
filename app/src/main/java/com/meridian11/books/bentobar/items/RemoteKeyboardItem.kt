@@ -234,20 +234,6 @@ object RemoteKeyboardItem : ItemType(
         return false
     }
 
-    override val usesWheel: Boolean
-        get() = isMappingActive
-
-    override fun onScroll(item: ItemConfig, steps: Int) {
-        val session = activeSessionState.value ?: return
-        if (session.target.isMac) {
-            if (steps > 0) {
-                sendGesture("swipe_up_4")
-            } else if (steps < 0) {
-                sendGesture("swipe_down_4")
-            }
-        }
-    }
-
     /**
      * Intercepts physical keystrokes from `BarService.onKeyEvent(event)`:
      * - When mapping is inactive: checks if the pressed shortcut matches any target device's
@@ -255,8 +241,6 @@ object RemoteKeyboardItem : ItemType(
      *   remote mapping to that device.
      * - When mapping is active: returns `true` for all keystrokes to prevent local input and
      *   forward them to the remote computer.
-     * - Intercepts the Chromebook / Android overview key (F5 / KEYCODE_APP_SWITCH) to trigger
-     *   Mission Control when controlling macOS.
      * - Checks for the exit shortcut (default `Ctrl + Alt + Q`) or rapid `Esc x 3` to exit mapping
      *   and release any held keys on the remote computer.
      */
@@ -286,41 +270,6 @@ object RemoteKeyboardItem : ItemType(
         }
         val cfg = activeConfig()
         val exitShortcut = exitShortcutOf(cfg)
-
-        // Special handling for Overview / Task Switcher key when controlling macOS
-        if (session.target.isMac) {
-            val isOverviewKey = event.keyCode == KeyEvent.KEYCODE_APP_SWITCH ||
-                event.keyCode == KeyEvent.KEYCODE_WINDOW ||
-                event.keyCode == KeyEvent.KEYCODE_F5
-
-            if (isOverviewKey) {
-                if (event.action == KeyEvent.ACTION_DOWN && event.repeatCount == 0) {
-                    sendGesture("swipe_up_4")
-                }
-                return true
-            }
-
-            // Also support Alt + Arrow keys as direct macOS gestures:
-            // Alt + Up -> Mission Control (四指上推)
-            // Alt + Down -> App Exposé (四指下滑)
-            // Alt + Left -> Space Left (四指左滑)
-            // Alt + Right -> Space Right (四指右滑)
-            if (event.isAltPressed && !event.isCtrlPressed && !event.isShiftPressed) {
-                val gesture = when (event.keyCode) {
-                    KeyEvent.KEYCODE_DPAD_UP -> "swipe_up_4"
-                    KeyEvent.KEYCODE_DPAD_DOWN -> "swipe_down_4"
-                    KeyEvent.KEYCODE_DPAD_LEFT -> "space_left"
-                    KeyEvent.KEYCODE_DPAD_RIGHT -> "space_right"
-                    else -> null
-                }
-                if (gesture != null) {
-                    if (event.action == KeyEvent.ACTION_DOWN && event.repeatCount == 0) {
-                        sendGesture(gesture)
-                    }
-                    return true
-                }
-            }
-        }
 
         if (event.action == KeyEvent.ACTION_DOWN) {
             // 1. Check primary exit shortcut (e.g. Ctrl + Alt + Q)
@@ -628,39 +577,6 @@ object RemoteKeyboardItem : ItemType(
         statusMessageState.value = "已发送文本 (${cleaned.length} 字符) 到 ${session.target.displayTitle}"
     }
 
-    fun sendGesture(gesture: String) {
-        val session = activeSessionState.value ?: return
-        val ev = RemoteKeyboardKeyMapper.createGestureEvent(eventSeq.getAndIncrement(), gesture)
-        enqueueEvent(ev, session)
-        val gestureDesc = when (gesture) {
-            "swipe_up_4", "mission_control" -> "调度中心 (四指上推)"
-            "swipe_down_4", "app_expose" -> "应用窗口 (四指下滑)"
-            "swipe_left_4", "space_left" -> "切换到左桌面 (四指左滑)"
-            "swipe_right_4", "space_right" -> "切换到右桌面 (四指右滑)"
-            "pinch_in_4", "launchpad" -> "启动台 (四指捏合)"
-            "spread_4", "show_desktop" -> "显示桌面 (四指张开)"
-            else -> gesture
-        }
-        statusMessageState.value = "已触发手势「$gestureDesc」→ ${session.target.displayTitle}"
-    }
-
-    fun onGesture(gestureId: Int): Boolean {
-        val session = activeSessionState.value ?: return false
-        val gestureName = when (gestureId) {
-            android.accessibilityservice.AccessibilityService.GESTURE_4_FINGER_SWIPE_UP,
-            android.accessibilityservice.AccessibilityService.GESTURE_3_FINGER_SWIPE_UP -> "swipe_up_4"
-            android.accessibilityservice.AccessibilityService.GESTURE_4_FINGER_SWIPE_DOWN,
-            android.accessibilityservice.AccessibilityService.GESTURE_3_FINGER_SWIPE_DOWN -> "swipe_down_4"
-            android.accessibilityservice.AccessibilityService.GESTURE_4_FINGER_SWIPE_LEFT,
-            android.accessibilityservice.AccessibilityService.GESTURE_3_FINGER_SWIPE_LEFT -> "swipe_left_4"
-            android.accessibilityservice.AccessibilityService.GESTURE_4_FINGER_SWIPE_RIGHT,
-            android.accessibilityservice.AccessibilityService.GESTURE_3_FINGER_SWIPE_RIGHT -> "swipe_right_4"
-            else -> return false
-        }
-        sendGesture(gestureName)
-        return true
-    }
-
     fun refreshDevices(quiet: Boolean = false) {
         ensureInitialized()
         refreshIdentityFromStore()
@@ -882,68 +798,6 @@ object RemoteKeyboardItem : ItemType(
                             style = MaterialTheme.typography.bodySmall,
                             color = MaterialTheme.colorScheme.onPrimaryContainer,
                         )
-                    }
-
-                    if (active.target.isMac) {
-                        Spacer(Modifier.height(8.dp))
-                        Text(
-                            text = "macOS 手势与窗口控制 (触控板四指手势亦可触发)",
-                            style = MaterialTheme.typography.labelSmall,
-                            color = MaterialTheme.colorScheme.onPrimaryContainer,
-                            fontWeight = FontWeight.SemiBold,
-                        )
-                        Spacer(Modifier.height(4.dp))
-                        Row(
-                            modifier = Modifier.fillMaxWidth(),
-                            horizontalArrangement = Arrangement.spacedBy(6.dp),
-                        ) {
-                            OutlinedButton(
-                                onClick = { sendGesture("swipe_up_4") },
-                                modifier = Modifier.weight(1f),
-                            ) {
-                                Text("调度中心 ⇡", style = MaterialTheme.typography.bodySmall, maxLines = 1)
-                            }
-                            OutlinedButton(
-                                onClick = { sendGesture("swipe_down_4") },
-                                modifier = Modifier.weight(1f),
-                            ) {
-                                Text("应用窗口 ⇣", style = MaterialTheme.typography.bodySmall, maxLines = 1)
-                            }
-                        }
-                        Row(
-                            modifier = Modifier.fillMaxWidth().padding(top = 4.dp),
-                            horizontalArrangement = Arrangement.spacedBy(6.dp),
-                        ) {
-                            OutlinedButton(
-                                onClick = { sendGesture("swipe_left_4") },
-                                modifier = Modifier.weight(1f),
-                            ) {
-                                Text("左桌面 ⇠", style = MaterialTheme.typography.bodySmall, maxLines = 1)
-                            }
-                            OutlinedButton(
-                                onClick = { sendGesture("swipe_right_4") },
-                                modifier = Modifier.weight(1f),
-                            ) {
-                                Text("右桌面 ⇢", style = MaterialTheme.typography.bodySmall, maxLines = 1)
-                            }
-                        }
-                        Row(
-                            modifier = Modifier.fillMaxWidth().padding(top = 4.dp),
-                            horizontalArrangement = Arrangement.spacedBy(6.dp),
-                        ) {
-                            OutlinedButton(
-                                onClick = { sendGesture("pinch_in_4") },
-                                modifier = Modifier.weight(1f),
-                            ) {
-                                Text("启动台", style = MaterialTheme.typography.bodySmall, maxLines = 1)
-                            }
-                            OutlinedButton(
-                                onClick = { sendGesture("spread_4") },
-                                modifier = Modifier.weight(1f),
-                            ) {
-                                Text("显示桌面", style = MaterialTheme.typography.bodySmall, maxLines = 1)
-                            }
-                        }
                     }
                 }
 
@@ -1331,26 +1185,6 @@ object RemoteKeyboardItem : ItemType(
             } else {
                 MenuNote("尚未获取到目标桌面电脑列表，请在下方刷新或配置 VPS 后再行设定快捷键。")
             }
-        }
-
-        Spacer(Modifier.height(8.dp))
-        Column(Modifier.fillMaxWidth().padding(vertical = 4.dp)) {
-            Text("macOS 专属手势与快捷触发指南", style = MaterialTheme.typography.labelLarge)
-            Text(
-                text = "接管 macOS 电脑时，可通过以下多种快捷方式触发 Mac 系统手势：\n\n" +
-                    "1. 状态栏双指滑动手势（物理触控板滑动图标）：\n" +
-                    "   • 在状态栏「远程键盘」图标上双指上滑 → 调度中心 (Mission Control)\n" +
-                    "   • 在状态栏「远程键盘」图标上双指下滑 → 应用程序窗口 (App Exposé)\n\n" +
-                    "2. 键盘专属手势键（100% 极速直达，无需切手）：\n" +
-                    "   • Alt + Up 或 笔记本 F5 窗口概览键 → 调度中心 (Mission Control)\n" +
-                    "   • Alt + Down → 应用程序窗口 (App Exposé)\n" +
-                    "   • Alt + Left → 切换到左侧桌面空间\n" +
-                    "   • Alt + Right → 切换到右侧桌面空间\n" +
-                    "   • Mac 原生 Control + 方向键 亦完全保持支持\n\n" +
-                    "3. 状态栏点击弹出菜单快捷手势按钮（一键点按触发）",
-                style = MaterialTheme.typography.bodySmall,
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
-            )
         }
 
         Spacer(Modifier.height(8.dp))
