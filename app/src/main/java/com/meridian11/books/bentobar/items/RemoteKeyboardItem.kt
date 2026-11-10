@@ -1037,9 +1037,9 @@ object RemoteKeyboardItem : ItemType(
             MenuEntry(
                 icon = Sym.CONTENT_PASTE,
                 label = "复制 macOS 接收端一键更新命令",
-                sub = "curl -fsSL https://vps.why.band/download/update-keyboard-macos.sh | bash",
+                sub = "curl -fsSL https://47.97.116.235/download/update-keyboard-macos.sh | bash",
             ) {
-                copyToClipboard("curl -fsSL https://vps.why.band/download/update-keyboard-macos.sh | bash")
+                copyToClipboard("curl -fsSL https://47.97.116.235/download/update-keyboard-macos.sh | bash")
                 toastOnMain("已复制 macOS 一键更新命令，在 Mac 终端粘贴回车即可")
             }
             MenuEntry(
