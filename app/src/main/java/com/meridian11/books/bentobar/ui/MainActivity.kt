@@ -81,11 +81,15 @@ class MainActivity : ComponentActivity() {
             // use, not behind a page someone has to find. Once answered, only Turn on brings it back.
             disclosure = Store.consent.value == Store.Consent.NOT_ASKED && !serviceOn(this) && !turnedOn(this) && !Env.advancedProtection()
             if (!disclosure && Store.config.value.items.any { it.type == "cloud_clipboard" && it.section != com.meridian11.books.bentobar.data.Section.OFF }) {
-                val missing = runtimeFilePermissions().filter {
-                    runCatching { checkSelfPermission(it) != PackageManager.PERMISSION_GRANTED }.getOrDefault(false)
-                }
-                if (missing.isNotEmpty()) {
-                    runCatching { requestPermissions(missing.toTypedArray(), 2) }
+                if (!com.meridian11.books.bentobar.items.CloudClipboardItem.hasAllFilesAccess(this)) {
+                    val missing = runtimeFilePermissions().filter {
+                        runCatching { checkSelfPermission(it) != PackageManager.PERMISSION_GRANTED }.getOrDefault(false)
+                    }
+                    if (missing.isNotEmpty()) {
+                        runCatching { requestPermissions(missing.toTypedArray(), 2) }
+                    } else if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.R) {
+                        Notice.post("云剪切板上传本地文件需开启「所有文件访问权限」", "去开启") { openAllFilesAccess(this) }
+                    }
                 }
             }
         } else {
@@ -133,16 +137,19 @@ class MainActivity : ComponentActivity() {
             if (checkSelfPermission(perm) != PackageManager.PERMISSION_GRANTED) requestPermissions(arrayOf(perm), 1)
         }
         if (intent.getBooleanExtra(EXTRA_REQUEST_FILES, false)) {
-            val missing = runtimeFilePermissions().filter {
-                runCatching { checkSelfPermission(it) != PackageManager.PERMISSION_GRANTED }.getOrDefault(false)
-            }
-            if (missing.isNotEmpty()) {
-                runCatching { requestPermissions(missing.toTypedArray(), 2) }
-            }
             if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.R &&
                 !android.os.Environment.isExternalStorageManager()
             ) {
                 openAllFilesAccess(this)
+            } else {
+                val missing = runtimeFilePermissions().filter {
+                    runCatching { checkSelfPermission(it) != PackageManager.PERMISSION_GRANTED }.getOrDefault(false)
+                }
+                if (missing.isNotEmpty()) {
+                    runCatching { requestPermissions(missing.toTypedArray(), 2) }
+                } else {
+                    openAllFilesAccess(this)
+                }
             }
         }
         if (intent.action == "android.service.quicksettings.action.QS_TILE_PREFERENCES") page = 2
@@ -177,10 +184,18 @@ class MainActivity : ComponentActivity() {
 
     override fun onRequestPermissionsResult(requestCode: Int, permissions: Array<String>, grantResults: IntArray) {
         super.onRequestPermissionsResult(requestCode, permissions, grantResults)
-        // Refused, and Android won't show its dialog again: say where it can still be allowed.
-        permissions.forEachIndexed { i, p ->
-            if (grantResults.getOrNull(i) == PackageManager.PERMISSION_DENIED && !shouldShowRequestPermissionRationale(p))
-                Notice.post(getString(R.string.setup_denied_settings), getString(R.string.common_open_settings)) { openAppInfo(this) }
+        if (requestCode == 2) {
+            if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.R &&
+                !android.os.Environment.isExternalStorageManager()
+            ) {
+                Notice.post("云剪切板上传本地文件需开启「所有文件访问权限」", "去开启") { openAllFilesAccess(this) }
+            }
+        } else {
+            // Refused, and Android won't show its dialog again: say where it can still be allowed.
+            permissions.forEachIndexed { i, p ->
+                if (grantResults.getOrNull(i) == PackageManager.PERMISSION_DENIED && !shouldShowRequestPermissionRationale(p))
+                    Notice.post(getString(R.string.setup_denied_settings), getString(R.string.common_open_settings)) { openAppInfo(this) }
+            }
         }
         Setup.refresh(this)
         // Location allowed (or not) for Weather's My location: looked at now, not at its next look.
@@ -256,8 +271,14 @@ class MainActivity : ComponentActivity() {
                             val title = type?.title.orEmpty()
                             // Added to When active, the bar looks as before: the message says when the item will show.
                             val rule = added?.takeIf { it.whenActive && it.section == com.meridian11.books.bentobar.data.Section.HIDDEN }?.let { type?.trigger?.short(it) }
-                            Notice.post(if (rule != null) getString(R.string.add_added_rule, title, rule) else getString(R.string.add_added, title),
-                                getString(R.string.bar_undo)) { Store.remove(id) }
+                            if (added?.type == "cloud_clipboard" && !com.meridian11.books.bentobar.items.CloudClipboardItem.hasAllFilesAccess(this@MainActivity)) {
+                                Notice.post("已添加云剪切板 · 上传本地文件需开启文件读取权限", "去开启") {
+                                    requestFilePermissions(this@MainActivity)
+                                }
+                            } else {
+                                Notice.post(if (rule != null) getString(R.string.add_added_rule, title, rule) else getString(R.string.add_added, title),
+                                    getString(R.string.bar_undo)) { Store.remove(id) }
+                            }
                         }
                         2 -> LookPage()
                         3 -> SetupPage(this@MainActivity, setup, onTurnOn = ::turnOn)
@@ -315,7 +336,6 @@ class MainActivity : ComponentActivity() {
                     android.Manifest.permission.READ_MEDIA_IMAGES,
                     android.Manifest.permission.READ_MEDIA_VIDEO,
                     android.Manifest.permission.READ_MEDIA_AUDIO,
-                    android.Manifest.permission.READ_EXTERNAL_STORAGE,
                 )
             } else {
                 arrayOf(
@@ -337,19 +357,16 @@ class MainActivity : ComponentActivity() {
         }
 
         fun requestFilePermissions(context: Context) {
+            if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.R &&
+                !android.os.Environment.isExternalStorageManager()
+            ) {
+                openAllFilesAccess(context)
+                return
+            }
             val act = current
             val perms = runtimeFilePermissions()
             val missingRuntime = perms.filter {
                 runCatching { context.checkSelfPermission(it) != PackageManager.PERMISSION_GRANTED }.getOrDefault(false)
-            }
-            if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.R &&
-                !android.os.Environment.isExternalStorageManager()
-            ) {
-                if (act != null && missingRuntime.isNotEmpty()) {
-                    runCatching { act.requestPermissions(missingRuntime.toTypedArray(), 2) }
-                }
-                openAllFilesAccess(context)
-                return
             }
             if (missingRuntime.isNotEmpty()) {
                 if (act != null) {

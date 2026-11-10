@@ -1112,6 +1112,34 @@ data class CloudClipboardShortcut(
             return if (sc.hasModifier) sc else DEFAULT
         }
 
+        fun parseOrNull(raw: String?): CloudClipboardShortcut? {
+            if (raw.isNullOrBlank()) return null
+            val tokens = raw.split('+', ' ')
+                .map { it.trim() }
+                .filter { it.isNotEmpty() }
+            if (tokens.isEmpty()) return null
+            var ctrl = false
+            var alt = false
+            var shift = false
+            var meta = false
+            var keyCode: Int? = null
+            for (token in tokens) {
+                when (token.uppercase(Locale.ROOT)) {
+                    "CTRL", "CONTROL" -> ctrl = true
+                    "ALT", "OPTION" -> alt = true
+                    "SHIFT" -> shift = true
+                    "META", "WIN", "SUPER", "CMD", "COMMAND", "SEARCH" -> meta = true
+                    else -> {
+                        val parsedKey = nameToKeyCode(token)
+                        if (parsedKey != null) keyCode = parsedKey
+                    }
+                }
+            }
+            val finalKey = keyCode ?: return null
+            val sc = CloudClipboardShortcut(ctrl = ctrl, alt = alt, shift = shift, meta = meta, keyCode = finalKey)
+            return sc.takeIf { it.hasModifier }
+        }
+
         fun keyCodeToName(keyCode: Int): String = when (keyCode) {
             in KeyEvent.KEYCODE_A..KeyEvent.KEYCODE_Z ->
                 ('A'.code + (keyCode - KeyEvent.KEYCODE_A)).toChar().toString()
@@ -1856,6 +1884,9 @@ data class RemoteDeviceSummary(
             }
         }
 
+    val isMac: Boolean
+        get() = platformLabel == "macOS"
+
     val isDesktopTarget: Boolean
         get() {
             val rawOs = os.ifBlank { inventory.os }
@@ -1902,7 +1933,7 @@ data class RemoteDeviceListResponse(
 @Serializable
 data class RemoteKeyboardEvent(
     val seq: Long = 0L,
-    val action: String = "down", // "down" | "up" | "release_all" | "text"
+    val action: String = "down", // "down" | "up" | "release_all" | "text" | "gesture"
     val vkCode: Int = 0,
     val scanCode: Int = 0,
     val extended: Boolean = false,
@@ -1910,6 +1941,7 @@ data class RemoteKeyboardEvent(
     val keyName: String = "",
     val metaState: Int = 0,
     val text: String = "",
+    val gesture: String = "",
     val sentAtMs: Long = 0L,
 )
 
@@ -1951,6 +1983,15 @@ object RemoteKeyboardProtocol {
         CloudClipboardShortcut(ctrl = true, alt = true, shift = false, meta = false, keyCode = KeyEvent.KEYCODE_ESCAPE),
         CloudClipboardShortcut(ctrl = true, alt = false, shift = true, meta = false, keyCode = KeyEvent.KEYCODE_Q),
         CloudClipboardShortcut(ctrl = true, alt = true, shift = false, meta = false, keyCode = KeyEvent.KEYCODE_BACKSLASH),
+    )
+
+    val DEVICE_ACTIVATION_SHORTCUT_PRESETS: List<CloudClipboardShortcut> = listOf(
+        CloudClipboardShortcut(ctrl = false, alt = true, shift = false, meta = false, keyCode = KeyEvent.KEYCODE_1),
+        CloudClipboardShortcut(ctrl = false, alt = true, shift = false, meta = false, keyCode = KeyEvent.KEYCODE_2),
+        CloudClipboardShortcut(ctrl = false, alt = true, shift = false, meta = false, keyCode = KeyEvent.KEYCODE_3),
+        CloudClipboardShortcut(ctrl = true, alt = true, shift = false, meta = false, keyCode = KeyEvent.KEYCODE_1),
+        CloudClipboardShortcut(ctrl = true, alt = true, shift = false, meta = false, keyCode = KeyEvent.KEYCODE_2),
+        CloudClipboardShortcut(ctrl = true, alt = true, shift = false, meta = false, keyCode = KeyEvent.KEYCODE_M),
     )
 
     fun parseDirectEndpoint(raw: String?, defaultPort: Int = DEFAULT_DIRECT_PORT): DirectTargetEndpoint? {
@@ -2119,6 +2160,15 @@ object RemoteKeyboardKeyMapper {
             seq = seq,
             action = "release_all",
             keyName = "ReleaseAll",
+            sentAtMs = nowMs,
+        )
+
+    fun createGestureEvent(seq: Long, gesture: String, nowMs: Long = System.currentTimeMillis()): RemoteKeyboardEvent =
+        RemoteKeyboardEvent(
+            seq = seq,
+            action = "gesture",
+            gesture = gesture,
+            keyName = "Gesture:$gesture",
             sentAtMs = nowMs,
         )
 }

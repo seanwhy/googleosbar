@@ -452,10 +452,15 @@ object CloudClipboardItem : ItemType(
         }.getOrNull() ?: return null to null
         var dataPath: String? = null
         var name: String? = null
+        var relPath: String? = null
         runCatching {
             resolver.query(
                 mediaUri,
-                arrayOf("_data", OpenableColumns.DISPLAY_NAME),
+                arrayOf(
+                    "_data",
+                    OpenableColumns.DISPLAY_NAME,
+                    android.provider.MediaStore.MediaColumns.RELATIVE_PATH,
+                ),
                 null,
                 null,
                 null,
@@ -469,8 +474,17 @@ object CloudClipboardItem : ItemType(
                     if (nameIdx >= 0 && !cursor.isNull(nameIdx)) {
                         name = cursor.getString(nameIdx)
                     }
+                    val relIdx = cursor.getColumnIndex(android.provider.MediaStore.MediaColumns.RELATIVE_PATH)
+                    if (relIdx >= 0 && !cursor.isNull(relIdx)) {
+                        relPath = cursor.getString(relIdx)
+                    }
                 }
             }
+        }
+        if (dataPath.isNullOrBlank() && !relPath.isNullOrBlank() && !name.isNullOrBlank()) {
+            val cleanRel = relPath!!.trimStart('/').let { if (it.endsWith('/')) it else "$it/" }
+            val resolved = CloudClipboardFiles.resolveExistingLocalFile(File("/storage/emulated/10/$cleanRel$name"))
+            dataPath = resolved.path
         }
         return dataPath to name
     }
@@ -491,8 +505,9 @@ object CloudClipboardItem : ItemType(
                         }
                     }
                 }
-                if (!directDataPath.isNullOrBlank() && directDataPath!!.startsWith("/")) {
-                    val candidate = CloudClipboardFiles.resolveExistingLocalFile(File(directDataPath!!))
+                val direct = directDataPath
+                if (!direct.isNullOrBlank() && direct.startsWith("/")) {
+                    val candidate = CloudClipboardFiles.resolveExistingLocalFile(File(direct))
                     if (candidate.exists()) return@runCatching candidate
                 }
             }
@@ -525,9 +540,10 @@ object CloudClipboardItem : ItemType(
 
     private fun resolveUriToFileSource(uri: Uri): CloudClipboardFiles.ClipboardFileSource? {
         val scheme = uri.scheme?.lowercase() ?: return null
+        val rawUriStr = uri.toString()
         if (scheme == "file") {
-            val cleaned = CloudClipboardFiles.cleanPath(uri.toString()).ifEmpty { uri.path ?: return null }
-            return fileToSource(File(cleaned))
+            val cleaned = CloudClipboardFiles.cleanPath(rawUriStr).ifEmpty { uri.path ?: return null }
+            return fileToSource(File(cleaned)).copy(sourceUri = rawUriStr)
         }
         if (scheme != "content") return null
 
@@ -578,9 +594,19 @@ object CloudClipboardItem : ItemType(
         }
 
         val localFallback = resolveDocumentUriToLocalFile(uri, displayName)
-        val localCanonicalPath = localFallback?.let { file ->
-            runCatching { file.canonicalPath }.getOrElse { file.absolutePath }
-        } ?: uri.toString()
+        val authority = uri.authority.orEmpty().lowercase()
+        val hasDeterministicLocalPath = localFallback != null && (
+            localFallback.exists() ||
+                authority == "com.android.externalstorage.documents" ||
+                rawUriStr.contains("raw:", ignoreCase = true) ||
+                rawUriStr.contains("raw%3A", ignoreCase = true) ||
+                rawUriStr.contains("/storage/emulated/", ignoreCase = true)
+            )
+        val localCanonicalPath = if (hasDeterministicLocalPath && localFallback != null) {
+            runCatching { localFallback.canonicalPath }.getOrElse { localFallback.absolutePath }
+        } else {
+            rawUriStr
+        }
 
         val fallbackName = displayName?.takeIf { it.isNotBlank() }
             ?: localFallback?.name?.takeIf { it.isNotBlank() }
@@ -591,7 +617,6 @@ object CloudClipboardItem : ItemType(
             ?: "clipboard.bin"
         val finalName = displayName?.takeIf { it.isNotBlank() } ?: fallbackName
 
-        val rawUriStr = uri.toString()
         if (mimeType == DocumentsContract.Document.MIME_TYPE_DIR ||
             localFallback?.isDirectory == true ||
             (rawUriStr.contains("/tree/") && !rawUriStr.contains("/document/"))
@@ -602,6 +627,7 @@ object CloudClipboardItem : ItemType(
                 isDirectory = true,
                 exists = true,
                 localPath = localCanonicalPath,
+                sourceUri = rawUriStr,
             )
         }
 
@@ -617,6 +643,7 @@ object CloudClipboardItem : ItemType(
                     exists = true,
                     unreadable = false,
                     localPath = localCanonicalPath,
+                    sourceUri = rawUriStr,
                     streamProvider = {
                         if (localFallback.exists() && localFallback.canRead()) {
                             localFallback.inputStream()
@@ -647,8 +674,22 @@ object CloudClipboardItem : ItemType(
             if (localLen > 0L) size = localLen
         }
 
-        if (size <= 0L) {
-            return spoolContentUriToSource(uri, finalName, localCanonicalPath)
+        // When localFallback is not directly readable via File, spool the content:// stream now while the
+        // clipboard URI grant is active so pushFile can read the file twice (SHA-256 + HTTP body).
+        if (size <= CloudClipboardProtocol.MAX_FILE_BYTES) {
+            val spooled = spoolContentUriToSource(
+                uri = uri,
+                displayName = finalName,
+                dedupKey = localCanonicalPath,
+                sourceUri = rawUriStr,
+                localFallback = localFallback,
+            )
+            if (!spooled.unreadable && spooled.exists && spooled.size > 0L && spooled.streamProvider != null) {
+                return spooled
+            }
+            if (size <= 0L) {
+                return spooled
+            }
         }
 
         val canOpenNow = (localFallback != null && localFallback.exists() && localFallback.canRead()) ||
@@ -662,6 +703,7 @@ object CloudClipboardItem : ItemType(
             exists = true,
             unreadable = !canOpenNow,
             localPath = localCanonicalPath,
+            sourceUri = rawUriStr,
             streamProvider = if (canOpenNow) {
                 {
                     if (localFallback != null && localFallback.exists() && localFallback.canRead()) {
@@ -678,9 +720,17 @@ object CloudClipboardItem : ItemType(
         uri: Uri,
         displayName: String,
         dedupKey: String,
+        sourceUri: String = uri.toString(),
+        localFallback: File? = null,
     ): CloudClipboardFiles.ClipboardFileSource {
         val resolver = runCatching { Env.app.contentResolver }.getOrNull()
-            ?: return CloudClipboardFiles.ClipboardFileSource(displayName = displayName, size = 0L, unreadable = true, localPath = dedupKey)
+            ?: return CloudClipboardFiles.ClipboardFileSource(
+                displayName = displayName,
+                size = 0L,
+                unreadable = true,
+                localPath = dedupKey,
+                sourceUri = sourceUri,
+            )
         return try {
             val dir = File(Env.app.cacheDir, "cloud_clip_spool").apply { mkdirs() }
             // Clean up stale spool files older than 10 minutes
@@ -691,8 +741,15 @@ object CloudClipboardItem : ItemType(
                 }
             }
             val cleanName = CloudClipboardProtocol.normalizeFileName(displayName)
-            val keyHash = Integer.toHexString(dedupKey.hashCode())
+            val keyHash = Integer.toHexString(sourceUri.hashCode())
             val tempFile = File(dir, "spool_${keyHash}_$cleanName")
+            val fallbackOpener: () -> java.io.InputStream = {
+                when {
+                    tempFile.exists() && tempFile.canRead() -> tempFile.inputStream()
+                    localFallback != null && localFallback.exists() && localFallback.canRead() -> localFallback.inputStream()
+                    else -> resolver.openInputStream(uri) ?: throw IOException("无法读取文件：$displayName")
+                }
+            }
             if (tempFile.exists() && tempFile.length() > 0L && now - tempFile.lastModified() < 5_000L) {
                 val cachedLen = tempFile.length()
                 return CloudClipboardFiles.ClipboardFileSource(
@@ -700,12 +757,19 @@ object CloudClipboardItem : ItemType(
                     size = cachedLen,
                     exists = true,
                     localPath = dedupKey,
-                    streamProvider = { tempFile.inputStream() },
+                    sourceUri = sourceUri,
+                    streamProvider = fallbackOpener,
                 )
             }
 
             val input = resolver.openInputStream(uri)
-                ?: return CloudClipboardFiles.ClipboardFileSource(displayName = displayName, size = 0L, exists = false, localPath = dedupKey)
+                ?: return CloudClipboardFiles.ClipboardFileSource(
+                    displayName = displayName,
+                    size = 0L,
+                    exists = false,
+                    localPath = dedupKey,
+                    sourceUri = sourceUri,
+                )
             input.use { stream ->
                 var total = 0L
                 val buffer = ByteArray(64 * 1024)
@@ -727,6 +791,7 @@ object CloudClipboardItem : ItemType(
                         size = total,
                         exists = true,
                         localPath = dedupKey,
+                        sourceUri = sourceUri,
                     )
                 }
                 CloudClipboardFiles.ClipboardFileSource(
@@ -734,27 +799,58 @@ object CloudClipboardItem : ItemType(
                     size = total,
                     exists = true,
                     localPath = dedupKey,
-                    streamProvider = { tempFile.inputStream() },
+                    sourceUri = sourceUri,
+                    streamProvider = fallbackOpener,
                 )
             }
         } catch (_: FileNotFoundException) {
-            CloudClipboardFiles.ClipboardFileSource(displayName = displayName, size = 0L, exists = false, localPath = dedupKey)
+            CloudClipboardFiles.ClipboardFileSource(
+                displayName = displayName,
+                size = 0L,
+                exists = false,
+                localPath = dedupKey,
+                sourceUri = sourceUri,
+            )
         } catch (_: SecurityException) {
-            CloudClipboardFiles.ClipboardFileSource(displayName = displayName, size = 0L, unreadable = true, localPath = dedupKey)
+            CloudClipboardFiles.ClipboardFileSource(
+                displayName = displayName,
+                size = 0L,
+                unreadable = true,
+                localPath = dedupKey,
+                sourceUri = sourceUri,
+            )
         } catch (_: IOException) {
-            CloudClipboardFiles.ClipboardFileSource(displayName = displayName, size = 0L, unreadable = true, localPath = dedupKey)
+            CloudClipboardFiles.ClipboardFileSource(
+                displayName = displayName,
+                size = 0L,
+                unreadable = true,
+                localPath = dedupKey,
+                sourceUri = sourceUri,
+            )
         }
     }
 
     private fun refreshFileSource(src: CloudClipboardFiles.ClipboardFileSource): CloudClipboardFiles.ClipboardFileSource {
-        if (!src.unreadable && src.exists && src.size > 0L && src.streamProvider != null) return src
-        val path = src.localPath?.trim().orEmpty()
-        if (path.isEmpty()) return src
-        return if (path.startsWith("content://", ignoreCase = true) || path.startsWith("file://", ignoreCase = true)) {
-            runCatching { resolveUriToFileSource(Uri.parse(path)) }.getOrNull() ?: src
-        } else {
-            fileToSource(File(path))
+        if (!src.unreadable && src.exists && src.size > 0L && src.streamProvider != null) {
+            return src
         }
+        val uriCandidate = src.sourceUri?.trim().orEmpty()
+        if (uriCandidate.startsWith("content://", ignoreCase = true) || uriCandidate.startsWith("file://", ignoreCase = true)) {
+            val resolvedFromUri = runCatching { resolveUriToFileSource(Uri.parse(uriCandidate)) }.getOrNull()
+            if (resolvedFromUri != null && !resolvedFromUri.unreadable && resolvedFromUri.exists && resolvedFromUri.size > 0L) {
+                return resolvedFromUri
+            }
+        }
+        val path = src.localPath?.trim().orEmpty()
+        if (path.isNotEmpty()) {
+            val resolvedFromPath = if (path.startsWith("content://", ignoreCase = true) || path.startsWith("file://", ignoreCase = true)) {
+                runCatching { resolveUriToFileSource(Uri.parse(path)) }.getOrNull()
+            } else {
+                fileToSource(File(path)).copy(sourceUri = src.sourceUri)
+            }
+            if (resolvedFromPath != null) return resolvedFromPath
+        }
+        return src
     }
 
     fun shortcutOf(item: ItemConfig): CloudClipboardShortcut =
@@ -948,7 +1044,10 @@ object CloudClipboardItem : ItemType(
                 uploadProgressState.value = null
                 syncingState.value = false
                 runCatching {
-                    File(Env.app.cacheDir, "cloud_clip_spool").listFiles()?.forEach { it.delete() }
+                    val nowMs = System.currentTimeMillis()
+                    File(Env.app.cacheDir, "cloud_clip_spool").listFiles()?.forEach { f ->
+                        if (nowMs - f.lastModified() > 10 * 60_000L) f.delete()
+                    }
                 }
                 if (needPermPrompt) {
                     mainHandler.post {
@@ -1242,22 +1341,29 @@ object CloudClipboardItem : ItemType(
 
         LaunchedEffect(Unit) {
             runCatching { inputFocus.requestFocus() }
-            val snap1 = readLocalClipboardSnapshot()
-            if (snap1.hasFiles && !userEditedInput && stagedFiles.isEmpty() && quickText.isEmpty()) {
-                stageFilesIntoInput(snap1.files)
-            }
-            delay(100)
-            val snap2 = readLocalClipboardSnapshot()
-            if (snap2.hasFiles && !userEditedInput && stagedFiles.isEmpty() && quickText.isEmpty()) {
-                stageFilesIntoInput(snap2.files)
-            }
             if (id.isRegistered || id.sessionCookie.isNotBlank()) {
                 refreshFromCloud(quiet = true)
+            }
+            for (waitMs in longArrayOf(0L, 80L, 200L, 420L)) {
+                if (waitMs > 0L) delay(waitMs)
+                val snap = readLocalClipboardSnapshot()
+                if (snap.hasFiles && !userEditedInput && stagedFiles.isEmpty() && quickText.isEmpty()) {
+                    stageFilesIntoInput(snap.files)
+                    break
+                }
             }
         }
 
         val hostView = LocalView.current
         DisposableEffect(hostView) {
+            val focusListener = android.view.ViewTreeObserver.OnWindowFocusChangeListener { hasFocus ->
+                if (hasFocus) {
+                    val snap = readLocalClipboardSnapshot()
+                    if (snap.hasFiles && !userEditedInput && stagedFiles.isEmpty() && quickText.isEmpty()) {
+                        stageFilesIntoInput(snap.files)
+                    }
+                }
+            }
             val dragListener = View.OnDragListener { _, event ->
                 when (event.action) {
                     DragEvent.ACTION_DRAG_STARTED -> true
@@ -1277,8 +1383,10 @@ object CloudClipboardItem : ItemType(
                     else -> true
                 }
             }
+            runCatching { hostView.viewTreeObserver?.addOnWindowFocusChangeListener(focusListener) }
             runCatching { hostView.setOnDragListener(dragListener) }
             onDispose {
+                runCatching { hostView.viewTreeObserver?.removeOnWindowFocusChangeListener(focusListener) }
                 runCatching { hostView.setOnDragListener(null) }
             }
         }

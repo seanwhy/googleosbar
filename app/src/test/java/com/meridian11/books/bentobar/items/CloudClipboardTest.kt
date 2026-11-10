@@ -5,6 +5,7 @@ import org.junit.Assert.assertArrayEquals
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNotNull
+import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Assert.fail
 import org.junit.Test
@@ -932,6 +933,65 @@ class CloudClipboardTest {
         } finally {
             tempFile.delete()
         }
+    }
+
+    @Test
+    fun remoteKeyboardGesturesAndDeviceShortcuts() {
+        // 1. Gesture event protocol creation
+        val ev = RemoteKeyboardKeyMapper.createGestureEvent(seq = 42L, gesture = "swipe_up_4")
+        assertEquals(42L, ev.seq)
+        assertEquals("gesture", ev.action)
+        assertEquals("swipe_up_4", ev.gesture)
+        assertEquals("Gesture:swipe_up_4", ev.keyName)
+
+        val evJson = CloudClipboardProtocol.json.encodeToString(ev)
+        val decoded = CloudClipboardProtocol.json.decodeFromString<RemoteKeyboardEvent>(evJson)
+        assertEquals(ev.seq, decoded.seq)
+        assertEquals(ev.action, decoded.action)
+        assertEquals(ev.gesture, decoded.gesture)
+
+        // 2. parseOrNull for shortcuts
+        val sc1 = CloudClipboardShortcut.parseOrNull("Alt + 1")
+        assertNotNull(sc1)
+        assertFalse(sc1!!.ctrl)
+        assertTrue(sc1.alt)
+        assertEquals(KeyEvent.KEYCODE_1, sc1.keyCode)
+
+        val sc2 = CloudClipboardShortcut.parseOrNull("Ctrl + Alt + M")
+        assertNotNull(sc2)
+        assertTrue(sc2!!.ctrl)
+        assertTrue(sc2.alt)
+        assertEquals(KeyEvent.KEYCODE_M, sc2.keyCode)
+
+        assertNull(CloudClipboardShortcut.parseOrNull(null))
+        assertNull(CloudClipboardShortcut.parseOrNull(""))
+        assertNull(CloudClipboardShortcut.parseOrNull("   "))
+        assertNull(CloudClipboardShortcut.parseOrNull("JustTextWithoutModifier"))
+
+        // 3. Option key mapping for per-device shortcuts
+        val optKey = RemoteKeyboardItem.deviceShortcutOptionKey("dev-mac-m2")
+        assertEquals("shortcut_dev-mac-m2", optKey)
+
+        // 4. RemoteDeviceSummary macOS detection
+        val macDev = RemoteDeviceSummary(
+            id = "dev-mac-m2",
+            name = "Mac Studio",
+            platform = "darwin",
+            os = "darwin",
+        )
+        assertTrue(macDev.isMac)
+        assertEquals("macOS", macDev.platformLabel)
+        assertTrue(macDev.isDesktopTarget)
+
+        val winDev = RemoteDeviceSummary(
+            id = "dev-win",
+            name = "WinPC",
+            platform = "windows",
+            os = "windows",
+        )
+        assertFalse(winDev.isMac)
+        assertEquals("Windows", winDev.platformLabel)
+        assertTrue(winDev.isDesktopTarget)
     }
 }
 

@@ -1,5 +1,6 @@
 package com.meridian11.books.bentobar.items
 
+import android.content.ClipData
 import android.content.ClipboardManager
 import android.content.Intent
 import android.net.Uri
@@ -172,6 +173,14 @@ object RemoteKeyboardItem : ItemType(
         return if (raw.isNullOrBlank()) RemoteKeyboardProtocol.DEFAULT_EXIT_SHORTCUT else CloudClipboardShortcut.parse(raw)
     }
 
+    fun deviceShortcutOptionKey(deviceId: String): String = "shortcut_$deviceId"
+
+    fun deviceShortcutOf(item: ItemConfig?, deviceId: String): CloudClipboardShortcut? {
+        if (item == null || deviceId.isBlank()) return null
+        val raw = item.options[deviceShortcutOptionKey(deviceId)]
+        return CloudClipboardShortcut.parseOrNull(raw)
+    }
+
     internal fun isTripleEscEnabled(item: ItemConfig?): Boolean =
         item?.optBool("tripleEscExit", true) ?: true
 
@@ -227,13 +236,35 @@ object RemoteKeyboardItem : ItemType(
 
     /**
      * Intercepts physical keystrokes from `BarService.onKeyEvent(event)`:
-     * - Returns `true` for every key event while mapping is active so the local Googlebook ignores
-     *   all keyboard input and forwards it to the remote computer.
+     * - When mapping is inactive: checks if the pressed shortcut matches any target device's
+     *   configured activation shortcut (e.g. `Alt + 1`, `Ctrl + Alt + 1`), instantly activating
+     *   remote mapping to that device.
+     * - When mapping is active: returns `true` for all keystrokes to prevent local input and
+     *   forward them to the remote computer.
+     * - Intercepts the Chromebook / Android overview key (F5 / KEYCODE_APP_SWITCH) to trigger
+     *   Mission Control when controlling macOS.
      * - Checks for the exit shortcut (default `Ctrl + Alt + Q`) or rapid `Esc x 3` to exit mapping
      *   and release any held keys on the remote computer.
      */
     fun onKeyEvent(event: KeyEvent): Boolean {
-        val session = activeSessionState.value ?: return false
+        val session = activeSessionState.value
+        if (session == null) {
+            // When mapping is inactive, check if any desktop target's configured shortcut was pressed
+            if (event.action == KeyEvent.ACTION_DOWN && event.repeatCount == 0) {
+                val cfg = activeConfig()
+                val devices = devicesState.value
+                for (dev in devices) {
+                    if (!dev.isDesktopTarget) continue
+                    val sc = deviceShortcutOf(cfg, dev.id) ?: continue
+                    if (sc.matches(event)) {
+                        startMapping(dev, cfg?.with("targetDeviceId", dev.id))
+                        return true
+                    }
+                }
+            }
+            return false
+        }
+
         if (event.eventTime > 0L) {
             val dedupKey = "${event.action}:${event.keyCode}:${event.eventTime}:${event.repeatCount}"
             if (dedupKey == lastHandledEventKey) return true
@@ -241,6 +272,14 @@ object RemoteKeyboardItem : ItemType(
         }
         val cfg = activeConfig()
         val exitShortcut = exitShortcutOf(cfg)
+
+        // Special handling for Overview / Task Switcher key when controlling macOS
+        if (session.target.isMac && (event.keyCode == KeyEvent.KEYCODE_APP_SWITCH || event.keyCode == KeyEvent.KEYCODE_WINDOW)) {
+            if (event.action == KeyEvent.ACTION_DOWN && event.repeatCount == 0) {
+                sendGesture("swipe_up_4")
+            }
+            return true
+        }
 
         if (event.action == KeyEvent.ACTION_DOWN) {
             // 1. Check primary exit shortcut (e.g. Ctrl + Alt + Q)
@@ -548,6 +587,39 @@ object RemoteKeyboardItem : ItemType(
         statusMessageState.value = "已发送文本 (${cleaned.length} 字符) 到 ${session.target.displayTitle}"
     }
 
+    fun sendGesture(gesture: String) {
+        val session = activeSessionState.value ?: return
+        val ev = RemoteKeyboardKeyMapper.createGestureEvent(eventSeq.getAndIncrement(), gesture)
+        enqueueEvent(ev, session)
+        val gestureDesc = when (gesture) {
+            "swipe_up_4", "mission_control" -> "调度中心 (四指上推)"
+            "swipe_down_4", "app_expose" -> "应用窗口 (四指下滑)"
+            "swipe_left_4", "space_left" -> "切换到左桌面 (四指左滑)"
+            "swipe_right_4", "space_right" -> "切换到右桌面 (四指右滑)"
+            "pinch_in_4", "launchpad" -> "启动台 (四指捏合)"
+            "spread_4", "show_desktop" -> "显示桌面 (四指张开)"
+            else -> gesture
+        }
+        statusMessageState.value = "已触发手势「$gestureDesc」→ ${session.target.displayTitle}"
+    }
+
+    fun onGesture(gestureId: Int): Boolean {
+        val session = activeSessionState.value ?: return false
+        val gestureName = when (gestureId) {
+            android.accessibilityservice.AccessibilityService.GESTURE_4_FINGER_SWIPE_UP,
+            android.accessibilityservice.AccessibilityService.GESTURE_3_FINGER_SWIPE_UP -> "swipe_up_4"
+            android.accessibilityservice.AccessibilityService.GESTURE_4_FINGER_SWIPE_DOWN,
+            android.accessibilityservice.AccessibilityService.GESTURE_3_FINGER_SWIPE_DOWN -> "swipe_down_4"
+            android.accessibilityservice.AccessibilityService.GESTURE_4_FINGER_SWIPE_LEFT,
+            android.accessibilityservice.AccessibilityService.GESTURE_3_FINGER_SWIPE_LEFT -> "swipe_left_4"
+            android.accessibilityservice.AccessibilityService.GESTURE_4_FINGER_SWIPE_RIGHT,
+            android.accessibilityservice.AccessibilityService.GESTURE_3_FINGER_SWIPE_RIGHT -> "swipe_right_4"
+            else -> return false
+        }
+        sendGesture(gestureName)
+        return true
+    }
+
     fun refreshDevices(quiet: Boolean = false) {
         ensureInitialized()
         refreshIdentityFromStore()
@@ -585,6 +657,13 @@ object RemoteKeyboardItem : ItemType(
                 }
             }
             Ticker.refresh(type)
+        }
+    }
+
+    fun copyToClipboard(text: String) {
+        runCatching {
+            val cm = Env.app.getSystemService(ClipboardManager::class.java)
+            cm?.setPrimaryClip(ClipData.newPlainText("text", text))
         }
     }
 
@@ -754,10 +833,76 @@ object RemoteKeyboardItem : ItemType(
                     if (!active.targetReceiverReady && !active.target.keyboardActive) {
                         Spacer(Modifier.height(6.dp))
                         Text(
-                            text = "提示：请确认目标 Windows 电脑已运行最新版 SafetyGuard（并在「云剪切板 › 远程键盘映射接收」中保持开启）。",
+                            text = if (active.target.isMac) {
+                                "提示：请确认 Mac 电脑已运行最新版 nettransfer-agentd 并开启了辅助功能（Accessibility）权限。"
+                            } else {
+                                "提示：请确认目标 Windows 电脑已运行最新版 SafetyGuard（并在「云剪切板 › 远程键盘映射接收」中保持开启）。"
+                            },
                             style = MaterialTheme.typography.bodySmall,
                             color = MaterialTheme.colorScheme.onPrimaryContainer,
                         )
+                    }
+
+                    if (active.target.isMac) {
+                        Spacer(Modifier.height(8.dp))
+                        Text(
+                            text = "macOS 手势与窗口控制 (触控板四指手势亦可触发)",
+                            style = MaterialTheme.typography.labelSmall,
+                            color = MaterialTheme.colorScheme.onPrimaryContainer,
+                            fontWeight = FontWeight.SemiBold,
+                        )
+                        Spacer(Modifier.height(4.dp))
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.spacedBy(6.dp),
+                        ) {
+                            OutlinedButton(
+                                onClick = { sendGesture("swipe_up_4") },
+                                modifier = Modifier.weight(1f),
+                            ) {
+                                Text("调度中心 ⇡", style = MaterialTheme.typography.bodySmall, maxLines = 1)
+                            }
+                            OutlinedButton(
+                                onClick = { sendGesture("swipe_down_4") },
+                                modifier = Modifier.weight(1f),
+                            ) {
+                                Text("应用窗口 ⇣", style = MaterialTheme.typography.bodySmall, maxLines = 1)
+                            }
+                        }
+                        Row(
+                            modifier = Modifier.fillMaxWidth().padding(top = 4.dp),
+                            horizontalArrangement = Arrangement.spacedBy(6.dp),
+                        ) {
+                            OutlinedButton(
+                                onClick = { sendGesture("swipe_left_4") },
+                                modifier = Modifier.weight(1f),
+                            ) {
+                                Text("左桌面 ⇠", style = MaterialTheme.typography.bodySmall, maxLines = 1)
+                            }
+                            OutlinedButton(
+                                onClick = { sendGesture("swipe_right_4") },
+                                modifier = Modifier.weight(1f),
+                            ) {
+                                Text("右桌面 ⇢", style = MaterialTheme.typography.bodySmall, maxLines = 1)
+                            }
+                        }
+                        Row(
+                            modifier = Modifier.fillMaxWidth().padding(top = 4.dp),
+                            horizontalArrangement = Arrangement.spacedBy(6.dp),
+                        ) {
+                            OutlinedButton(
+                                onClick = { sendGesture("pinch_in_4") },
+                                modifier = Modifier.weight(1f),
+                            ) {
+                                Text("启动台", style = MaterialTheme.typography.bodySmall, maxLines = 1)
+                            }
+                            OutlinedButton(
+                                onClick = { sendGesture("spread_4") },
+                                modifier = Modifier.weight(1f),
+                            ) {
+                                Text("显示桌面", style = MaterialTheme.typography.bodySmall, maxLines = 1)
+                            }
+                        }
                     }
                 }
 
@@ -840,11 +985,15 @@ object RemoteKeyboardItem : ItemType(
 
             if (desktopDevices.isNotEmpty()) {
                 desktopDevices.forEach { dev ->
+                    val assignedShortcut = deviceShortcutOf(item, dev.id)
                     val isSelected = selectedTarget?.id == dev.id
                     val isCurrentlyMapped = session?.target?.id == dev.id
                     val lanIp = dev.lanIpv4Addresses.firstOrNull()
                     val statusTag = buildString {
                         append(dev.platformLabel)
+                        if (assignedShortcut != null) {
+                            append(" · 快捷键 ${assignedShortcut.format()}")
+                        }
                         append(if (dev.online) " · 在线" else " · 离线")
                         if (dev.keyboardActive) append(" · 接收就绪")
                         if (!lanIp.isNullOrBlank()) append(" · LAN $lanIp")
@@ -880,10 +1029,18 @@ object RemoteKeyboardItem : ItemType(
                 MenuEntry(
                     icon = Sym.BOLT,
                     label = "一键发送测试按键 (\"ok\") 到 ${session!!.target.displayTitle}",
-                    sub = "用于排查链路：在对端打开记事本，点击此项应立即键入 ok",
+                    sub = "用于排查链路：在对端打开记事本/文本编辑，点击此项应立即键入 ok",
                 ) {
                     sendTextAsKeystrokes("ok")
                 }
+            }
+            MenuEntry(
+                icon = Sym.CONTENT_PASTE,
+                label = "复制 macOS 接收端一键更新命令",
+                sub = "curl -fsSL https://vps.why.band/download/update-keyboard-macos.sh | bash",
+            ) {
+                copyToClipboard("curl -fsSL https://vps.why.band/download/update-keyboard-macos.sh | bash")
+                toastOnMain("已复制 macOS 一键更新命令，在 Mac 终端粘贴回车即可")
             }
             MenuEntry(
                 icon = Sym.OPEN_IN_NEW,
@@ -914,9 +1071,18 @@ object RemoteKeyboardItem : ItemType(
         var recordingShortcut by remember { mutableStateOf(false) }
         val captureFocus = remember { FocusRequester() }
 
+        var recordingDeviceId by remember { mutableStateOf<String?>(null) }
+        val deviceFocusRequester = remember { FocusRequester() }
+
         LaunchedEffect(recordingShortcut) {
             if (recordingShortcut) {
                 runCatching { captureFocus.requestFocus() }
+            }
+        }
+
+        LaunchedEffect(recordingDeviceId) {
+            if (recordingDeviceId != null) {
+                runCatching { deviceFocusRequester.requestFocus() }
             }
         }
 
@@ -1020,6 +1186,126 @@ object RemoteKeyboardItem : ItemType(
             ) { enabled ->
                 set(item.with("showActiveText", if (enabled) null else "false"))
             }
+        }
+
+        Spacer(Modifier.height(8.dp))
+        Column(Modifier.fillMaxWidth().padding(vertical = 4.dp)) {
+            Text("各设备快捷启用键 (免开菜单直接接管控制)", style = MaterialTheme.typography.labelLarge)
+            Text(
+                text = "为每台目标电脑绑定专属快捷键（如 Alt + 1、Alt + 2、Ctrl + Alt + M），在任何界面按下即可瞬间激活键盘接管",
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+            Spacer(Modifier.height(6.dp))
+
+            val desktopList = devices.filter { it.isDesktopTarget }
+            if (desktopList.isNotEmpty()) {
+                desktopList.forEach { dev ->
+                    val isRecordingThis = recordingDeviceId == dev.id
+                    val currentShortcut = deviceShortcutOf(item, dev.id)
+
+                    Column(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(vertical = 4.dp)
+                            .clip(RoundedCornerShape(12.dp))
+                            .border(
+                                width = if (isRecordingThis) 2.dp else 1.dp,
+                                color = if (isRecordingThis) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.outlineVariant,
+                                shape = RoundedCornerShape(12.dp),
+                            )
+                            .background(MaterialTheme.colorScheme.surfaceContainerLow)
+                            .then(
+                                if (isRecordingThis) {
+                                    Modifier
+                                        .focusRequester(deviceFocusRequester)
+                                        .onFocusChanged { if (!it.isFocused) recordingDeviceId = null }
+                                        .focusable()
+                                        .onPreviewKeyEvent { keyEvent ->
+                                            val native = keyEvent.nativeKeyEvent
+                                            if (native.action == KeyEvent.ACTION_DOWN) {
+                                                if (native.keyCode == KeyEvent.KEYCODE_ESCAPE &&
+                                                    !native.isCtrlPressed && !native.isAltPressed && !native.isShiftPressed
+                                                ) {
+                                                    recordingDeviceId = null
+                                                    return@onPreviewKeyEvent true
+                                                }
+                                                val captured = CloudClipboardShortcut.fromKeyEvent(native)
+                                                if (captured != null) {
+                                                    set(item.with(deviceShortcutOptionKey(dev.id), captured.serialize()))
+                                                    recordingDeviceId = null
+                                                    return@onPreviewKeyEvent true
+                                                }
+                                            }
+                                            false
+                                        }
+                                } else Modifier
+                            )
+                            .padding(horizontal = 14.dp, vertical = 10.dp),
+                    ) {
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            verticalAlignment = Alignment.CenterVertically,
+                        ) {
+                            Column(Modifier.weight(1f)) {
+                                Text(
+                                    text = "${dev.displayTitle} (${dev.platformLabel})",
+                                    style = MaterialTheme.typography.bodyMedium,
+                                    fontWeight = FontWeight.SemiBold,
+                                )
+                                Text(
+                                    text = if (isRecordingThis) {
+                                        "请按下专属快捷键 (例如 Alt + 1 或 Ctrl + Alt + 1)…"
+                                    } else if (currentShortcut != null) {
+                                        "当前快捷启用键：${currentShortcut.format()}"
+                                    } else {
+                                        "未配置快捷键 (可点击下方预设或录制)"
+                                    },
+                                    style = MaterialTheme.typography.bodySmall,
+                                    color = if (isRecordingThis) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant,
+                                )
+                            }
+                            Spacer(Modifier.width(8.dp))
+                            OutlinedButton(onClick = { recordingDeviceId = if (isRecordingThis) null else dev.id }) {
+                                Text(if (isRecordingThis) "取消" else "录制按键")
+                            }
+                        }
+
+                        // Preset chips row
+                        val presetLabels = RemoteKeyboardProtocol.DEVICE_ACTIVATION_SHORTCUT_PRESETS.map { it.format() } + listOf("清除快捷键")
+                        val selectedIdx = RemoteKeyboardProtocol.DEVICE_ACTIVATION_SHORTCUT_PRESETS.indexOfFirst { it == currentShortcut }.takeIf { it >= 0 }
+                        ChipRow(
+                            labels = presetLabels,
+                            selected = selectedIdx,
+                        ) { idx ->
+                            if (idx < RemoteKeyboardProtocol.DEVICE_ACTIVATION_SHORTCUT_PRESETS.size) {
+                                val chosen = RemoteKeyboardProtocol.DEVICE_ACTIVATION_SHORTCUT_PRESETS[idx]
+                                set(item.with(deviceShortcutOptionKey(dev.id), chosen.serialize()))
+                            } else {
+                                set(item.with(deviceShortcutOptionKey(dev.id), null))
+                            }
+                        }
+                    }
+                }
+            } else {
+                MenuNote("尚未获取到目标桌面电脑列表，请在下方刷新或配置 VPS 后再行设定快捷键。")
+            }
+        }
+
+        Spacer(Modifier.height(8.dp))
+        Column(Modifier.fillMaxWidth().padding(vertical = 4.dp)) {
+            Text("触控板多指手势映射 (macOS 专属)", style = MaterialTheme.typography.labelLarge)
+            Text(
+                text = "当接管 macOS 电脑时，触控板四指手势自动映射为 Mac 原生功能：\n" +
+                    "• 四指向上推 / Chromebook F5 窗口键 → 调度中心 (Mission Control)\n" +
+                    "• 四指向下滑 → 应用程序窗口 (App Exposé)\n" +
+                    "• 四指向左滑 → 切换到左侧桌面空间\n" +
+                    "• 四指向右滑 → 切换到右侧桌面空间\n" +
+                    "• 四指捏合 → 启动台 (Launchpad)\n" +
+                    "• 四指张开 → 显示桌面",
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
         }
 
         Spacer(Modifier.height(8.dp))
