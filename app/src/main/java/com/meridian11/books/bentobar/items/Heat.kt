@@ -78,14 +78,14 @@ object Heat {
         val value = args.getOrNull(1)
         when (args.firstOrNull()) {
             null -> return line()
-            "stage" -> stagedStatus = value?.toIntOrNull()?.takeIf { it in HeatRules.NONE..HeatRules.SHUTDOWN } ?: return "heat stage 0..6"
+            "stage" -> stagedStatus = value?.toIntOrNull()?.takeIf { it in HeatRules.NONE..HeatRules.SHUTDOWN } ?: return null
             "level" -> {
-                val level = if (value == "none") Float.NaN else value?.toFloatOrNull()?.takeIf { it.isFinite() && it >= 0f } ?: return "heat level 0.84 | none"
+                val level = if (value == "none") Float.NaN else value?.toFloatOrNull()?.takeIf { it.isFinite() && it >= 0f } ?: return null
                 stagedLevel = level
                 // At once, not at the next asking: a staged number is the level, and "none" takes the level away.
                 if (level.isNaN()) log.forget() else log.took(level, SystemClock.elapsedRealtime())
             }
-            "temp" -> stagedTempC = value?.toDoubleOrNull()?.takeIf { it.isFinite() } ?: return "heat temp 41.3"
+            "temp" -> stagedTempC = value?.toDoubleOrNull()?.takeIf { it.isFinite() } ?: return null
             "off" -> {
                 if (stagedLevel != null) log.forget()
                 stagedStatus = null; stagedLevel = null; stagedTempC = null

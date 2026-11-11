@@ -52,6 +52,8 @@ import androidx.compose.ui.unit.sp
 import androidx.compose.ui.res.pluralStringResource
 import androidx.compose.ui.res.stringResource
 import com.meridian11.books.bentobar.BuildConfig
+import androidx.compose.ui.semantics.heading
+import androidx.compose.ui.semantics.semantics
 import com.meridian11.books.bentobar.R
 import com.meridian11.books.bentobar.data.ChipMode
 import com.meridian11.books.bentobar.data.ColorMode
@@ -60,10 +62,14 @@ import com.meridian11.books.bentobar.data.Position
 import com.meridian11.books.bentobar.data.Section
 import com.meridian11.books.bentobar.data.Store
 import com.meridian11.books.bentobar.data.HiddenMode
+import com.meridian11.books.bentobar.data.LayoutRead
 import com.meridian11.books.bentobar.data.Online
 import com.meridian11.books.bentobar.data.Uses
 import com.meridian11.books.bentobar.data.TextSize
+import com.meridian11.books.bentobar.data.SPACING_DP
+import com.meridian11.books.bentobar.data.spacingDp
 import com.meridian11.books.bentobar.items.Env
+import com.meridian11.books.bentobar.items.ItemGroup
 import com.meridian11.books.bentobar.items.Items
 import com.meridian11.books.bentobar.items.MediaAccess
 import com.meridian11.books.bentobar.items.Notify
@@ -93,20 +99,13 @@ private fun PageLabel(text: String) {
 @Composable
 fun AddPage(onAdded: (String) -> Unit) {
     val cfg by Store.config.collectAsState()
-    val groups = listOf(
-        AddGroup(R.string.add_group_system, listOf("cpu", "network", "memory", "battery", "storage", "heat", "devices", "displays")),
-        AddGroup(R.string.add_group_time, listOf("calendar", "event", "clock", "timer", "countdown")),
-        AddGroup(R.string.add_group_tools, listOf("caffeine", "media", "sound", "clipboard", "cloud_clipboard", "remote_keyboard", "tools", "ai_antigravity", "ai_codex", "ai_grok", "ai_grok_bot", "shortcut", "folder", "app", "text", "spacer")),
-        // The only items that go online, in a group that says so.
-        AddGroup(R.string.add_group_online, listOf("weather", "air", "flight", "stocks", "fx"), caption = R.string.add_group_online_caption),
-    )
     Column(Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(horizontal = 24.dp, vertical = 8.dp)) {
-        groups.forEach { (group, types, caption) ->
-            SectionLabel(stringResource(group))
-            if (caption != null) Text(stringResource(caption), style = MaterialTheme.typography.bodySmall,
-                color = MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.padding(bottom = 8.dp))
+        ItemGroup.entries.forEach { group ->
+            SectionLabel(stringResource(group.title))
+            group.caption?.let { Text(stringResource(it), style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.padding(bottom = 8.dp)) }
             FlowRow(horizontalArrangement = Arrangement.spacedBy(12.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
-                types.mapNotNull { Items.of(it) }.forEach { type ->
+                Items.inGroup(group).forEach { type ->
                     val count = cfg.items.count { it.type == type.type }
                     Card(colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceContainerLow),
                         modifier = Modifier.width(280.dp)) {
@@ -151,9 +150,6 @@ fun AddPage(onAdded: (String) -> Unit) {
     }
 }
 
-/** A group of the catalog: its heading, the types in it, and a line under the heading where the group needs one. */
-private data class AddGroup(val title: Int, val types: List<String>, val caption: Int? = null)
-
 // ---- Look ----------------------------------------------------------------------------------
 
 @Composable
@@ -166,7 +162,7 @@ fun LookPage() {
         ChoiceRow(stringResource(R.string.look_position), listOf(Position.RIGHT to stringResource(R.string.look_position_right),
             Position.CENTER to stringResource(R.string.look_position_center), Position.LEFT to stringResource(R.string.look_position_left)),
             cfg.position) { p -> Store.update { it.copy(position = p) } }
-        SliderRow(stringResource(R.string.look_spacing), cfg.spacing, 0..24, { "$it dp" }) { v -> Store.update { it.copy(spacing = v) } }
+        SliderRow(stringResource(R.string.look_spacing), cfg.spacingDp, SPACING_DP, { res.getString(R.string.common_dp, it) }) { v -> Store.update { it.copy(spacing = v) } }
         SwitchRow(stringResource(R.string.look_presenting), cfg.presenting, help = stringResource(R.string.look_presenting_help)) { on ->
             Store.update { it.copy(presenting = on) }
         }
@@ -213,10 +209,46 @@ fun LookPage() {
                 Toast.makeText(context, res.getString(R.string.look_copied), Toast.LENGTH_SHORT).show()
             }) { Text(stringResource(R.string.look_copy)) }
             OutlinedButton(onClick = {
-                val text = context.getSystemService(ClipboardManager::class.java)?.primaryClip?.getItemAt(0)?.coerceToText(context)?.toString().orEmpty()
-                Toast.makeText(context, res.getString(if (Store.import(text)) R.string.look_restored else R.string.look_not_settings), Toast.LENGTH_SHORT).show()
+                // Its own text only (a layout always is): a copied file isn't opened on the main thread to find out.
+                val text = context.getSystemService(ClipboardManager::class.java)?.primaryClip?.getItemAt(0)?.text?.toString().orEmpty()
+                val said = when (Store.import(text)) {
+                    is LayoutRead.Ok -> R.string.look_restored
+                    is LayoutRead.Newer -> R.string.look_paste_newer
+                    LayoutRead.NotALayout -> R.string.look_not_settings
+                }
+                Toast.makeText(context, res.getString(said), Toast.LENGTH_SHORT).show()
             }) { Text(stringResource(R.string.look_paste)) }
         }
+        val aside by Store.setAside.collectAsState()
+        aside?.let { why -> SetAsideOffer(why) }
+    }
+}
+
+/**
+ * A layout that could not be read was kept instead of being lost, and this is where it is offered, until it is put back or
+ * discarded. Putting it back is only ever the user's press, never something done by itself over their edits.
+ */
+@Composable
+private fun SetAsideOffer(why: Store.SetAside) {
+    val context = LocalContext.current
+    val res = androidx.compose.ui.platform.LocalResources.current
+    Spacer(Modifier.height(10.dp))
+    Text(stringResource(when (why) {
+        Store.SetAside.READABLE_NOW -> R.string.look_kept_readable
+        Store.SetAside.FROM_NEWER_VERSION -> R.string.look_kept_newer
+        Store.SetAside.UNREADABLE -> R.string.look_kept_unreadable
+    }), style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
+    Spacer(Modifier.height(6.dp))
+    Row(horizontalArrangement = Arrangement.spacedBy(10.dp), verticalAlignment = Alignment.CenterVertically) {
+        if (why == Store.SetAside.READABLE_NOW) FilledTonalButton(onClick = { Store.restoreSetAside() }) { Text(stringResource(R.string.look_kept_restore)) }
+        // Only an unreadable layout needs this: a readable one can be put back and copied as settings, a newer one waits for an update.
+        if (why == Store.SetAside.UNREADABLE) OutlinedButton(onClick = {
+            Store.setAsideText()?.let { text ->
+                context.getSystemService(ClipboardManager::class.java)?.setPrimaryClip(ClipData.newPlainText(res.getString(R.string.look_clip_label), text))
+                Toast.makeText(context, res.getString(R.string.look_copied), Toast.LENGTH_SHORT).show()
+            }
+        }) { Text(stringResource(R.string.look_kept_copy)) }
+        TextButton(onClick = { Store.discardSetAside() }) { Text(stringResource(R.string.look_kept_discard)) }
     }
 }
 
@@ -236,7 +268,7 @@ private fun Step(n: Int, title: String, done: Boolean, optional: Boolean = false
             Spacer(Modifier.width(14.dp))
             Column(Modifier.weight(1f)) {
                 Row(verticalAlignment = Alignment.CenterVertically) {
-                    Text(title, style = MaterialTheme.typography.titleMedium)
+                    Text(title, style = MaterialTheme.typography.titleMedium, modifier = Modifier.semantics { heading() })
                     if (optional) { Spacer(Modifier.width(8.dp)); Text(stringResource(R.string.setup_optional), style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.outline) }
                     if (done) { Spacer(Modifier.width(8.dp)); Text(stringResource(R.string.setup_done), style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.primary) }
                 }
@@ -331,18 +363,15 @@ fun SetupPage(activity: Activity, setup: SetupState, onTurnOn: () -> Unit) {
         Step(8, stringResource(R.string.setup_online_title), online.on.isNotEmpty(), optional = true) {
             Body(stringResource(R.string.setup_online_text))
             Spacer(Modifier.height(4.dp))
-            OnlineSwitch(Online.Service.OPEN_METEO, online, stringResource(R.string.setup_online_weather), stringResource(R.string.setup_online_weather_first))
-            OnlineSwitch(Online.Service.AIRLABS, online, stringResource(R.string.setup_online_flights), stringResource(R.string.setup_online_flights_first))
-            // The key outlives the Flight item it was typed into: without this, taking it off the device
-            // would mean adding a Flight item again first.
-            if (Online.Service.AIRLABS in online.keyed) TextButton(onClick = { Online.removeKey(Online.Service.AIRLABS); Ticker.refresh() }) {
-                Text(stringResource(R.string.flight_remove_key), color = MaterialTheme.colorScheme.error)
+            Online.Service.entries.forEach { service ->
+                val row = onlineRow(service)
+                OnlineSwitch(service, online, stringResource(row.label), stringResource(row.first))
+                // The key outlives the item it was typed into: without this, taking it off the device
+                // would mean adding that item again first.
+                if (row.removeKey != null && service in online.keyed) TextButton(onClick = { Online.removeKey(service); Ticker.refresh() }) {
+                    Text(stringResource(row.removeKey), color = MaterialTheme.colorScheme.error)
+                }
             }
-            OnlineSwitch(Online.Service.FINNHUB, online, stringResource(R.string.setup_online_stocks), stringResource(R.string.setup_online_stocks_first))
-            if (Online.Service.FINNHUB in online.keyed) TextButton(onClick = { Online.removeKey(Online.Service.FINNHUB); Ticker.refresh() }) {
-                Text(stringResource(R.string.stocks_remove_key), color = MaterialTheme.colorScheme.error)
-            }
-            OnlineSwitch(Online.Service.FRANKFURTER, online, stringResource(R.string.setup_online_fx), stringResource(R.string.setup_online_fx_first))
             Text(stringResource(R.string.setup_online_off_note), style = MaterialTheme.typography.bodySmall,
                 color = MaterialTheme.colorScheme.onSurfaceVariant)
         }
@@ -355,6 +384,16 @@ fun SetupPage(activity: Activity, setup: SetupState, onTurnOn: () -> Unit) {
             }
         }
     }
+}
+
+/** Setup's row for an online service: every [Online.Service] has one, or this doesn't compile. */
+internal data class OnlineRow(val label: Int, val first: Int, val removeKey: Int? = null)
+
+internal fun onlineRow(service: Online.Service): OnlineRow = when (service) {
+    Online.Service.OPEN_METEO -> OnlineRow(R.string.setup_online_weather, R.string.setup_online_weather_first)
+    Online.Service.AIRLABS -> OnlineRow(R.string.setup_online_flights, R.string.setup_online_flights_first, R.string.flight_remove_key)
+    Online.Service.FINNHUB -> OnlineRow(R.string.setup_online_stocks, R.string.setup_online_stocks_first, R.string.stocks_remove_key)
+    Online.Service.FRANKFURTER -> OnlineRow(R.string.setup_online_fx, R.string.setup_online_fx_first)
 }
 
 /**
@@ -454,11 +493,7 @@ fun AboutPage() {
         PageLabel(stringResource(R.string.about_privacy))
         Body(stringResource(R.string.about_privacy_text))
         Spacer(Modifier.height(4.dp))
-        Bullet(stringResource(R.string.about_privacy_weather))
-        Bullet(stringResource(R.string.about_privacy_air))
-        Bullet(stringResource(R.string.about_privacy_flight))
-        Bullet(stringResource(R.string.about_privacy_stocks))
-        Bullet(stringResource(R.string.about_privacy_fx))
+        Items.all.filter { it.online != null }.mapNotNull { it.onlineNote }.forEach { Bullet(stringResource(it)) }
         Bullet(stringResource(R.string.about_privacy_clipboard))
         Bullet(stringResource(R.string.about_privacy_media))
         Bullet(stringResource(R.string.about_privacy_others))

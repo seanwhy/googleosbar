@@ -101,7 +101,7 @@ object NowPlaying {
     }
 
     private lateinit var app: Context
-    private val main = Handler(Looper.getMainLooper())
+    private val main by lazy { Handler(Looper.getMainLooper()) }
     /** For the slow parts: a player's first state and metadata, and scaling its artwork. */
     private val work: Executor by lazy {
         ThreadPoolExecutor(0, 1, 30, TimeUnit.SECONDS, LinkedBlockingQueue()) { r ->

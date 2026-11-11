@@ -1,6 +1,7 @@
 # BentoBar: device findings (HP Googlebook 14, Android 17 / SDK 37)
 
-Checked over adb with the throwaway probe in `probe/` (package local.bentobar.probe).
+Checked over adb with a throwaway probe app (package local.bentobar.probe). It was never built by Gradle or shipped and is
+removed from the tree; its last commit before removal is `911d30b` (`git show 911d30b --stat` lists it).
 
 ## The desktop status bar (2026-09-27)
 - One window, `StatusBar`, type STATUS_BAR, 1920x41 px at the top (display 1920x1200, density 1.125,

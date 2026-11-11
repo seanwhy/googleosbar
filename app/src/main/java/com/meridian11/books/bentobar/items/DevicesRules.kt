@@ -124,7 +124,7 @@ object DevicesRules {
     fun name(device: Device, words: Words): String = device.name.ifEmpty { words.unnamed() }
 
     /** A level as the bar and the menu write it: "85%". */
-    fun percentText(percent: Int): String = "$percent%"
+    fun percentText(percent: Int): String = com.meridian11.books.bentobar.util.Fmt.percent(percent)
 
     /** One device as a sentence: the bar's spoken description, and its row's in the menu. */
     fun desc(device: Device, words: Words): String {

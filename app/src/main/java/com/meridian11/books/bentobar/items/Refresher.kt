@@ -41,7 +41,10 @@ class Refresher<K : Any, V : Any>(
      * a snapshot old). [changed] is told on the main thread after a snapshot changed. Whatever
      * [every] says, [want] never loads a key again within [minGapMs] of its last load. [mayLoad] is
      * asked on the main thread before anything is loaded: while it says no (nothing shows items, the
-     * service is switched off), [want] and [refresh] do nothing.
+     * service is switched off), [want] and [refresh] do nothing. [report] hears the kind of what
+     * a load or an [Ask]'s work threw, as the exception's class name and never its message (an
+     * exception can quote an address, and with it a key): a debug build logs it, or a bug in a load
+     * shows only as Loading forever.
      */
     class Wiring(
         val background: Executor,
@@ -51,12 +54,16 @@ class Refresher<K : Any, V : Any>(
         val minGapMs: Long = 10_000,
         val afterThrowMs: Long = 60_000,
         val mayLoad: () -> Boolean = { true },
+        val report: (kind: String) -> Unit = {},
     )
 
     /** A value from an earlier run, and how long ago it was loaded. */
     class Restored<V>(val value: V, val ageMs: Long)
 
     private class Slot<V>(val value: V, val at: Long)
+
+    /** Every key anything is held for, in any table: for tests, which check that a forgotten key leaves nothing behind. */
+    internal fun heldKeys(): Set<K> = slots.keys + loading + again + restored + threwAt.keys + triedAt.keys + keyGeneration.keys
 
     private val slots = ConcurrentHashMap<K, Slot<V>>()
     // Everything below is touched on the main thread only.
@@ -116,9 +123,12 @@ class Refresher<K : Any, V : Any>(
     fun forget(key: K? = null) {
         if (key == null) {
             generation++
+            // Every running load is overtaken by the one counter: nothing per key is needed for it, and nothing of a key stays.
+            keyGeneration.clear()
             slots.clear(); again.clear(); restored.clear(); threwAt.clear(); triedAt.clear()
         } else {
-            keyGeneration[key] = (keyGeneration[key] ?: 0) + 1
+            // A load on its way must not publish; with none running there is nobody to tell, and nothing of the key stays.
+            if (key in loading) keyGeneration[key] = (keyGeneration[key] ?: 0) + 1 else keyGeneration -= key
             slots.remove(key); again -= key; restored -= key; threwAt -= key; triedAt -= key
         }
     }
@@ -140,6 +150,8 @@ class Refresher<K : Any, V : Any>(
             wiring.main(Runnable {
                 loading -= key
                 val current = all == generation && own == (keyGeneration[key] ?: 0)
+                // Its load is back: the key's count has done its work, and it holds a forgotten key no longer (a place, for a city or My location).
+                if (!current) keyGeneration -= key
                 val now = wiring.elapsed()
                 // Only an answer that counts: a key forgotten while this ran is looked up in what is kept again.
                 if (tryRestore && current) restored += key
@@ -152,7 +164,10 @@ class Refresher<K : Any, V : Any>(
                         // Nothing to say: what there is stays, as old as it is.
                         loaded.getOrNull()?.let { slots[key] = Slot(it, now); wiring.changed() }
                     }
-                    else -> threwAt[key] = now
+                    else -> {
+                        threwAt[key] = now
+                        loaded?.exceptionOrNull()?.let { wiring.report(it.javaClass.simpleName) }
+                    }
                 }
                 if (again.remove(key) && current) start(key, tryRestore = false)
             })

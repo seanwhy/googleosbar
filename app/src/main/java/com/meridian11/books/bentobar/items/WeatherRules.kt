@@ -73,35 +73,6 @@ class Times(
     val weekdayLong: (epochMs: Long, zone: ZoneId) -> String,
 )
 
-/** Why the last try brought no reading. Each is a state with words of its own, never the failed item's "!". */
-enum class Failure { OFFLINE, NO_ANSWER, SLOW_DOWN }
-
-/**
- * A city's coordinates as they are stored in the layout and sent: two decimals each, about a
- * kilometer. Printed, it says nothing of where it is.
- */
-@Immutable
-data class Place(val lat: String, val lon: String) {
-    /** "47.37,8.55": what a reading is loaded and kept under, so two items with one city share one request. */
-    val key: String get() = "$lat,$lon"
-    override fun toString() = "a place"
-}
-
-/**
- * Where the device is, as Android said it (My location). Held in memory only, and never used as it
- * is: [WeatherLoad.place] rounds it to a [Place] ([WeatherRules.nearby]) before anything is asked or
- * held under it.
- */
-data class Fix(val lat: Double, val lon: Double) {
-    override fun toString() = "a fix"
-}
-
-/**
- * Why an item that shows the weather of where the device is has no place yet ([WeatherRules.status]).
- * [FINDING]: Android was asked and hasn't answered. The others are states with words of their own.
- */
-enum class Locate { FINDING, NOT_ALLOWED, OFF, NONE }
-
 /** A place a search found, with what tells it from others of its name. Coordinates are rounded already. */
 @Immutable
 data class City(val name: String, val region: String, val country: String, val lat: String, val lon: String, val zone: String) {
@@ -160,25 +131,6 @@ data class Reading(
 
 /** How one item wants its weather shown: its options, read once ([WeatherRules.look]). */
 class Look(val city: String?, val label: String?, val show: String, val fahrenheit: Boolean, val miles: Boolean, val rainHours: Int)
-
-/** Which of its states a Weather item is in. */
-sealed interface Status {
-    /** No city yet. */
-    data object NotSetUp : Status
-    /** A city, but the service is switched off: in Setup ([everOn]), or it never was on here (a layout that came with a city). */
-    data class Off(val everOn: Boolean) : Status
-    /**
-     * Nothing to show yet: a city's or My location's first reading is on its way, one too old to show is
-     * asked again, or Android is asked where the device is for the first time.
-     */
-    data object Loading : Status
-    /** My location, and the device's location isn't known: not allowed, switched off, or Android has none. */
-    data class NoLocation(val why: Locate) : Status
-    /** No numbers under three hours old, and the last try failed. */
-    data class Missing(val failure: Failure) : Status
-    /** Numbers under three hours old. With [Reading.failure] they are "not live": the last try failed. */
-    data class Live(val reading: Reading) : Status
-}
 
 /** Refresh, or Try again, as the menu draws it ([WeatherRules.again]). */
 enum class Again {
@@ -457,12 +409,7 @@ object WeatherRules {
      * check is made every minute; a network that doesn't reach the service (a sign-in page, a name
      * that can't be found) does cost a try each time, and is tried less and less often.
      */
-    fun every(r: Reading): Long = when (r.failure) {
-        null -> FRESH_MS
-        Failure.NO_ANSWER -> RETRY_MS
-        Failure.SLOW_DOWN -> maxOf(SLOW_MS, r.retryAfterSec * 1000)
-        Failure.OFFLINE -> if (r.misses <= 1) MIN_MS else minOf(RETRY_MS, MIN_MS shl (r.misses - 1).coerceAtMost(4))
-    }
+    fun every(r: Reading): Long = if (r.failure == null) FRESH_MS else Pace.after(r.failure, r.misses, r.retryAfterSec, RETRY_MS, SLOW_MS)
 
     /**
      * How long after a try came back the next one by hand (Refresh, Try again) has to wait. A minute
@@ -491,8 +438,7 @@ object WeatherRules {
      * counts where the reading has its mark ([Reading.fetchedUp]) and has run three hours past it,
      * which after a new boot it can only have if that long has really passed.
      */
-    fun old(r: Reading, now: Long, up: Long = 0): Boolean =
-        r.fetchedAt == 0L || now - r.fetchedAt >= OLD_MS || (r.fetchedUp > 0 && up - r.fetchedUp >= OLD_MS)
+    fun old(r: Reading, now: Long, up: Long = 0): Boolean = Pace.old(r.fetchedAt, r.fetchedUp, now, up, OLD_MS)
 
     /**
      * The state of an item. [hasPlace]: it has a city, or My location knows where the device is. [on],
@@ -500,16 +446,8 @@ object WeatherRules {
      * the place, or null. [now] is the wall clock and [up] the time since boot (see [old]). [locating]:
      * an item of My location whose place isn't known, and why; null for any other.
      */
-    fun status(hasPlace: Boolean, on: Boolean, setUp: Boolean, reading: Reading?, now: Long, up: Long = 0, locating: Locate? = null): Status = when {
-        !hasPlace && locating == null -> Status.NotSetUp
-        !on -> Status.Off(everOn = setUp)
-        locating == Locate.FINDING -> Status.Loading
-        locating != null -> Status.NoLocation(locating)
-        reading == null -> Status.Loading
-        reading.current != null && !old(reading, now, up) -> Status.Live(reading)
-        reading.failure != null -> Status.Missing(reading.failure)
-        else -> Status.Loading
-    }
+    fun status(hasPlace: Boolean, on: Boolean, setUp: Boolean, reading: Reading?, now: Long, up: Long = 0, locating: Locate? = null): Status<Reading> =
+        Status.of(hasPlace, on, setUp, reading, locating, shows = { it.current != null && !old(it, now, up) }, failure = { it.failure })
 
     // ---- the city's own time ---------------------------------------------------------------------
 
@@ -554,7 +492,7 @@ object WeatherRules {
 
     // ---- the bar ---------------------------------------------------------------------------------
 
-    fun bar(status: Status, look: Look, now: Long, w: WeatherWords, t: Times): Bar = when (status) {
+    fun bar(status: Status<Reading>, look: Look, now: Long, w: WeatherWords, t: Times): Bar = when (status) {
         // An outlined cloud for "no number yet", a crossed one for "no reading": both plainly not the filled cloud of a cloudy day.
         Status.NotSetUp -> Bar(Sym.CLOUD, filled = false, desc = w.say(W.DESC_NOT_SET_UP))
         is Status.Off -> Bar(Sym.CLOUD, filled = false, desc = w.say(W.DESC_OFF))

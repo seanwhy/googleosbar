@@ -50,7 +50,7 @@ class StocksLoadTest {
         val r = net.asked.single()
         assertEquals(Host.FINNHUB, r.host)
         assertEquals("/api/v1/quote", r.path)
-        assertEquals(listOf("symbol" to "AAPL", "token" to key), r.query)
+        assertEquals(listOf("symbol" to "AAPL"), r.query)
         // Printed, a request says its host and path only: never the key, never the stock.
         assertEquals("api.finnhub.io/api/v1/quote", r.toString())
     }
@@ -58,7 +58,7 @@ class StocksLoadTest {
     @Test fun aSearchIsTheTextLimitedToTheUsAndTheKey() = FakeHttp.use { net ->
         net.reply(Host.FINNHUB, Finnhub.SEARCH, found)
         StocksLoad.search("apple")
-        assertEquals(listOf("q" to "apple", "exchange" to "US", "token" to key), net.asked.single().query)
+        assertEquals(listOf("q" to "apple", "exchange" to "US"), net.asked.single().query)
         assertEquals("apple", StocksLoad.query("  apple\n"))
         assertNull(StocksLoad.query("  "))
         assertEquals(Finnhub.QUERY_CHARS, StocksLoad.query("x".repeat(500))!!.length)

@@ -109,12 +109,5 @@ object HereRules {
      * way. An item in Off keeps its choice, and where the device is is found again when it comes back.
      */
     fun wanted(items: List<ItemConfig>, on: Boolean): Boolean =
-        on && items.any { (it.type == "weather" || it.type == "air") && it.section != Section.OFF && WeatherRules.here(it) }
-
-    /**
-     * Whether Android's location permission may be asked for: an item of My location is in the layout, in
-     * any section (Allow location serves an item in Off too). The settings window, which asks, is exported:
-     * another app's intent to it asks nothing for a layout without one.
-     */
-    fun mayAsk(items: List<ItemConfig>): Boolean = items.any { (it.type == "weather" || it.type == "air") && WeatherRules.here(it) }
+        on && items.any { Items.of(it.type)?.usesMyLocation == true && it.section != Section.OFF && WeatherRules.here(it) }
 }

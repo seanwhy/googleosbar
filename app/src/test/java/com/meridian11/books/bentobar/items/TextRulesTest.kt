@@ -23,6 +23,14 @@ class TextRulesTest {
         assertEquals("a‌b", TextRules.oneLine("a‌b", 80))
     }
 
+    @Test fun aTitleLongerThanItsRoomEndsInAnEllipsisAndNoCharacterIsCutInHalf() {
+        assertEquals("Standup", TextRules.short("Standup", 7))
+        assertEquals("Stand…", TextRules.short("Standup!", 6))
+        // An emoji at the cut: a cut by UTF-16 units leaves half of it, which draws as a broken glyph.
+        assertEquals("a🌧…", TextRules.short("a🌧🌧b", 3))
+        assertEquals("…", TextRules.short("Standup", 1))
+    }
+
     @Test fun aReaderCountsALetterWithItsAccentAsOne() {
         assertEquals(6, TextRules.count("Zürich"))
         assertTrue(TextRules.fits("Zürich", 6))

@@ -21,6 +21,7 @@ import com.meridian11.books.bentobar.util.Sym
  * when something last played and which app that was.
  */
 object MediaItem : ItemType("media", R.string.item_media_title, Sym.MUSIC_NOTE, R.string.item_media_desc) {
+    override val group = ItemGroup.TOOLS
     override val canBeActive = true
     override val addsWhenActive = true
     override val notificationAccess = true
@@ -126,8 +127,11 @@ object MediaItem : ItemType("media", R.string.item_media_title, Sym.MUSIC_NOTE, 
      * of the real players, in the bar and in the menu; `media stage off` ends it. A staged menu's
      * buttons still send real media keys. What comes back is logged, so it holds no title.
      */
+    override val stages = listOf("playing", "paused", "none", "notitle", "two", "live", "noaccess", "noaccess paused", "noaccess none", "starting", "long", "wide", "emoji", "rtl").map { "stage $it" }
+
     override fun debug(args: List<String>): String? = when {
         args.isEmpty() -> said()
+        args == listOf("off") -> { stage(null); said() }
         args[0] != "stage" -> null
         args.drop(1) == listOf("off") -> { stage(null); said() }
         else -> MediaSamples.of(args.drop(1))?.let { stage(it); said() }

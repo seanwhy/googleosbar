@@ -1,6 +1,7 @@
 package com.meridian11.books.bentobar.items
 
 import android.Manifest
+import android.app.AlarmManager
 import android.app.Notification
 import android.app.NotificationChannel
 import android.app.NotificationManager
@@ -62,6 +63,9 @@ object Notify {
     fun allowed(context: Context) =
         context.checkSelfPermission(Manifest.permission.POST_NOTIFICATIONS) == PackageManager.PERMISSION_GRANTED &&
             com.meridian11.books.bentobar.data.Uses.on(com.meridian11.books.bentobar.data.Uses.NOTIFICATIONS)
+
+    /** A finished timer rings through its notification (the alarm tone is the channel's), so ending the ring is cancelling it. */
+    fun cancelDone(context: Context) { context.getSystemService(NotificationManager::class.java)?.cancel(ID_DONE) }
 
     fun timerDone(context: Context, title: String, text: String) {
         if (!allowed(context)) return
@@ -125,50 +129,72 @@ object Glyphs {
  * uses it for the running timer, else a meeting that is on or about to start.
  */
 object Chips {
-    /** A meeting gets its chip this long before it starts. */
-    private const val LEAD_MS = 15 * 60_000L
+    private const val CALENDAR_USER = "chip"
     private val main = Handler(Looper.getMainLooper())
     private var app: Context? = null
     /** The chip changes at a meeting's times (15 minutes before, the start, the end), not only on events. */
     private val boundary = Runnable { app?.let { update(it) } }
+    /** What the system's alarm for that is set to, so a change to something else doesn't set it again. */
+    private var armedAt: Long? = null
 
     fun update(context: Context) {
         val app = context.applicationContext.also { this.app = it }
         val nm = app.getSystemService(NotificationManager::class.java) ?: return
         val cfg = Store.config.value
-        val barUp = Env.service != null && cfg.enabled
+        val barUp = Env.running && cfg.enabled
         val wanted = when (cfg.chipMode) {
             ChipMode.OFF -> false
             ChipMode.FALLBACK -> !barUp
             ChipMode.ALWAYS -> true
         }
         main.removeCallbacks(boundary)
-        val n = if (wanted && Notify.allowed(app)) build(app) else null
-        if (n == null) nm.cancel(Notify.ID_CHIP) else { Notify.channels(app); nm.notify(Notify.ID_CHIP, n) }
-        if (wanted && Timers.state.value == null && meetingChips()) {
+        val shows = wanted && Notify.allowed(app)
+        val meetings = ChipRules.needsCalendar(shows, Timers.state.value != null, meetingChips())
+        // Before build() reads it: a process just started finds it loading, and the load comes back here.
+        if (meetings) Calendar.hold(CALENDAR_USER) else Calendar.release(CALENDAR_USER)
+        val n = if (shows) build(app) else null
+        if (n != null) { Notify.channels(app); nm.notify(Notify.ID_CHIP, n) }
+        else if (!ChipRules.leaveUp(meetings, Calendar.loadingFirst) { showingTimeout(nm) }) nm.cancel(Notify.ID_CHIP)
+        var next: Long? = null
+        if (meetings) {
             // Keep the calendar current while the strip (which otherwise asks for it) may be away; a
             // load that finds changes calls update() again.
             Calendar.refresh()
             // From every loaded meeting, not only today's (Calendar.meetings stops at 03:00): after the
             // day's last one, nothing else would bring the chip up for tomorrow morning's.
             val now = System.currentTimeMillis()
-            nextChange(Calendar.upcomingMeetings(now), now)?.let { main.postDelayed(boundary, it - now + 1_000) }
+            next = ChipRules.nextChange(Calendar.upcomingMeetings(now), now)?.also { main.postDelayed(boundary, it - now + 1_000) }
         }
+        arm(app, next?.plus(1_000))
     }
+
+    /**
+     * The next change, also for when no process is left to wait for it: the chip shows exactly while the accessibility service,
+     * which keeps the process, may be off. Inexact, so no permission is needed and the handler above stays what is on time;
+     * the wall clock, which meetings are in; no wake-up, so a sleeping device hears of it when it next wakes.
+     */
+    private fun arm(context: Context, at: Long?) {
+        if (at == armedAt) return
+        val am = context.getSystemService(AlarmManager::class.java) ?: return
+        val pi = PendingIntent.getBroadcast(context, 0, Intent(context, ChipAction::class.java).setAction(ChipAction.BOUNDARY),
+            PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT)
+        if (at == null) am.cancel(pi) else am.set(AlarmManager.RTC, at, pi)
+        armedAt = at
+    }
+
+    /** What the chip up now was posted with ([ChipRules.leaveUp]); null with none up. */
+    private fun showingTimeout(nm: NotificationManager) =
+        nm.activeNotifications.firstOrNull { it.id == Notify.ID_CHIP }?.notification?.timeoutAfter
 
     private fun meetingChips() =
         Store.config.value.items.any { it.type == EventItem.type && it.section != com.meridian11.books.bentobar.data.Section.OFF }
-
-    /** The next time the meeting chip would change: a meeting entering the 15-minute window, starting or ending. */
-    internal fun nextChange(meetings: List<Calendar.Event>, now: Long): Long? =
-        meetings.flatMap { listOf(it.begin - LEAD_MS, it.begin, it.end) }.filter { it > now }.minOrNull()
 
     private fun build(context: Context): Notification? {
         val t = Timers.state.value
         if (t != null) return timer(context, t)
         if (!meetingChips()) return null
         val now = System.currentTimeMillis()
-        val e = Calendar.current(now) ?: Calendar.next(now)?.takeIf { it.begin - now <= LEAD_MS } ?: return null
+        val e = Calendar.current(now) ?: Calendar.next(now)?.takeIf { it.begin - now <= ChipRules.LEAD_MS } ?: return null
         return event(context, e, now)
     }
 
@@ -227,6 +253,8 @@ object Chips {
             if (on) context.getString(R.string.common_ends_at, time.format(Date(e.end)))
             else context.getString(R.string.chip_starts_at, time.format(Date(e.begin))))
             .setWhen(if (on) e.end else e.begin).setShowWhen(true).setUsesChronometer(true).setChronometerCountDown(true)
+            // At the meeting's end, with or without a process left to take it away.
+            .setTimeoutAfter(ChipRules.timeoutAfter(e.end, now))
         // These open the meeting the chip shows, straight from the notification: a broadcast that then
         // started an activity would be a trampoline Android blocks, and could pick a different meeting.
         Calendar.joinIntent(e)?.let { b.addAction(launch(context, Sym.VIDEOCAM, context.getString(R.string.common_join), 2, it)) }
@@ -235,12 +263,13 @@ object Chips {
     }
 }
 
-/** Buttons on the Live Update chip's card. */
+/** Buttons on the Live Update chip's card, and the alarm for its next change. Not exported: only BentoBar's own intents get here. */
 class ChipAction : BroadcastReceiver() {
     companion object {
         const val TOGGLE = "com.meridian11.books.bentobar.chip.TOGGLE"
         const val PLUS = "com.meridian11.books.bentobar.chip.PLUS"
         const val STOP = "com.meridian11.books.bentobar.chip.STOP"
+        const val BOUNDARY = "com.meridian11.books.bentobar.chip.BOUNDARY"
     }
 
     override fun onReceive(context: Context, intent: Intent) {
@@ -249,6 +278,12 @@ class ChipAction : BroadcastReceiver() {
             TOGGLE -> Timers.toggle()
             PLUS -> Timers.add(60_000)
             STOP -> Timers.stop()
+            BOUNDARY -> {
+                Chips.update(context)
+                // A process started for this alarm is cached as soon as this returns, with the first load still running and the
+                // next alarm not set. It stays a receiver until the load has come back through Chips.update, or a few seconds.
+                if (Calendar.loadingFirst) goAsync().let { Calendar.whenLoaded(it::finish) }
+            }
         }
     }
 }

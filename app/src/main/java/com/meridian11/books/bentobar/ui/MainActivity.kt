@@ -7,6 +7,7 @@ import android.content.Intent
 import android.content.pm.PackageManager
 import android.net.Uri
 import android.os.Bundle
+import android.os.SystemClock
 import android.provider.Settings
 import android.view.accessibility.AccessibilityManager
 import androidx.activity.ComponentActivity
@@ -31,13 +32,10 @@ import androidx.compose.material3.NavigationRailItem
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
-import androidx.compose.material3.SnackbarResult
-import androidx.compose.material3.SnackbarHostState
 import androidx.compose.material3.SnackbarHost
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
-import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
@@ -46,23 +44,33 @@ import androidx.compose.foundation.selection.toggleable
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.res.stringResource
+import androidx.compose.ui.semantics.heading
+import androidx.compose.ui.semantics.semantics
 import com.meridian11.books.bentobar.R
 import com.meridian11.books.bentobar.bar.BarService
 import com.meridian11.books.bentobar.bar.BarStatus
 import com.meridian11.books.bentobar.data.Store
 import com.meridian11.books.bentobar.items.Chips
 import com.meridian11.books.bentobar.items.Env
-import com.meridian11.books.bentobar.items.HereRules
 import com.meridian11.books.bentobar.items.Items
 import com.meridian11.books.bentobar.items.Notify
 import com.meridian11.books.bentobar.items.Ticker
 import com.meridian11.books.bentobar.util.Sym
 import com.meridian11.books.bentobar.util.SymIcon
 
+/** The settings window's pages: what the rail shows and what the header says. A new page goes here and in [MainActivity]'s `when`. */
+enum class Page(val icon: String, @androidx.annotation.StringRes val label: Int, @androidx.annotation.StringRes val title: Int) {
+    BAR(Sym.WYSIWYG, R.string.nav_bar, R.string.page_bar),
+    ADD(Sym.ADD, R.string.nav_add, R.string.page_add),
+    LOOK(Sym.PALETTE, R.string.nav_look, R.string.page_look),
+    SETUP(Sym.TUNE, R.string.nav_setup, R.string.page_setup),
+    ABOUT(Sym.INFO, R.string.nav_about, R.string.page_about),
+}
+
 class MainActivity : ComponentActivity() {
     // Accessibility services turned on or off (in Settings' own window, on a Googlebook).
     private val services = AccessibilityManager.AccessibilityServicesStateChangeListener { Setup.refresh(this) }
-    private var page by mutableIntStateOf(0)
+    private var page by mutableStateOf(Page.BAR)
     private var selected by mutableStateOf<String?>(null)
     /** The accessibility disclosure is up ([AccessibilityDisclosure]). */
     private var disclosure by mutableStateOf(false)
@@ -79,7 +87,7 @@ class MainActivity : ComponentActivity() {
             handle(intent)
             // First opening, service still off: the disclosure comes up by itself, in the app's normal
             // use, not behind a page someone has to find. Once answered, only Turn on brings it back.
-            disclosure = Store.consent.value == Store.Consent.NOT_ASKED && !serviceOn(this) && !turnedOn(this) && !Env.advancedProtection()
+            disclosure = ConsentRules.asksOnFirstOpening(Store.consent.value, { serviceOn(this) }, { turnedOn(this) }, { Env.advancedProtection() })
             if (!disclosure && Store.config.value.items.any { it.type == "cloud_clipboard" && it.section != com.meridian11.books.bentobar.data.Section.OFF }) {
                 if (!com.meridian11.books.bentobar.items.CloudClipboardItem.hasAllFilesAccess(this)) {
                     val missing = runtimeFilePermissions().filter {
@@ -93,7 +101,7 @@ class MainActivity : ComponentActivity() {
                 }
             }
         } else {
-            page = savedInstanceState.getInt(STATE_PAGE); selected = savedInstanceState.getString(STATE_SELECTED)
+            page = Page.entries.getOrElse(savedInstanceState.getInt(STATE_PAGE)) { Page.BAR }; selected = savedInstanceState.getString(STATE_SELECTED)
             disclosure = savedInstanceState.getBoolean(STATE_DISCLOSURE)
         }
         setContent {
@@ -113,7 +121,7 @@ class MainActivity : ComponentActivity() {
 
     override fun onSaveInstanceState(outState: Bundle) {
         super.onSaveInstanceState(outState)
-        outState.putInt(STATE_PAGE, page)
+        outState.putInt(STATE_PAGE, page.ordinal)
         outState.putString(STATE_SELECTED, selected)
         outState.putBoolean(STATE_DISCLOSURE, disclosure)
     }
@@ -124,18 +132,16 @@ class MainActivity : ComponentActivity() {
      * disclosure, and Agree there opens the settings.
      */
     private fun turnOn() {
-        if (Store.consent.value == Store.Consent.AGREED) openAccessibility(this) else disclosure = true
+        if (ConsentRules.turnOn(Store.consent.value) == ConsentRules.TurnOn.OPEN_SETTINGS) openAccessibility(this) else disclosure = true
     }
 
     private fun handle(intent: Intent?) {
         intent ?: return
-        intent.getStringExtra(EXTRA_ITEM)?.let { selected = it; page = 0 }
-        if (intent.getBooleanExtra(EXTRA_EDIT, false)) page = 0
-        intent.getStringExtra(EXTRA_REQUEST)?.let { perm ->
-            // Location only for a layout with an item of My location: this activity is exported, and another app's intent mustn't ask it.
-            if (perm == android.Manifest.permission.ACCESS_COARSE_LOCATION && !HereRules.mayAsk(Store.config.value.items)) return@let
-            if (checkSelfPermission(perm) != PackageManager.PERMISSION_GRANTED) requestPermissions(arrayOf(perm), 1)
-        }
+        intent.getStringExtra(EXTRA_ITEM)?.let { selected = it; page = Page.BAR }
+        if (intent.getBooleanExtra(EXTRA_EDIT, false)) page = Page.BAR
+        // A permission's prompt is asked for in this process ([requestPermission]), never named by an intent: this activity is
+        // exported, so any app could send one, and the prompt would be BentoBar's.
+        takeAsked()?.let { perm -> if (checkSelfPermission(perm) != PackageManager.PERMISSION_GRANTED) requestPermissions(arrayOf(perm), 1) }
         if (intent.getBooleanExtra(EXTRA_REQUEST_FILES, false)) {
             if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.R &&
                 !android.os.Environment.isExternalStorageManager()
@@ -152,7 +158,7 @@ class MainActivity : ComponentActivity() {
                 }
             }
         }
-        if (intent.action == "android.service.quicksettings.action.QS_TILE_PREFERENCES") page = 2
+        if (intent.action == "android.service.quicksettings.action.QS_TILE_PREFERENCES") page = Page.LOOK
     }
 
     override fun onDestroy() {
@@ -227,25 +233,24 @@ class MainActivity : ComponentActivity() {
                 androidx.compose.material3.Icon(androidx.compose.ui.res.painterResource(com.meridian11.books.bentobar.R.drawable.ic_bentobar), contentDescription = stringResource(R.string.app_name),
                     tint = MaterialTheme.colorScheme.primary, modifier = Modifier.size(30.dp))
                 Spacer(Modifier.height(20.dp))
-                val pages = listOf(Sym.WYSIWYG to R.string.nav_bar, Sym.ADD to R.string.nav_add, Sym.PALETTE to R.string.nav_look,
-                    Sym.TUNE to R.string.nav_setup, Sym.INFO to R.string.nav_about)
-                pages.forEachIndexed { i, (icon, label) ->
-                    NavigationRailItem(selected = page == i, onClick = { page = i },
-                        icon = { SymIcon(icon, size = 22.sp, filled = page == i) }, label = { Text(stringResource(label)) })
+                Page.entries.forEach { p ->
+                    NavigationRailItem(selected = page == p, onClick = { page = p },
+                        icon = { SymIcon(p.icon, size = 22.sp, filled = page == p) }, label = { Text(stringResource(p.label)) })
                 }
             }
             Column(Modifier.weight(1f).fillMaxHeight()) {
                 Row(Modifier.fillMaxWidth().padding(start = 28.dp, end = 20.dp, top = 18.dp, bottom = 6.dp), verticalAlignment = Alignment.CenterVertically) {
                     Column(Modifier.weight(1f)) {
-                        Text(stringResource(listOf(R.string.page_bar, R.string.page_add, R.string.page_look, R.string.page_setup, R.string.page_about)[page]),
-                            style = MaterialTheme.typography.headlineSmall)
+                        Text(stringResource(page.title),
+                            style = MaterialTheme.typography.headlineSmall, modifier = Modifier.semantics { heading() })
                         // Says what the strip is actually doing, not just whether the service is on.
                         Text(stringResource(when {
-                            !running -> if (page == 3) R.string.status_service_off_setup else R.string.status_service_off
+                            !running -> if (page == Page.SETUP) R.string.status_service_off_setup else R.string.status_service_off
                             !cfg.enabled -> R.string.status_hidden
                             else -> when (status) {
                                 BarStatus.STOPPED -> R.string.status_starting
                                 BarStatus.NO_ROOM -> R.string.status_no_room
+                                BarStatus.EMPTY -> R.string.status_empty
                                 BarStatus.NO_BAR -> R.string.status_no_bar
                                 BarStatus.COVERED -> R.string.status_covered
                                 else -> R.string.status_live
@@ -262,10 +267,12 @@ class MainActivity : ComponentActivity() {
                     }
                 }
                 Box(Modifier.weight(1f).fillMaxWidth()) {
+                    // Before the pages: a message is seen only by someone already listening, and BarPage's Undo posts as it opens.
+                    val snackbar = rememberNotices()
                     when (page) {
-                        0 -> BarPage(running, selected, onSelect = { selected = it }, onSetup = { page = 3 })
+                        Page.BAR -> BarPage(running, selected, onSelect = { selected = it }, onSetup = { page = Page.SETUP })
                         // Adding keeps you on Add: a message confirms it, with Undo, instead of jumping pages.
-                        1 -> AddPage { id ->
+                        Page.ADD -> AddPage { id ->
                             val added = Store.config.value.items.firstOrNull { it.id == id }
                             val type = added?.let { Items.of(it.type) }
                             val title = type?.title.orEmpty()
@@ -280,16 +287,11 @@ class MainActivity : ComponentActivity() {
                                     getString(R.string.bar_undo)) { Store.remove(id) }
                             }
                         }
-                        2 -> LookPage()
-                        3 -> SetupPage(this@MainActivity, setup, onTurnOn = ::turnOn)
-                        else -> AboutPage()
+                        Page.LOOK -> LookPage()
+                        Page.SETUP -> SetupPage(this@MainActivity, setup, onTurnOn = ::turnOn)
+                        Page.ABOUT -> AboutPage()
                     }
-                    val snackbar = androidx.compose.runtime.remember { SnackbarHostState() }
-                    androidx.compose.runtime.LaunchedEffect(Unit) {
-                        Notice.messages.collect { m ->
-                            if (snackbar.showSnackbar(m.text, m.action, duration = androidx.compose.material3.SnackbarDuration.Long) == SnackbarResult.ActionPerformed) m.onAction?.invoke()
-                        }
-                    }
+                    // Last, so it's drawn over the page (in a Box, later children are on top).
                     SnackbarHost(snackbar, Modifier.align(Alignment.BottomCenter).padding(16.dp))
                 }
             }
@@ -306,8 +308,18 @@ class MainActivity : ComponentActivity() {
         @Volatile var current: MainActivity? = null
         const val EXTRA_ITEM = "item"
         const val EXTRA_EDIT = "edit"
-        const val EXTRA_REQUEST = "request"
         const val EXTRA_REQUEST_FILES = "request_files"
+        /** The permission a menu asked for, and when: read once by the window that start opens. */
+        private var asked: Pair<String, Long>? = null
+        private const val ASKED_MS = 10_000L
+
+        @Synchronized private fun ask(permission: String) { asked = permission to SystemClock.elapsedRealtime() }
+
+        @Synchronized private fun takeAsked(): String? {
+            val (permission, at) = asked ?: return null
+            asked = null
+            return permission.takeIf { SystemClock.elapsedRealtime() - at <= ASKED_MS }
+        }
         private const val STATE_PAGE = "page"
         private const val STATE_SELECTED = "selected"
         private const val STATE_DISCLOSURE = "disclosure"
@@ -325,9 +337,8 @@ class MainActivity : ComponentActivity() {
             // here, not from the intent: the activity is exported, and another app's intent mustn't undo it.
             if (permission == android.Manifest.permission.READ_CALENDAR)
                 Store.update { it.copy(turnedOff = it.turnedOff - com.meridian11.books.bentobar.data.Uses.CALENDAR) }
-            context.startActivity(Intent(context, MainActivity::class.java)
-                .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_SINGLE_TOP)
-                .putExtra(EXTRA_REQUEST, permission))
+            ask(permission)
+            context.startActivity(Intent(context, MainActivity::class.java).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_SINGLE_TOP))
         }
 
         fun runtimeFilePermissions(): Array<String> =
@@ -387,7 +398,7 @@ class MainActivity : ComponentActivity() {
 
         /** Enabled in Accessibility settings (the service may take a moment to connect). */
         fun serviceOn(context: Context): Boolean {
-            if (Env.service != null) return true
+            if (Env.running) return true
             val am = context.getSystemService(AccessibilityManager::class.java) ?: return false
             val me = serviceComponent(context)
             return am.getEnabledAccessibilityServiceList(AccessibilityServiceInfo.FEEDBACK_ALL_MASK)

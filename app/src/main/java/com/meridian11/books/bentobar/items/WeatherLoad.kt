@@ -63,16 +63,14 @@ object WeatherLoad {
      * device is, for the items of My location; without it, the cities alone, which are the places whose
      * reading is kept on the device.
      */
-    fun places(items: List<ItemConfig>, here: Fix? = null): Set<Place> =
+    fun places(items: List<ItemConfig>, here: Place? = null): Set<Place> =
         items.filter { it.type == "weather" && it.section != Section.OFF }.mapNotNullTo(HashSet()) { place(it, here) }
 
     /**
-     * The place [item] asks about: its city, or for one of My location where the device is ([here]),
-     * rounded to about ten kilometers ([WeatherRules.nearby]). This is where that rounding happens: what
-     * is asked and what a reading is held under is never the location as Android said it.
+     * The place [item] asks about: its city, or for one of My location where the device is ([here], which comes rounded
+     * from [WeatherHere.place]: what is asked and what a reading is held under is never the location as Android said it).
      */
-    fun place(item: ItemConfig, here: Fix?): Place? =
-        if (WeatherRules.here(item)) here?.let { WeatherRules.nearby(it.lat, it.lon) } else WeatherRules.place(item)
+    fun place(item: ItemConfig, here: Place?): Place? = if (WeatherRules.here(item)) here else WeatherRules.place(item)
 
     /**
      * Asks the service about [place]; blocks, so only a background load calls it. A good answer is a
@@ -83,26 +81,16 @@ object WeatherLoad {
      * for (where the device is, for My location, is not among them: it is held in memory only).
      */
     fun load(place: Place, last: Reading?, now: Long, up: Long = 0, places: () -> Set<Place>): Reading? {
-        val before = Http.sent(Host.OPEN_METEO)
         val reply = Http.get(forecastRequest(place))
-        // Without a network the request helper answers by itself and nothing leaves the device.
-        val went = Http.sent(Host.OPEN_METEO) != before
         val good = (reply as? Reply.Ok)?.let { WeatherRules.read(it.text, place, now, up) }
         if (good != null) {
             keep(good, places())
             return good
         }
-        val failed = reply as? Reply.Failed
-        if (failed?.why == Why.OFF) return null
-        val wait = failed?.retryAfterSec ?: 0
-        val failure = when {
-            failed?.why == Why.OFFLINE -> Failure.OFFLINE
-            // 429 is "slow down"; so is any answer that asks for more patience than the usual retry, so that the words and the wait agree.
-            failed?.status == 429 || wait * 1000 > WeatherRules.RETRY_MS -> Failure.SLOW_DOWN
-            // A status, a timeout, too much, or a reply that is no forecast (a public network's sign-in page).
-            else -> Failure.NO_ANSWER
-        }
-        return failed(place, last, failure, went, wait)
+        // Without a network the request helper answers by itself and nothing leaves the device: no miss counts for that.
+        // A status, a timeout, too much, or a reply that is no forecast (a public network's sign-in page) is no answer.
+        val missed = Failures.missed(reply, slowAfterMs = WeatherRules.RETRY_MS) ?: return null
+        return failed(place, last, missed.failure, missed.went, missed.waitSec)
     }
 
     /**
@@ -174,8 +162,8 @@ class WeatherSource(
     /** The wall clock, and the time since boot: a reading's age is asked of both ([WeatherRules.old]). */
     private val wall: () -> Long,
     private val up: () -> Long,
-    /** Where the device is, as Android said it ([WeatherLoad.place] rounds it), and why not where that isn't known: for the items of My location. */
-    private val here: () -> Fix? = { null },
+    /** Where the device is, rounded ([WeatherHere.place]), and why not where that isn't known: for the items of My location. */
+    private val here: () -> Place? = { null },
     private val locating: () -> Locate = { Locate.FINDING },
 ) {
     private val service = Online.Service.OPEN_METEO
@@ -218,7 +206,7 @@ class WeatherSource(
     fun peek(item: ItemConfig): Reading? = place(item)?.let { readings.peek(it) }
 
     /** The state [item] is in, asking nothing. */
-    fun status(item: ItemConfig, now: Long): Status {
+    fun status(item: ItemConfig, now: Long): Status<Reading> {
         val on = Online.on(service)
         val place = place(item)
         return WeatherRules.status(hasPlace = place != null, on = on, setUp = Online.setUp(service),
@@ -318,7 +306,7 @@ class WeatherSource(
             up: () -> Long,
             layout: () -> List<ItemConfig>,
             staged: () -> Failure? = { null },
-            here: () -> Fix? = { null },
+            here: () -> Place? = { null },
             locating: () -> Locate = { Locate.FINDING },
         ): WeatherSource = WeatherSource(
             // Only a city's reading is kept on the device and read back from it: where the device is (My location) is held in

@@ -1,11 +1,16 @@
-# Pushing a tag like v0.6 builds, signs and publishes that release: the APK as a GitHub release, the
-# bundle as a draft on Google Play's closed-testing track (see docs/RELEASING.md).
-# "Run workflow" on the Actions tab is a dry run: the same signed build and checks, nothing published.
-# A release for GitHub alone: the repository variable PLAY_UPLOAD set to "off" skips the Play job.
+# Pushing a tag like v0.6 builds and signs that release and makes it a DRAFT GitHub release: the APK, its
+# SHA256SUMS and R8's mapping.txt. Someone installs the draft, runs it and publishes it (docs/RELEASING.md);
+# until then releases/latest still serves the previous release. The Play job uploads the bundle as a draft on
+# closed testing, but it is switched off while the repository variable PLAY_UPLOAD is "off" (the state today),
+# and a skipped Play job says so in a warning.
+# "Run workflow" on the Actions tab is a dry run: the same signed build and checks, nothing published; the
+# APK, checksums and mapping are kept as a run artifact.
 #
 # The signing key and the Play key are secrets of the environments "release" and "play", which only
 # main and v* tags can use; forks and pull requests never get them. The job that holds the signing
 # key uses only GitHub's own actions, pinned to exact commits, and the Play job never sees that key.
+# Gradle runs with the key on disk, so every dependency, plugin and the Gradle distribution itself is
+# pinned by checksum (gradle/verification-metadata.xml, distributionSha256Sum): a changed artifact fails the build.
 name: Release
 
 on:
@@ -31,8 +36,10 @@ jobs:
     permissions:
       contents: write
     steps:
+      # All history and branches: the checks below compare with the previous tag and with main.
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
+          fetch-depth: 0
           persist-credentials: false
 
       - uses: actions/setup-java@de7274f081f381c8f8158605e0321c36c376e2e6 # v6.0.1
@@ -40,12 +47,23 @@ jobs:
           distribution: temurin
           java-version: "21"
 
-      - name: Release notes and version
+      - name: Release notes, version and where the tag is
         if: github.ref_type == 'tag'
         run: |
           VERSION="${GITHUB_REF_NAME#v}"
           test -f "docs/release-notes/$VERSION.md" || { echo "::error::docs/release-notes/$VERSION.md is missing"; exit 1; }
           grep -q "versionName = \"$VERSION\"" app/build.gradle.kts || { echo "::error::versionName in app/build.gradle.kts isn't $VERSION"; exit 1; }
+          # The tag is on main: a release is made from the merged commit, never from a branch.
+          git merge-base --is-ancestor HEAD origin/main || { echo "::error::$GITHUB_REF_NAME is not on main: tag the commit the pull request merged"; exit 1; }
+          # versionCode goes up on every release: Play refuses a number it has seen, and an update must look newer.
+          CODE=$(sed -n 's/^ *versionCode = \([0-9]*\).*/\1/p' app/build.gradle.kts)
+          PREV=$(git tag --list 'v[0-9]*' --sort=-v:refname | awk -v t="$GITHUB_REF_NAME" 'f { print; exit } $0 == t { f = 1 }')
+          if [ -n "$PREV" ]; then
+            PREV_CODE=$(git show "$PREV:app/build.gradle.kts" | sed -n 's/^ *versionCode = \([0-9]*\).*/\1/p')
+            test -n "$CODE" && test -n "$PREV_CODE" && [ "$CODE" -gt "$PREV_CODE" ] \
+              || { echo "::error::versionCode $CODE is not above $PREV's ($PREV_CODE)"; exit 1; }
+            echo "versionCode $CODE, above $PREV's $PREV_CODE"
+          fi
 
       - name: SDK packages
         run: $ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager --install "platforms;android-37.0" "build-tools;36.0.0" > /dev/null
@@ -66,6 +84,7 @@ jobs:
           # Gradle's 512 MB default.
           mkdir -p ~/.gradle
           echo "org.gradle.jvmargs=-Xmx4g -XX:+UseParallelGC -Dfile.encoding=UTF-8" >> ~/.gradle/gradle.properties
+          # Dependency verification is on (gradle/verification-metadata.xml); never pass --dependency-verification off.
           ./gradlew :app:testDebugUnitTest :app:assembleRelease :app:bundleRelease --no-daemon --console=plain
 
       - name: Check the certificate
@@ -79,22 +98,50 @@ jobs:
           "$ANDROID_HOME/build-tools/36.0.0/aapt2" dump badging "$APK" | head -1
           sha256sum "$APK" "$AAB"
 
-      - name: Publish on GitHub
+      # The minified APK that will ship, read from the APK itself: not debuggable, no debug receiver, exactly the
+      # permissions ManifestTest pins. (Tests run on the debug build; this is the only look at the release build.)
+      - name: Check what is inside the APK
+        run: |
+          tools/check-apk.sh app/build/outputs/apk/release/app-release.apk
+          MAP=app/build/outputs/mapping/release/mapping.txt
+          test -s "$MAP" || { echo "::error::R8 wrote no mapping.txt; a stack trace from this APK could not be retraced"; exit 1; }
+
+      - name: Collect the release files
+        run: |
+          mkdir release
+          cp app/build/outputs/apk/release/app-release.apk release/BentoBar.apk
+          cp app/build/outputs/mapping/release/mapping.txt release/mapping.txt
+          (cd release && sha256sum BentoBar.apk > SHA256SUMS)
+
+      # Made as a DRAFT: releases/latest (the README's download button) serves nothing new until someone has installed
+      # the draft, run it and published it (docs/RELEASING.md). A release that exists already (a re-run, or one made by
+      # hand) is never replaced: its APK is checked and only what it lacks is added; see tools/github-release.sh.
+      - name: Draft the release on GitHub
         if: github.ref_type == 'tag'
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          VERSION="${GITHUB_REF_NAME#v}"
-          cp app/build/outputs/apk/release/app-release.apk BentoBar.apk
-          sha256sum BentoBar.apk > SHA256SUMS
-          # A re-run, or a release made by hand with the local script: leave what is published as it is.
-          if gh release view "$GITHUB_REF_NAME" > /dev/null 2>&1; then
-            echo "::notice::the release $GITHUB_REF_NAME exists already; not publishing again"
-          else
-            gh release create "$GITHUB_REF_NAME" --verify-tag --title "BentoBar $VERSION" \
-              --notes-file "docs/release-notes/$VERSION.md" \
-              BentoBar.apk SHA256SUMS
-          fi
+          export APKSIGNER="$ANDROID_HOME/build-tools/36.0.0/apksigner"
+          tools/github-release.sh draft "$GITHUB_REF_NAME"
+
+      # Whatever the route, the release must now hold what the README's download needs, and the APK on it must pass:
+      # gh creates the release before its files, so a failed upload would otherwise leave a release without an APK.
+      - name: Check the release on GitHub
+        if: github.ref_type == 'tag'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          export APKSIGNER="$ANDROID_HOME/build-tools/36.0.0/apksigner"
+          tools/github-release.sh verify "$GITHUB_REF_NAME"
+
+      # A dry run publishes nothing; the files are kept to look at.
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        if: github.ref_type != 'tag'
+        with:
+          name: release-files
+          path: release/
+          if-no-files-found: error
+          retention-days: 14
 
       - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
@@ -106,6 +153,17 @@ jobs:
       - name: Remove the key
         if: always()
         run: rm -rf ~/.config/bentobar
+
+  # A skipped job is easy to take for a pass: say so, in the log and on the run's summary.
+  play-off:
+    needs: build
+    if: vars.PLAY_UPLOAD == 'off'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    steps:
+      - run: |
+          echo "::warning::Nothing was put on Google Play: the repository variable PLAY_UPLOAD is off, so the Play job is skipped. The bundle is the run's 'bundle' artifact (30 days)."
+          echo "### Google Play: skipped. PLAY_UPLOAD is off, so nothing was uploaded for $GITHUB_REF_NAME." >> "$GITHUB_STEP_SUMMARY"
 
   play:
     needs: build

@@ -26,17 +26,12 @@ object TickRules {
      */
     fun stamp(now: Long, lastTick: Long?): Long = if (lastTick != null && lastTick <= now) lastTick else now
 
-    /** How long an item that had something to say stays out after it has nothing more ("show when" items of [holds] types). */
-    const val HOLD_MS = 20_000L
-
     /**
-     * The types whose reading goes up and down around the user's line (speed, load): held, so they don't blink. Not the
-     * others: what has ended goes at once (a meeting's next title must not show while presenting), and Now playing and
-     * Heat hold on their own.
+     * How long an item that had something to say stays out after it has nothing more (a "show when" item of a type that
+     * [ItemType.holds]). Not the others: what has ended goes at once (a meeting's next title must not show while
+     * presenting), and Now playing and Heat hold on their own.
      */
-    fun holds(type: String): Boolean = type in HOLDING
-
-    private val HOLDING = setOf("network", "cpu", "memory")
+    const val HOLD_MS = 20_000L
 
     /**
      * Whether an item counts as having something to say at [now]: it [active]ly has, or had at
@@ -52,6 +47,6 @@ object TickRules {
      * menu ([focusItem]), or everything while the [settings] preview is open. A folded-away battery or
      * memory item costs nothing.
      */
-    fun needed(cfg: BarConfig, settings: Boolean, revealHidden: Boolean, focusItem: String?): List<ItemConfig> =
-        cfg.items.filter { it.section != Section.OFF && (settings || cfg.couldShow(it) || revealHidden || it.id == focusItem) }
+    fun needed(cfg: BarConfig, settings: Boolean, revealHidden: Boolean, focusItem: String?, type: (String) -> ItemType? = Items::of): List<ItemConfig> =
+        cfg.items.filter { it.section != Section.OFF && (settings || cfg.couldShow(it, type(it.type)) || revealHidden || it.id == focusItem) }
 }

@@ -40,7 +40,7 @@ class Ask<Q : Any, A : Any>(private val wiring: Refresher.Wiring, private val wo
             wiring.background.execute {
                 // Overtaken or cleared while it waited: nobody wants this answer, so nothing is sent for it.
                 if (mine != generation) return@execute
-                val answer = runCatching { work(question) }.getOrNull()
+                val answer = runCatching { work(question) }.onFailure { wiring.report(it.javaClass.simpleName) }.getOrNull()
                 wiring.main(Runnable {
                     if (mine != generation) return@Runnable
                     current.value = if (answer == null) State.Idle else State.Done(question, answer)

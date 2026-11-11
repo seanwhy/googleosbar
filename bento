@@ -12,26 +12,33 @@
 #   ./bento menushot [FILE]   the open menu's area
 #   ./bento appshot [FILE]    the settings window
 #
-# adb's server listens on a Unix socket (VSCodeBook's), never tcp:5037: the Linux terminal
-# forwards every TCP port to Android, where any app could reach it.
+# Which device: ANDROID_SERIAL if set; else BENTO_MODEL, matched against the model: field of `adb devices -l`
+# (BENTO_MODEL=Pixel_11_Pro, underscores as adb prints them); else the one attached device. Anything but exactly one
+# match stops with the list of what is attached, so a command never goes to a device by luck.
+# ADB_SERVER_SOCKET (for example localfilesystem:/path/to/adb.sock, when adb must not listen on tcp:5037) is passed
+# to adb as it is; unset it is plain adb.
 set -euo pipefail
 cd "$(dirname "$(readlink -f "$0")")"
 PKG=com.meridian11.books.bentobar
 SVC="$PKG/$PKG.bar.BarService"
 APK=app/build/outputs/apk/debug/app-debug.apk
-ENVF="$HOME/.config/vscodebook/android.env"
-[ -f "$ENVF" ] && . "$ENVF"
-export ADB_SERVER_SOCKET=${ADB_SERVER_SOCKET:-localfilesystem:$HOME/.local/state/vscodebook/adb.sock}
 TMP=${XDG_RUNTIME_DIR:-/tmp}
 
-serial() { cat "$HOME/.config/vscodebook/adb-serial" 2>/dev/null; }
-connect() {
-  local s; s="$(serial)"
-  if [ -n "$s" ] && adb -s "$s" shell true >/dev/null 2>&1; then echo "$s"; return; fi
-  vscodebook android connect >/dev/null 2>&1 || true
-  serial
+connect() { # the device's serial, see "Which device" above; anything but exactly one match is an error
+  if [ -n "${ANDROID_SERIAL:-}" ]; then echo "$ANDROID_SERIAL"; return; fi
+  local attached found n
+  attached=$(adb devices -l | awk 'NR > 1 && $2 == "device"')
+  if [ -n "${BENTO_MODEL:-}" ]; then found=$(awk -v m="model:$BENTO_MODEL" '{ for (i = 3; i <= NF; i++) if ($i == m) print $1 }' <<< "$attached")
+  else found=$(awk '{ print $1 }' <<< "$attached"); fi
+  n=$(grep -c . <<< "$found" || true)
+  if [ "$n" != 1 ]; then
+    echo "bento: $n devices match${BENTO_MODEL:+ BENTO_MODEL=$BENTO_MODEL}; set ANDROID_SERIAL or BENTO_MODEL to exactly one of:" >&2
+    echo "${attached:-  (none attached)}" >&2
+    exit 1
+  fi
+  echo "$found"
 }
-A() { adb -s "$(connect)" "$@"; }
+A() { local s; s=$(connect) || exit 1; adb -s "$s" "$@"; }
 dbg() { A shell "am broadcast --user current -a $PKG.DEBUG -p $PKG --es c '$*'" >/dev/null; sleep 0.4
   A shell "logcat -d -s BentoBar:I" | grep "debug $1" | tail -1 | sed 's/.*-> //'; }
 
@@ -41,19 +48,27 @@ winshot() { # BentoBar's own window as a PNG: winshot TITLE|app FILE (debug buil
 
 build() { if [ "${1:-}" = release ]; then ./gradlew :app:assembleRelease --console=plain -q; else ./gradlew :app:assembleDebug --console=plain -q; fi; }
 
+# The device's adb-install verification is switched off only for the install itself, and put back as it was however the
+# script ends: a failed install, Ctrl-C or a dropped connection included (the trap runs on any exit).
+VERIFY_SERIAL=; VERIFY_WAS=
+restore_verify() { [ -z "$VERIFY_SERIAL" ] || adb -s "$VERIFY_SERIAL" shell settings put global verifier_verify_adb_installs "$VERIFY_WAS" || true; VERIFY_SERIAL=; }
 install() {
   local s; s="$(connect)"
+  VERIFY_WAS=$(adb -s "$s" shell settings get global verifier_verify_adb_installs | tr -d '\r')
+  case $VERIFY_WAS in 0|1) ;; *) VERIFY_WAS=1 ;; esac # unset: Android's default is on
+  VERIFY_SERIAL=$s
+  trap restore_verify EXIT; trap 'exit 130' INT; trap 'exit 143' TERM
   adb -s "$s" shell settings put global verifier_verify_adb_installs 0
-  adb -s "$s" install -r "${1:-$APK}" || { adb -s "$s" shell settings put global verifier_verify_adb_installs 1; exit 1; }
-  adb -s "$s" shell settings put global verifier_verify_adb_installs 1
+  adb -s "$s" install -r "${1:-$APK}"
+  restore_verify; trap - EXIT INT TERM
 }
 
-# Adds or removes only BentoBar's service; other enabled services (StudioSnap, TalkBack…) stay.
+# Adds or removes only BentoBar's service; other enabled services (TalkBack…) stay.
 # Entries may use the short (pkg/.Class) or full (pkg/pkg.Class) form; both mean BentoBar.
 SVC_SHORT="$PKG/.bar.BarService"
 others() { # the enabled list without BentoBar, colon-separated
   A shell settings get --user current secure enabled_accessibility_services | tr -d '\r' | tr ':' '\n' |
-    grep -v -x -F -e "$SVC" -e "$SVC_SHORT" -e null | grep -v '^$' | paste -sd: || true
+    grep -v -x -F -e "$SVC" -e "$SVC_SHORT" -e null | grep -v '^$' | paste -sd: - || true # BSD paste needs the -: without it the list came back empty on a Mac, and enable wrote over it
 }
 enable() {
   local rest; rest=$(others)

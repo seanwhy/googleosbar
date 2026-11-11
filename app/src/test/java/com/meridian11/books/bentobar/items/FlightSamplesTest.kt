@@ -336,11 +336,11 @@ class FlightSamplesTest {
         fun reply(name: String) = javaClass.getResource("/airlabs/$name.json")!!.readText()
         val get: (Request) -> Reply = { r -> Reply.Ok(reply(if (r.path == AirLabs.FLIGHT) "flight-UA1227-first-leg-planned" else "routes-UA1227-three-legs-a-day")) }
         val la = ZoneId.of("America/Los_Angeles")
-        val tomorrow = AirLabs.candidates(FlightNumber("UA", 1227), LocalDate.of(2026, 10, 6), "k", evening, la, get)!!.flights
+        val tomorrow = AirLabs.candidates(FlightNumber("UA", 1227), LocalDate.of(2026, 10, 6), evening, la, get)!!.flights
         assertEquals(3, tomorrow.size)
         assertEquals(tomorrow, several("several", evening).flights.map { it.flight })
         assertEquals(LocalDate.of(2026, 10, 6), several("several", evening).day)
         assertEquals("UA 1227 flies 3 times on Tue, Oct 6", several("several", evening).let { FlightText.several(it.number, it.day, it.flights.size, us) })
-        assertEquals(AirLabs.candidates(FlightNumber("UA", 1227), null, "k", evening, null, get)!!.flights, several("several-next", evening).flights.map { it.flight })
+        assertEquals(AirLabs.candidates(FlightNumber("UA", 1227), null, evening, null, get)!!.flights, several("several-next", evening).flights.map { it.flight })
     }
 }

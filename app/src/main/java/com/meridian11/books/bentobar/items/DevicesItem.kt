@@ -52,12 +52,13 @@ import com.meridian11.books.bentobar.util.SymIcon
  * Which devices are listed and what the bar makes of them is in [DevicesRules].
  */
 object DevicesItem : ItemType("devices", R.string.item_devices_title, Sym.MOUSE, R.string.item_devices_desc) {
+    override val group = ItemGroup.SYSTEM
     override val refreshMs = 5_000L
     override val canBeActive = true
     override val addsWhenActive = true
 
     /** The same rule as the Battery item's, so the two behave alike. */
-    private val below = Threshold("lowPct", 20, 5..50, step = 5) { "$it%" }
+    private val below = Threshold("lowPct", 20, 5..50, step = 5) { com.meridian11.books.bentobar.util.Fmt.percent(it) }
     override val trigger = Trigger(R.string.trigger_devices, R.string.trigger_devices_short, below)
 
     private val words = DevicesRules.Words(
@@ -78,7 +79,7 @@ object DevicesItem : ItemType("devices", R.string.item_devices_title, Sym.MOUSE,
     // At most one reading a second, however often Android reports: one that can't be taken now (another is under
     // way, or the last is under a second old) is asked for again on the next tick, never queued behind the other.
     private val watch = DevicesWatch { !readings.loading(Unit) && readings.refresh(Unit, floorMs = DevicesRules.FLOOR_MS) }
-    private val main = Handler(Looper.getMainLooper())
+    private val main by lazy { Handler(Looper.getMainLooper()) }
     private val listener = object : InputManager.InputDeviceListener {
         override fun onInputDeviceAdded(deviceId: Int) = changed()
         override fun onInputDeviceRemoved(deviceId: Int) = changed()
@@ -167,11 +168,12 @@ object DevicesItem : ItemType("devices", R.string.item_devices_title, Sym.MOUSE,
      * to name one), `stage none` no device at all, `off` the real ones again. Without a word: what is
      * shown now.
      */
+    override val stages = listOf("stage mouse=15 keyboard=40c stylus=unknown", "stage keyboard:Keychron_K3=85c", "stage mouse=5", "stage none")
+
     override fun debug(args: List<String>): String? {
         when (args.firstOrNull()) {
             null -> return line()
-            "stage" -> staged = DevicesRules.staged(args.drop(1))
-                ?: return "devices stage none | KIND[:NAME]=LEVEL[c] …, for example mouse=15 keyboard:Keychron_K3=85c stylus=unknown"
+            "stage" -> staged = DevicesRules.staged(args.drop(1)) ?: return null
             "off" -> { staged = null; changed() }
             else -> return null
         }

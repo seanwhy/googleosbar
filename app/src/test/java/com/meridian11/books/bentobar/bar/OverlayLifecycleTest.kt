@@ -82,4 +82,14 @@ class OverlayLifecycleTest {
         assertEquals(Lifecycle.State.DESTROYED, state)
         assertEquals(emptyList<Lifecycle.Event>(), events)
     }
+
+    /** A relayout with nothing changed cost a whole layout pass per look at the bar; the window is asked only when something moved. */
+    @Test fun aRelayoutThatChangesNothingIsSkipped() {
+        val overlay = java.io.File("src/main/java/com/meridian11/books/bentobar/bar/Overlay.kt").readText()
+        val relayout = overlay.substringAfter("fun relayout()").substringBefore("\n    }\n")
+        assertTrue(relayout, "if (now == applied) return" in relayout)
+        assertTrue(relayout, "wm.updateViewLayout" in relayout)
+        // A window that went away starts over: the next one's first relayout must not be skipped against the last one's.
+        assertTrue(overlay.substringAfter("fun hide()").substringBefore("\n    }\n"), "applied = null" in overlay.substringAfter("fun hide()").substringBefore("\n    }\n"))
+    }
 }

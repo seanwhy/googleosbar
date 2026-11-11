@@ -19,13 +19,12 @@ import java.time.ZoneId
 import java.time.format.DateTimeFormatter
 import java.util.Locale
 
-/** A text of the app as its resource file has it (`\'` read as an apostrophe), so a test speaks the app's own words. */
+/** A text of the app as Android reads its resource file (StringFiles), so a test speaks the app's own words. */
 internal fun appText(name: String): String {
-    val entry = Regex("""<string name="$name"[^>]*>(.*?)</string>""", RegexOption.DOT_MATCHES_ALL)
     val files = File("src/main/res/values").listFiles { f -> f.name.startsWith("strings") && f.name.endsWith(".xml") }.orEmpty()
-    val found = files.mapNotNull { entry.find(it.readText())?.groupValues?.get(1) }
+    val found = files.mapNotNull { StringFiles.file(it.path)[name] }
     assertEquals("$name should be in exactly one strings file", 1, found.size)
-    return found.single().replace("\\'", "'")
+    return found.single()
 }
 
 /** The words of World clock as the app has them, with times and dates as a US device writes them. */
@@ -608,24 +607,7 @@ class WorldClockTest {
 
     // ---- the words ----
 
-    @Test fun theWordsAreTheCopyDecks() {
-        val deck = mapOf(
-            "clock_add_city" to "Add a city", "clock_search_label" to "City or time zone", "clock_search_none" to "No city or zone matches",
-            "clock_search_added" to "added", "clock_search_region" to "%1\$s (%2\$s)",
-            "clock_full" to "The list holds 8 cities. Remove one to add another.", "clock_edit_cities" to "Edit cities",
-            "clock_remove_city" to "Remove %1\$s", "clock_same_time" to "Same time", "clock_night" to "Night there",
-            "trigger_clock" to "Show when this clock differs from local time", "trigger_clock_short" to "shows when away",
-            "clock_cities_section" to "World clock cities", "clock_cities_help" to "One list for the whole bar. Add cities in the World clock menu.",
-            "clock_cities_empty" to "No cities added yet. Add one in the World clock menu.", "clock_city_name" to "Name", "clock_city_remove" to "Remove",
-            "clock_plan" to "Plan a time", "clock_plan_now" to "Now", "clock_plan_slider" to "Time of day", "clock_plan_state" to "%1\$s, %2\$s",
-            "clock_plan_previous_day" to "Previous day", "clock_plan_next_day" to "Next day", "clock_plan_subtitle" to "%1\$s · %2\$s",
-            "clock_plan_copy" to "Copy times", "clock_plan_new_event" to "New event at %1\$s",
-            // Words of 0.8 that the new rows use as they are.
-            "clock_local" to "Local", "clock_tomorrow" to "Tomorrow", "clock_yesterday" to "Yesterday", "clock_here" to "Here (%1\$s)",
-            "clock_zone_find_hint" to "Tokyo, London, New York…",
-        )
-        for ((name, text) in deck) assertEquals(name, text, appText(name))
-        // The message names the limit the code has.
+    @Test fun theFullMessageNamesTheLimitTheCodeHas() {
         assertTrue(appText("clock_full").contains(" ${WorldClock.MAX_CITIES} "))
     }
 

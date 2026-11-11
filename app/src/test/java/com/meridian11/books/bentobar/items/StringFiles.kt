@@ -33,14 +33,32 @@ object StringFiles {
         return Texts(strings, plurals)
     }
 
+    /** The strings of one file, by resource name, with nothing from any other file. */
+    fun file(path: String): Map<String, String> {
+        val nodes = DocumentBuilderFactory.newInstance().newDocumentBuilder().parse(File(path)).documentElement.childNodes
+        return (0 until nodes.length).mapNotNull { nodes.item(it) as? Element }.filter { it.tagName == "string" }
+            .associate { it.getAttribute("name") to unescape(it.textContent) }
+    }
+
+    /** The names in one strings file that no code refers to as `R.string.x` or `R.plurals.x`: leftovers. */
+    fun unused(path: String): List<String> {
+        val code = File("src/main/java").walkTopDown().filter { it.isFile && it.extension == "kt" }.joinToString("\n") { it.readText() }
+        return names(path).filter { !Regex("R\\.(string|plurals)\\.$it\\b").containsMatchIn(code) }
+    }
+
     /** The names of the strings and plurals one file defines, in its order. */
     fun names(path: String): List<String> {
         val nodes = DocumentBuilderFactory.newInstance().newDocumentBuilder().parse(File(path)).documentElement.childNodes
         return (0 until nodes.length).mapNotNull { nodes.item(it) as? Element }.map { it.getAttribute("name") }
     }
 
-    /** What Android makes of a resource's text: `\'` is an apostrophe, ` ` a character, `\n` a new line. */
-    fun unescape(raw: String): String {
+    /**
+     * What Android's resource compiler (aapt) makes of a resource's text, the one reading every test uses: outside double
+     * quotes a run of white space is one space and the ends are trimmed; a double quote is dropped and keeps the white
+     * space inside it; `\'`, `\"`, `\n`, `\t` and `\uXXXX` are the character they name.
+     */
+    fun unescape(text: String): String {
+        val raw = collapse(text)
         val out = StringBuilder()
         var i = 0
         while (i < raw.length) {
@@ -54,5 +72,24 @@ object StringFiles {
             }
         }
         return out.toString()
+    }
+
+    /** White space as aapt collapses it, with the escapes left for [unescape] to read. */
+    private fun collapse(raw: String): String {
+        val out = StringBuilder()
+        var quoted = false
+        var i = 0
+        while (i < raw.length) {
+            val c = raw[i]
+            when {
+                c == '\\' && i + 1 < raw.length -> { out.append(c).append(raw[i + 1]); i += 2; continue }
+                c == '"' -> quoted = !quoted
+                quoted -> out.append(c)
+                c.isWhitespace() -> if (out.isNotEmpty() && out.last() != ' ') out.append(' ')
+                else -> out.append(c)
+            }
+            i++
+        }
+        return if (quoted) out.toString() else out.toString().trimEnd(' ')
     }
 }

@@ -37,6 +37,7 @@ private fun launchAppOrUrl(packages: List<String>, fallbackUrl: String) {
  * 1. Independent Antigravity Item (Official A-Arch icon + Concentric 5h/Weekly Dual-Ring with centered remaining %)
  */
 object AntigravityItem : ItemType("ai_antigravity", R.string.item_ai_antigravity_title, "brand:antigravity", R.string.item_ai_antigravity_desc) {
+    override val group = ItemGroup.TOOLS
     override val menuWidthDp = 320
     override val canBeActive = true
     private val critThreshold = Threshold("critPct", 80, 50..95, step = 5) { "$it%" }
@@ -142,6 +143,7 @@ object AntigravityItem : ItemType("ai_antigravity", R.string.item_ai_antigravity
  * 2. Independent Codex Item (Official OpenAI 6-petal Blossom icon + Concentric 5h/Weekly Dual-Ring with centered remaining %)
  */
 object CodexItem : ItemType("ai_codex", R.string.item_ai_codex_title, "brand:codex", R.string.item_ai_codex_desc) {
+    override val group = ItemGroup.TOOLS
     override val menuWidthDp = 320
     override val canBeActive = true
     private val critThreshold = Threshold("critPct", 80, 50..95, step = 5) { "$it%" }
@@ -224,6 +226,7 @@ object CodexItem : ItemType("ai_codex", R.string.item_ai_codex_title, "brand:cod
  * 3. Independent Grok Item (Grok Orbital Slash icon + Single Weekly Remaining Ring with centered %)
  */
 object GrokItem : ItemType("ai_grok", R.string.item_ai_grok_title, "brand:grok", R.string.item_ai_grok_desc) {
+    override val group = ItemGroup.TOOLS
     override val menuWidthDp = 320
     override val canBeActive = true
     private val critThreshold = Threshold("critPct", 80, 50..95, step = 5) { "$it%" }
@@ -294,6 +297,7 @@ object GrokItem : ItemType("ai_grok", R.string.item_ai_grok_title, "brand:grok",
  * 4. Independent Grok Bot Item (Grok Bot Visor Robot icon + Single Weekly Remaining Ring with centered %)
  */
 object GrokBotItem : ItemType("ai_grok_bot", R.string.item_ai_grok_bot_title, "brand:grok_bot", R.string.item_ai_grok_bot_desc) {
+    override val group = ItemGroup.TOOLS
     override val menuWidthDp = 320
     override val canBeActive = true
     private val critThreshold = Threshold("critPct", 80, 50..95, step = 5) { "$it%" }
@@ -366,6 +370,7 @@ object GrokBotItem : ItemType("ai_grok_bot", R.string.item_ai_grok_bot_title, "b
  * Legacy combined AI usage item kept for backwards-compatibility.
  */
 object AiUsageItem : ItemType("ai_usage", R.string.item_ai_usage_title, Sym.BOLT, R.string.item_ai_usage_desc) {
+    override val group = ItemGroup.TOOLS
     override val menuWidthDp = 340
     override val canBeActive = true
     private val critThreshold = Threshold("critPct", 80, 50..95, step = 5) { "$it%" }

@@ -35,7 +35,11 @@ import com.meridian11.books.bentobar.data.Display
 import com.meridian11.books.bentobar.data.ItemConfig
 import com.meridian11.books.bentobar.data.Section
 import com.meridian11.books.bentobar.data.Store
+import com.meridian11.books.bentobar.data.hide
 import com.meridian11.books.bentobar.data.notDrawn
+import com.meridian11.books.bentobar.data.setWhenActive
+import com.meridian11.books.bentobar.data.show
+import com.meridian11.books.bentobar.data.turnOff
 import com.meridian11.books.bentobar.items.Items
 import com.meridian11.books.bentobar.items.MenuHost
 import com.meridian11.books.bentobar.items.Ticker
@@ -162,24 +166,27 @@ fun ItemContextMenu(itemId: String, host: MenuHost, openMenu: () -> Unit) {
         Section.OFF -> stringResource(R.string.common_off)
     }) {
         if (type.menu != null) MenuEntry(Sym.OPEN_IN_NEW, stringResource(R.string.common_open)) { openMenu() }
-        if (item.section != Section.SHOWN) MenuEntry(Sym.VISIBILITY, stringResource(R.string.context_always_show)) { Store.updateItem(item.id) { it.copy(section = Section.SHOWN) } }
-        if (item.section != Section.HIDDEN) MenuEntry(Sym.VISIBILITY_OFF, stringResource(R.string.section_hidden)) { Store.updateItem(item.id) { it.copy(section = Section.HIDDEN) } }
+        if (item.section != Section.SHOWN) MenuEntry(Sym.VISIBILITY, stringResource(R.string.context_always_show)) { Store.update { it.show(item.id) } }
+        if (item.section != Section.HIDDEN) MenuEntry(Sym.VISIBILITY_OFF, stringResource(R.string.section_hidden)) { Store.update { it.hide(item.id) } }
         if (type.canBeActive) MenuEntry(if (item.whenActive) Sym.CHECK_CIRCLE else Sym.UPDATE, stringResource(R.string.context_show_when_active),
-            detail = if (item.whenActive) "✓" else null) {
-            Store.updateItem(item.id) { it.copy(whenActive = !it.whenActive, section = if (!it.whenActive && it.section == Section.SHOWN) Section.HIDDEN else it.section) }
+            detail = if (item.whenActive) "✓" else null, checked = item.whenActive) {
+            Store.update { it.setWhenActive(item.id, !item.whenActive) }
         }
-        SectionLabel(stringResource(R.string.display_show_as))
-        val displays = listOf(Display.ICON_AND_TEXT to stringResource(R.string.display_icon_and_text), Display.TEXT to stringResource(R.string.display_text),
-            Display.ICON to stringResource(R.string.display_icon))
-        ChipRow(displays.map { it.second }, selected = displays.indexOfFirst { it.first == item.display }) { i ->
-            Store.updateItem(item.id) { it.copy(display = displays[i].first) }
-            Ticker.refresh()
+        // Not for a type that has only one way to show: the settings don't offer it either.
+        if (!type.iconOnly) {
+            SectionLabel(stringResource(R.string.display_show_as))
+            val displays = listOf(Display.ICON_AND_TEXT to stringResource(R.string.display_icon_and_text), Display.TEXT to stringResource(R.string.display_text),
+                Display.ICON to stringResource(R.string.display_icon))
+            ChipRow(displays.map { it.second }, selected = displays.indexOfFirst { it.first == item.display }) { i ->
+                Store.updateItem(item.id) { it.copy(display = displays[i].first) }
+                Ticker.refresh()
+            }
         }
         MenuDivider()
         MenuEntry(Sym.TUNE, stringResource(R.string.context_item_settings)) { host.openItemSettings(item.id) }
         // It turns the item off (kept with its settings), so it says so; Delete is in settings, with an undo.
         // Its own icon: the crossed-out eye two rows up means Hidden, which keeps the item behind ‹.
-        MenuEntry(Sym.DO_NOT_DISTURB_ON, stringResource(R.string.common_turn_off)) { host.close(); Store.updateItem(item.id) { it.copy(section = Section.OFF) } }
+        MenuEntry(Sym.DO_NOT_DISTURB_ON, stringResource(R.string.common_turn_off)) { host.close(); Store.update { it.turnOff(item.id) } }
     }
 }
 
@@ -194,7 +201,7 @@ fun BentoBarMenu(host: MenuHost, openItem: (ItemConfig) -> Unit, hideBar: () -> 
     // Worked out here, not when the menu opened, so an item popping out (or in) updates the list.
     val cfg by Store.config.collectAsState()
     val overflow by com.meridian11.books.bentobar.bar.BarOverflow.ids.collectAsState()
-    val hidden = if (everything) cfg.items.filter { it.section != Section.OFF }
+    val hidden = if (everything) cfg.items.filter { it.section != Section.OFF && Items.of(it.type) != null }
     else cfg.notDrawn { states[it.id]?.active == true }.let { waiting -> cfg.items.filter { it in waiting || it.id in overflow } }
     val first = remember { androidx.compose.ui.focus.FocusRequester() }
     if (everything) androidx.compose.runtime.LaunchedEffect(Unit) { runCatching { first.requestFocus() } }

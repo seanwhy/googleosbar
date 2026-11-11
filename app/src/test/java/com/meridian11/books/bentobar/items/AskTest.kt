@@ -83,4 +83,12 @@ class AskTest {
         assertEquals(null, fields.state.value.asked)
     }
 
+
+    @Test fun whatTheWorkThrowsIsReportedByItsKindOnly() {
+        val reported = ArrayList<String>()
+        val a = Ask<String, String>(Refresher.Wiring(Executor { it.run() }, { it.run() }, { 0L }, report = { reported += it })) { throw IllegalArgumentException("a city name") }
+        a.ask("q")
+        assertEquals(listOf("IllegalArgumentException"), reported)
+        assertEquals(Ask.State.Idle, a.state.value)
+    }
 }

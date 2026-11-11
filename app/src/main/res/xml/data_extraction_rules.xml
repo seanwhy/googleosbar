@@ -4,13 +4,19 @@
   before. What belongs to one install stays behind: whether an online service is switched on, the
   user's own key for one, and what a service last sent. All of that is kept in Android's no-backup
   directory (data/Online.kt, data/Kept.kt), which the system leaves out by itself; it is named here
-  as well, so that the rule is written down in the app and not only in the platform.
+  as well, so that the rule is written down in the app and not only in the platform. So are the answer to the
+  accessibility disclosure (data/Store.kt, in the same directory) and the two files that hold a running timer and
+  keep awake (items/Timers.kt, items/ToolItems.kt): a restored timer would ring on a device it was never set on.
 -->
 <data-extraction-rules>
     <cloud-backup>
         <exclude domain="root" path="no_backup" />
+        <exclude domain="sharedpref" path="timers.xml" />
+        <exclude domain="sharedpref" path="caffeine.xml" />
     </cloud-backup>
     <device-transfer>
         <exclude domain="root" path="no_backup" />
+        <exclude domain="sharedpref" path="timers.xml" />
+        <exclude domain="sharedpref" path="caffeine.xml" />
     </device-transfer>
 </data-extraction-rules>

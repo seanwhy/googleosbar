@@ -19,6 +19,7 @@ import com.meridian11.books.bentobar.util.Sym
  * [ShortcutRules]; this object only asks Android.
  */
 object ShortcutItem : ItemType("shortcut", R.string.item_shortcut_title, Sym.SCREENSHOT_MONITOR, R.string.item_shortcut_desc) {
+    override val group = ItemGroup.TOOLS
     // What it shows changes only when the Feedback app comes or goes.
     override val refreshMs = 60_000L
 

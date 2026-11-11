@@ -1,0 +1,17 @@
+# Update pull requests for the Gradle dependencies and the pinned GitHub Actions. Each one runs the CI check like any pull
+# request. A Gradle update changes gradle/verification-metadata.xml too: regenerate it with
+# `./gradlew --write-verification-metadata sha256 :app:testDebugUnitTest :app:testComposeTestUnitTest :app:lintDebug :app:assembleRelease :app:bundleRelease`
+# and read the diff before merging. An Android Gradle Plugin update also needs the Linux aapt2 pin the Mac does not
+# write, and a run with a fresh GRADLE_USER_HOME (docs/RELEASING.md, "Dependency verification").
+version: 2
+updates:
+  - package-ecosystem: gradle
+    directory: /
+    schedule:
+      interval: weekly
+    open-pull-requests-limit: 5
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: weekly
+    open-pull-requests-limit: 5

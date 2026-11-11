@@ -4,21 +4,34 @@
 own Play listing. Up to 1.6 it was `io.github.kuscher.bentobar`, and DiscoBar, `io.github.kuscher.discobar`, until
 0.4.1.)
 
-A Bartender-style status bar organiser for Googlebooks (Googlebook OS = Android 17 desktop). A
+A status bar organiser for Googlebooks (Googlebook OS = Android 17 desktop). A
 plain APK: no adb grants, root or system changes in the product (the user's hard requirement).
 
 ## This repo is public
 The Play listing links here. Keep out of every file, commit message and release note: device serial numbers and
 adb names, build numbers and codenames, what else is installed or open on the owner's devices, the names of his
 private projects and paths into their repos, and where signing keys are backed up (say "backed up privately").
+Name no other company's app as a model or a comparison, in the app or anywhere here.
 
 ## Layout
 - `app/src/main/java/com/meridian11/books/bentobar/`
   - `bar/BarService.kt`: the AccessibilityService plus `BarController`. It scans the status bar,
-    places the strip, hides it (fullscreen, keyguard, screen off, a shade covering the bar), runs
-    menus, keep awake (a flag on the strip window) and colour sampling, and has adb `debug()` hooks.
-  - `bar/StatusBarScan.kt`: finds the status bar window (TYPE_SYSTEM at y=0) and the free area
-    (the `DesktopStatusBarSpacer` node on Googlebook OS, else the widest gap).
+    places the strip, hides it (fullscreen, keyguard, screen off, a shade covering the bar), and
+    has adb `debug()` hooks.
+  - `bar/MenuCoordinator.kt`: the strip's popups and its tooltip: when they come and go; `PopupState` decides.
+  - `bar/StripContent.kt`: what an item draws and whether the strip draws anything (pure, unit-tested): the one rule for
+    an empty or blank strip, whose window is made invisible. Never from how many entries it has: an entry can draw nothing.
+  - `bar/KeepAwake.kt`: keep awake: `FLAG_KEEP_SCREEN_ON` on the strip's window, a screen wake lock while it has none.
+  - `bar/ColorReader.kt`: the strip's colours: when the bar is read (`ColorWatch` says), what a reading makes of the
+    look (`StripLook`), the hints when there is no reading. The screenshot itself is `StatusBarScan.shoot`.
+  - `bar/StatusBarScan.kt`: the edge of the window reading: the window list as `WindowFact`s (kind, id, bounds) and
+    the status bar window's node tree as `BarNode`s, for `BarRules`, and the status bar's screenshot (`shoot`).
+  - `bar/BarRules.kt`: what those facts mean, pure and unit-tested: which window is the status bar (TYPE_SYSTEM at
+    y=0), the free area (the `DesktopStatusBarSpacer` node on Googlebook OS, else the widest gap), and `decide`: whether the
+    strip shows, why not, what covers it, what to read. `BarController.check` collects the facts, asks, and does the
+    Android part in the order that matters; `BarRulesTest` replays window lists in the form of `./bento debug windows`,
+    one test per window finding below. `bar/PopupState.kt` is the same for a press, a click and a window's end: it
+    says what to do (`PopupCommand`), `MenuKey` names the popup, and the window's own phases stay in `MenuWindow`.
   - `bar/BarPixels.kt`: the status bar's text and background color from the pixels around its clock
     (pure, unit-tested); `bar/Contrast.kt` then holds every strip color to 4.5:1.
   - `bar/BarNeighbours.kt`: which app windows make the bar look different (one against its lower
@@ -45,6 +58,9 @@ private projects and paths into their repos, and where signing keys are backed u
     neither a click nor a drag). Its arithmetic and the rules of a press (`SliderGesture`: a click, a
     drag, a finger's tap, swipe and long hold, a press that is taken away) are in `bar/SliderMath.kt`,
     pure and unit-tested; change the rules there, not in the pointer loop.
+    A press on an item is `bar/ClickGesture.kt`, pure and unit-tested like `SliderGesture` (a click, the menu when a finger
+    holds still for the system's long-press time, a drag, what the system takes away). The strip's order is forced left to
+    right in every language (`Strip`); only inside an item does the real direction hold; `StripDrag` says where a drag lands.
     The route line an item can have in its icon's place is the same line with a plane on it and no
     pointer (`ItemState.route`: `RouteTrack` draws it, `SliderMath.route` says where its parts stand,
     `StripLook.route` what color they take). The Flight item has one from its countdown until an hour
@@ -58,18 +74,24 @@ private projects and paths into their repos, and where signing keys are backed u
   - `bar/Menus.kt`: the popup's surface (`MenuSurface`: glass, clip to the shown glass, text colour) and its shadow
     (`MenuShadow`), the right-click item menu and the ‹ menu.
   - `items/`: `ItemType` + `ItemState`, `Items` registry + `Ticker` (1 Hz while anything is
-    visible), `Env` (samplers, launch helpers), `Timers`, `Calendar`, `Notify` (channels,
+    visible, `Ticker` being the pure `TickLoop` on the app's `Wiring`; `Ticker.guarded`, on the pure `ItemGuard`, is the one
+    way a type's own code is run for input or sampling). A new item is one file and one line in `Items.all`: the type states
+    its `group` (Add lists it), whether it `holds` and `presents` and what it `samples`, and `ItemCatalogTest` fails for
+    whatever else was forgotten (a `Setup` row, a line in About). `TimerClock` is the timer's rules, pure, likewise, and
+    `Timers` runs it on Android. `Env` (samplers, launch helpers), `Timers`, `Calendar`, `Notify` (channels,
     glyph icons, `Chips` for the Live Update chip), `TextRules` (text from a layout or a reply as one line,
     counted as a reader counts it), and the item types: several each in
-    `SystemItems.kt`, `TimeItems.kt` and `ToolItems.kt`, the newer ones in files of their own
-    (`CpuItem`, `ClockItem`, `SoundItem`, `MediaItem`, `DevicesItem`, `HeatItem`, `WeatherItem`,
-    `FlightItem`, `ShortcutItem` with its pure `ShortcutRules`, `StocksItem`). `WeatherHere` is Weather's My location
-    (what it does is the pure `HereKeeper`, on `HereRules`): Android's approximate location, in memory
-    only, rounded to 0.1° (`WeatherRules.nearby`, in `WeatherLoad.place`) before anything is asked or
-    held under it; its reading is never kept on the device, and the layout holds `where=here` and never
+    `SystemItems.kt`, `TimeItems.kt` and `ToolItems.kt`, the newer ones in files of their own, named by pattern:
+    `<Name>Item.kt` is the type, `<Name>Rules.kt` its pure rules, `<Name>Load.kt` its loading, `<Name>Menu.kt` its popup, and
+    `<Name>Text.kt` its words (not every item has all of them; `ls items/` is the list, `Items.all` the registry). `WeatherHere` is My location for every item that uses it
+    (what it does is the pure `HereKeeper`, on `HereRules`; the `Ticker` drives it once per tick): Android's approximate location, in memory
+    only, rounded to 0.1° in `WeatherHere.place`, the only form anything else gets; its reading is never kept on the device, and the layout holds `where=here` and never
     a place. A type gets `onLive()`,
     `sample(now)` once a second and `onIdle()` from the `Ticker`: listeners and polls hang on those,
     so none exists while the bar is hidden, the screen is off or no such item is outside Off.
+    One exception: `DisplaysItem`'s display listener also lives while "Keep awake while connected" is in force (an
+    item outside Off has it on and the service is up, `DisplaysItem.follow`), sampled or not. That option is a
+    promise about the screen staying on while the bar is hidden, so the bar hiding must not end it.
   - `items/Refresher.kt` is `Calendar`'s way of loading as one class (a background thread, one load
     per key, an immutable snapshot, a generation counter); `items/Ask.kt` is the same for one
     question at a time (a search). Both are pure Kotlin; `items/Background.kt` wires them to the app.
@@ -82,10 +104,22 @@ private projects and paths into their repos, and where signing keys are backed u
     `items/NowPlayingRules.kt`.
   - `net/`: the only code that opens a connection (pure Kotlin). `Host` is an enum of the hosts BentoBar may ask; a `Request` names one of them, a path and a query, so no call takes an
     address. `Http.get` refuses unless the service is switched on, an item that uses it is outside
-    Off and something that shows items is on screen, and never runs on the main thread. A query can
-    hold a key: a `Request` prints as host and path only, and no exception leaves `HttpTransport`.
+    Off and something that shows items is on screen, and never runs on the main thread. A `Request` holds no key:
+    `Http.key` is wired in `Env` and `HttpTransport` adds it, so no item's code ever holds one. A `Request` prints as host and path only, and no exception leaves `HttpTransport`.
+    One 429 or Retry-After holds the whole service (`Http.get` answers for it), and what the transport would refuse is `Why.REFUSED`, counted as nothing sent.
+  - `items/OnlineBase.kt` and `items/Places.kt` are what the online items share: the reply-to-failure mapping (`Failures`), the pace (`Pace`), the states (`Status`), the staged sample (`Staged`), what a place is. A sixth service
+    is a load, a rules file and a menu file; `OnlineServiceContract` in the tests gives it the failure tests.
+  - `data/LayoutIntents.kt`: what a command does to an item (`show`, `hide`, `turnOff`, `putIn`, `setWhenActive`), as pure
+    steps from one layout to the next: it changes the section and never the place in the list, which only a Move, drag or drop
+    does (`moved`). A screen calls `Store.update { it.hide(id) }` and writes no section or rule of its own
+    (`LayoutIntentsTest` holds them to it). `stripPlan` (in `Model.kt`) is the one choice of what the strip and the settings
+    preview show (`StripPlanTest`).
   - `data/`: `Model.kt` (`BarConfig`, `ItemConfig`, `Section`…) and `Store` (JSON in
-    SharedPreferences, a process-wide StateFlow shared by the service and settings). `Online.kt`
+    SharedPreferences, a process-wide StateFlow shared by the service and settings; `Store.open` takes a `Prefs`, so a test
+    runs it on a map). `Layout.kt` holds `readLayout`, the one reader of a stored or pasted layout: decode, migrate, repeated
+    ids dropped; a layout from a newer version (`LAYOUT_VERSION`) is refused, never clamped, and kept for Backup to offer.
+    A schema change adds a file to `test/resources/layouts` (write-once, `LayoutFixturesTest`). Consent lives in a
+    no-backup file (`Store.loadConsent`). `Online.kt`
     holds what belongs to one install and never travels: whether each online service is switched on
     and the user's own key for one, in a file in Android's no-backup directory (so in no backup, no
     device transfer and no copied layout). `Kept.kt` keeps small texts there too (a service's last
@@ -94,13 +128,22 @@ private projects and paths into their repos, and where signing keys are backed u
     and drop across the section cards: the gesture sits on the container, a copy of the row floats
     above the cards, the Store changes once on the drop), `Pages` (Add, Look, Setup, About),
     `Disclosure` (the accessibility disclosure and consent Google Play requires, and the one list of
-    what the service does that Setup shows too), `Theme`, `MenuKit` and `Controls` (shared UI pieces).
+    what the service does that Setup shows too; `ConsentRules` says when it comes up), `Theme`, `MenuKit` and
+    `Controls` (shared UI pieces).
   - "Show when…": a type's `trigger` (in `ItemType.kt`) words its pop-out rule, and its `Threshold`
     is the one source of the option key and default for both `state()` and the settings slider.
+    An option generally is an `Opt` (`items/Opt.kt`): the key, the default and the checks on what a layout may say, declared
+    once on the type and read by the bar and the settings alike; text from a layout is cleaned there. Older types still read
+    by key and move over as they are touched.
+  - `items/Holders.kt`: who needs what only runs while someone does. `Calendar` is held by the Calendar and Next meeting
+    items while they are live and by the Live Update chip while it can be a meeting's (it works with the service off, so it
+    can't hang on `onLive` alone); a minute after the last holder left it stops observing the provider and forgets what it read.
   - `tile/Tiles.kt`: the BentoBar, Keep awake and Timer tiles.
   - `util/`: `Sym.kt` (generated), `Ui.kt` (fonts, `SymIcon`), `Fmt.kt`, `Dates.kt` (locale-aware dates
     and times from skeletons), `Now.kt` (the clock for ages and countdowns, which a debug build's
     test hook can move), `Units.kt` (temperatures in the user's unit), `DebugReceiver.kt`.
+- Text sizes in the strip follow one rule: words in sp, what is drawn around them (symbols, app icons, the date badge and its digits) in
+  dp, as the system bar's are (`StripLook.iconDp`).
 - Text: every user-facing string is a resource. `res/values/strings.xml` is US English (the default);
   `res/values-en-rGB/strings.xml` holds only the strings whose British spelling differs. Item titles and
   blurbs are `@StringRes` ids on `ItemType`; non-Compose code uses `Env.str`/`Env.plural`. Counts use
@@ -108,7 +151,8 @@ private projects and paths into their repos, and where signing keys are backed u
   A newer feature's text is in a file of its own, `res/values/strings_<feature>.xml`, where every name
   starts with `<feature>_`, `item_<feature>_` or `trigger_<feature>`; its British spellings go in
   `values-en-rGB/strings_<feature>.xml` with identical copies in en-rAU, en-rNZ, en-rIE, en-rIN and
-  en-rZA. `LocaleCopiesTest` checks every `strings*.xml`.
+  en-rZA. `LocaleCopiesTest` checks every `strings*.xml`. `Fmt`'s percentages, units and spoken lengths of time go through `Fmt.words`,
+  set from the text resources in `Env.init`.
 - `tools/logo.py`: draws the icon (a bento box seen from above: a status bar compartment with a ‹
   and dots cut out, over three item compartments; rice, salmon, tamago and edamame on ink blue):
   launcher foreground/monochrome/background, `ic_bentobar` (24 dp, app header, ‹ menu) and
@@ -123,7 +167,18 @@ private projects and paths into their repos, and where signing keys are backed u
   saves a PNG of one of BentoBar's own windows (no pointer, no other apps; written to the debug
   app's cache and pulled with run-as, since a broadcast result can't carry a big image).
 - `docs/research/`: the device findings (probe results) and the official-docs research, with URLs.
-- `probe/`: the throwaway feasibility probe (Gradle-free build). Not part of the app.
+
+## Before a PR
+- Run `./gradlew :app:testDebugUnitTest :app:testComposeTestUnitTest :app:lintDebug :app:assembleRelease` (CI's `check` runs
+  exactly this on every pull request, with no signing key). Lint errors fail it: fix them, or suppress one in code with the reason
+  beside it. A known error goes into `app/lint-baseline.xml` only with a note saying who removes it.
+- The Compose tests live in `app/src/testComposeTest` under the `composeTest` build type (`:app:testComposeTestUnitTest`), so
+  Robolectric stays out of the fast tests in `app/src/test`. `MenuCompositionTest` composes every registered item's menu under
+  each state in its type's `stages`; Compose has no error boundary, so this is what stands between a throwing menu and the service.
+- Editing the manifest or a string re-runs the tests that read them; a green run that says UP-TO-DATE after such an
+  edit is wrong, so look.
+- Anything only hardware shows (colours after an unlock, full screen, the empty strip, Play Protect) is on the device
+  list in `docs/RELEASING.md`; run it for changes that touch the strip, the windows or the colour watch.
 
 ## Dev loop
 - `./bento app` builds the debug APK, installs it, enables the service and opens settings.
@@ -135,7 +190,7 @@ private projects and paths into their repos, and where signing keys are backed u
   with the release key (from `~/.config/bentobar`): it installs over the release, same version code, and keeps its
   layout and its accessibility switch.
   Also `now +3h|+90m|off` (moves the clock everything newer reads, `util/Now`), `net [reset]` (requests
-  sent per host, and whether each service may be asked right now), `online weather|flights|stocks on|off`,
+  sent per host, and whether each service may be asked right now), `online weather|fx|flights|stocks on|off`,
   and `TYPE …` or `item TYPE …`, which go to that item type's own `debug(args)`. What a hook prints
   is logged: no hook takes or prints a key, and a type marked `discreet` prints no title (`state media`
   and `state flight` print the text's length).
@@ -162,10 +217,12 @@ private projects and paths into their repos, and where signing keys are backed u
   Behind the glass other windows show through, blurred: don't publish captures with private windows behind.
 - Release (`docs/RELEASING.md`): bump `versionCode` and `versionName`, add `docs/release-notes/<version>.md`
   and Play's "What's new" (`release-notes.txt` in the store kit, 500 characters at most; the store kit is kept
-  privately, outside this repo), commit, push, then `git tag v<version> && git push origin v<version>`. GitHub
-  Actions (`.github/workflows/release.yml`) builds, signs and publishes: `BentoBar.apk` + `SHA256SUMS` as the
-  GitHub release, the bundle as a draft on Google Play's closed-testing track. Someone still presses
-  "Send for review" in the Play Console. "Run workflow" on the Actions tab is a dry run.
+  privately, outside this repo), commit on a branch and merge it by pull request (`main` requires the CI check `check`;
+  nothing is pushed to it directly), then `git tag v<version>` on the merged commit and push the tag. GitHub
+  Actions (`.github/workflows/release.yml`) builds, signs and checks the minified APK, then makes a DRAFT GitHub release
+  with `BentoBar.apk`, `SHA256SUMS` and R8's `mapping.txt`; someone installs the draft, runs it and publishes it. The
+  Play job is switched off while the repository variable `PLAY_UPLOAD` is `off` (it is), and says so in a warning; the
+  bundle is then only the run's `bundle` artifact. "Run workflow" on the Actions tab is a dry run.
 - The release key (alias `bentobar`, cert SHA-256 AA:07:4B:07:…:BD:90:CE:93, CN=BentoBar, O=Meridian11 LLC; made
   2026-11-03 for 1.7, the one Google Play uses too) lives in the secrets of the GitHub environment
   `release`; you never need the key file. The keystore and its password are backed up privately,
@@ -173,7 +230,8 @@ private projects and paths into their repos, and where signing keys are backed u
   On a machine that has `~/.config/bentobar/keystore.jks` and `keystore.pass`, `./gradlew :app:assembleRelease`
   still signs with it; without them the release build is unsigned. A debug and a release install
   can't replace each other (different keys), so uninstall first.
-- adb uses VSCodeBook's Unix socket (`~/.config/vscodebook/android.env`), never tcp:5037.
+- `./bento` picks its device from `ANDROID_SERIAL`, else `BENTO_MODEL` (matched in `adb devices -l`), else the one attached device, and refuses anything but exactly one (see its header); `ADB_SERVER_SOCKET` passes through. In the Linux terminal on a
+  Googlebook every TCP port is forwarded to Android, so point `ADB_SERVER_SOCKET` at a Unix socket there, never tcp:5037.
 
 ## Things learned the hard way (see docs/research/device-findings.md)
 - **The status bar window can be opaque.** On the HP it's glyphs on transparent; on the Acer
@@ -209,7 +267,10 @@ private projects and paths into their repos, and where signing keys are backed u
   strip again and again): after a dozen readings within a minute a cause's first reading waits two
   seconds behind the last one and what follows it comes four seconds later, where the next cause of
   the stream takes its place. That holds every such stream to one reading in two seconds, which is
-  what 0.9 allowed a stream of windows, and the last cause still gets its readings. The watch is told
+  what 0.9 allowed a stream of windows. A stream that goes on widens the gap again: after a minute of it
+  readings keep ten seconds apart, after five minutes a minute apart, until causes stop for a minute; a slow
+  cause's first reading is not held by that (a return's reading is the one that matters); the last cause
+  still gets its readings. The watch is told
   when a screenshot is asked for, not when its answer comes: a cause in between is not served by a
   screenshot taken before it, and two are never asked for within 400 ms (Android refuses the second).
 - **The window list can end early.** With a dialog on top, or some apps' own windows, the
@@ -243,8 +304,8 @@ private projects and paths into their repos, and where signing keys are backed u
   A service is asked only after its item was set up on this install: `data/Online.kt` records that
   outside the layout, so a pasted layout or a restored backup turns nothing on. Off (Setup › Online
   services) stops requests at once and deletes what was fetched (`ItemType.forgetFetched`).
-  The one location permission is `ACCESS_COARSE_LOCATION`, for Weather's My location, asked for only when
-  an item chooses it (the exported `MainActivity` asks it only for a layout with one: `HereRules.mayAsk`).
+  The one location permission is `ACCESS_COARSE_LOCATION`, for My location in Weather and Air quality & UV, asked for only when
+  an item chooses it. The ask is made in-process (a menu names the permission; the exported `MainActivity` never reads one from an intent), so the caller decides.
   Where the device is is kept only while such an item is outside Off and the switch is on
   (`HereRules.wanted`; else it is forgotten, with an ask on its way), and Android is asked only while
   such an item is sampled (`TickRules.needed`, as `Ticker.sampled`): on screen, waiting in Hidden for its
@@ -256,7 +317,7 @@ private projects and paths into their repos, and where signing keys are backed u
   `HereKeeper`, pure and unit-tested; `WeatherHere` is the keeper on Android's location service).
   `ManifestTest` pins the permissions, the backup rules, cleartext off and the listener's entry;
   `HttpTest` and `HttpTransportTest` pin the hosts and what a request may carry; `OneWayOutTest` names
-  the files that may ask a service (`items/Weather*`, `Air*`, `Fx*`, `Flight*`, `AirLabs*`, `Stocks*`, `Finnhub*`) or read a key.
+  the five `*Load.kt` files that may call `Http.get`, by exact name (its no-log and import scan covers `items/Weather*`, `Air*`, `Fx*`, `Flight*`, `AirLabs*`, `Stocks*`, `Finnhub*`); a key is read only by `Http.key`'s wiring in `items/Env.kt`.
 - **US stocks** (`StocksItem`, type "stocks", rules in `StocksRules`, requests and what is kept in `StocksLoad`, replies in
   `Finnhub`): US stocks only (Finnhub's free plan), with the user's own key; one quote request per stock,
   every 2 minutes while the market is open (`Market`: weekday hours in New York; a holiday is seen in quotes
@@ -281,8 +342,14 @@ private projects and paths into their repos, and where signing keys are backed u
   "preceding hour"), while the temperature and the weather code are of that instant. The rain rule
   names the hour the chance is for, and an hour's cell takes its chance from the entry after it.
 - **Least privilege** (user feedback): the accessibility config subscribes only to
-  `typeWindowsChanged`. No content events, key filtering or motion events. Code reads only the
-  status bar window. Don't add broader access for nice-to-haves.
+  `typeWindowsChanged`. No content events, key filtering or motion events. The status bar is the only
+  window whose content code reads; of any other window it reads the type and where it is. One title is read, and
+  only that: `BarService.check` skips the screenshot preview by the title of a large TYPE_SYSTEM window (the title is
+  compared, never logged or kept; `WindowReadingTest` allows `.title` on a window nowhere else, and the `windows` debug
+  hook that lists titles is in `src/debug`). The accessibility API (nodes, windows, screenshots) is named only in
+  `bar/BarService.kt` and `bar/StatusBarScan.kt`; items get `Env.running` and `Env.global`, never the service. The service
+  never touches another app's window or field (paste into a field was removed in 1.8, and `ManifestTest` keeps
+  it out). Don't add broader access for nice-to-haves.
 - `notificationTimeout` must stay 0. With 200, Android merges window events; our own strip's
   resize could swallow the status bar's "hidden" event.
 - Without content events, the node cache goes stale: `clearCache()` before a full scan. Every 2 s
@@ -292,8 +359,8 @@ private projects and paths into their repos, and where signing keys are backed u
 - Live Update chips show only ONE per app, drop text over about 7 characters, and are hidden while
   the posting app is "visible" (uid TOP). **BentoBar's own settings window open means no chip.**
   With only the accessibility service running (BFGS) the chip shows.
-- The Agent-task status bar API is in the platform-37.2 SDK stubs but not on the device (37.1),
-  and it needs the assistant role anyway. We compile against 37.2 stubs: check each new API on
+- The Agent-task status bar API is in a newer platform's SDK stubs than the one we compile against (compileSdk 37
+  resolves to platform 37.0) and not on the device, and it needs the assistant role anyway. Check each new API on
   the device.
 - `ACTION_ACCESSIBILITY_DETAILS_SETTINGS` isn't public; we open Accessibility settings with the
   `:settings:fragment_args_key` highlight extras.
@@ -318,12 +385,17 @@ private projects and paths into their repos, and where signing keys are backed u
   and network ticking. The manifest is `profileable` by the shell for simpleperf.
 - **What the strip draws and what the ticker samples are one rule** (`BarConfig.couldShow`, built on
   `shows`). Two separate predicates drifted when Show everything became the default: hidden items were
-  drawn but never sampled, so a clock froze (`HiddenModeTest.everythingDrawnIsSampled`).
+  drawn but never sampled, so a clock froze (`HiddenModeTest.everythingDrawnIsSampled`). Presenting is in the same rule (by
+  each type's `presents`), and an item of a type this version doesn't know is in no list but the settings row that names it
+  as from a newer version, and stays in the layout.
 - **Time:** timers and keep awake store wall-clock times (they survive a restart) plus a `ClockAnchor`
   (elapsed realtime and the boot count), so a clock change moves the deadline with it instead of
   ending it early; the timer alarm is `ELAPSED_REALTIME_WAKEUP`, armed again in `Timers.init` (alarms
   don't survive a reboot). Live Update calls (`setRequestPromotedOngoing`, `setShortCriticalText`) are
   API 36.1: behind `Notify.liveUpdates`, since minSdk is 34.
+- **A finished timer's notification is what rings.** The `alerts` channel carries the alarm tone, so the ring lasts while
+  the notification (`Notify.ID_DONE`) is up. `Timers.stop` cancels it, which is how the item's Stop ends a ring; the Clock
+  app's `DISMISS_TIMER` intent is for the Clock app's timers and does nothing here. Tone and length are the channel's.
 - **Notification actions launch activities directly** (`PendingIntent.getActivity` for the chip's Join
   and Open). A broadcast receiver that then starts an activity is a notification trampoline, blocked
   for targetSdk 31+, and the chip shows exactly when the accessibility service (whose binding allows
@@ -340,6 +412,5 @@ private projects and paths into their repos, and where signing keys are backed u
   FLAG_KEEP_SCREEN_ON on the visible strip, a screen wake lock only while the strip is hidden or
   empty, never on the lock screen; an empty strip's window is made invisible), status bar
   screenshots only on a change and only while the strip shows (never on a timer), every overlay visible and there because the user asked for it, and no adb hooks in release.
-- StudioSnap's helper (`~/studiosnap/ss enable`) used to overwrite the whole
-  `enabled_accessibility_services` list and switch BentoBar off; fixed there on 2026-09-28. Both
-  helpers now add or remove only their own entry (short or full component form).
+- `./bento enable` and `disable` add or remove only BentoBar's entry in `enabled_accessibility_services` (short or full
+  component form); overwriting the whole list once switched other accessibility services off.

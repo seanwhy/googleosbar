@@ -29,6 +29,8 @@ import androidx.compose.ui.semantics.CustomAccessibilityAction
 import androidx.compose.ui.semantics.clearAndSetSemantics
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.customActions
+import androidx.compose.ui.semantics.heading
+import androidx.compose.ui.semantics.selected
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.unit.IntOffset
 import com.meridian11.books.bentobar.items.Trigger
@@ -61,10 +63,6 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.Text
 import androidx.compose.runtime.LaunchedEffect
-import androidx.compose.material3.SnackbarResult
-import androidx.compose.material3.SnackbarHostState
-import androidx.compose.material3.SnackbarHost
-import androidx.compose.material3.SnackbarDuration
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.collectAsState
@@ -97,10 +95,15 @@ import com.meridian11.books.bentobar.data.Display
 import com.meridian11.books.bentobar.data.ItemConfig
 import com.meridian11.books.bentobar.data.Position
 import com.meridian11.books.bentobar.data.Section
-import com.meridian11.books.bentobar.data.shows
-import com.meridian11.books.bentobar.data.behindChevron
 import com.meridian11.books.bentobar.data.HiddenMode
 import com.meridian11.books.bentobar.data.Store
+import com.meridian11.books.bentobar.data.hide
+import com.meridian11.books.bentobar.data.putIn
+import com.meridian11.books.bentobar.data.setWhenActive
+import com.meridian11.books.bentobar.data.show
+import com.meridian11.books.bentobar.data.turnOff
+import com.meridian11.books.bentobar.data.spacingDp
+import com.meridian11.books.bentobar.data.stripPlan
 import com.meridian11.books.bentobar.items.ItemState
 import com.meridian11.books.bentobar.items.Items
 import com.meridian11.books.bentobar.items.Ticker
@@ -115,17 +118,15 @@ fun BarPage(running: Boolean, selected: String?, onSelect: (String?) -> Unit, on
     val cfg by Store.config.collectAsState()
     val states by Ticker.states.collectAsState()
     val item = cfg.items.firstOrNull { it.id == selected }
-    val snackbar = remember { SnackbarHostState() }
     val deleted by Undo.deleted.collectAsState()
     val res = androidx.compose.ui.platform.LocalResources.current
     LaunchedEffect(deleted) {
         val d = deleted ?: return@LaunchedEffect
         val name = Items.of(d.item.type)?.title ?: res.getString(R.string.bar_deleted_fallback)
-        if (Undo.offered(d, SystemClock.elapsedRealtime()) &&
-            snackbar.showSnackbar(res.getString(R.string.bar_deleted, name), res.getString(R.string.bar_undo),
-                duration = SnackbarDuration.Long) == SnackbarResult.ActionPerformed) Undo.restore(d)
-        // Not when the page goes first (a recreated window offers it again, within [Undo.offered]'s time).
-        Undo.deleted.compareAndSet(d, null)
+        if (!Undo.offered(d, SystemClock.elapsedRealtime())) { Undo.deleted.compareAndSet(d, null); return@LaunchedEffect }
+        // The window's one snackbar, like every other message. Forgotten once it has had its time, not when the page goes
+        // first (a recreated window offers it again, within [Undo.offered]'s time).
+        Notice.post(res.getString(R.string.bar_deleted, name), res.getString(R.string.bar_undo), onAction = { Undo.restore(d) }, onGone = { Undo.deleted.compareAndSet(d, null) })
     }
     BoxWithConstraints(Modifier.fillMaxSize()) {
         val wide = maxWidth >= 900.dp
@@ -154,8 +155,6 @@ fun BarPage(running: Boolean, selected: String?, onSelect: (String?) -> Unit, on
                 }
             }
         }
-        // Last, so it's drawn over the section cards (in a Box, later children are on top).
-        SnackbarHost(snackbar, Modifier.align(Alignment.BottomCenter).padding(16.dp))
     }
 }
 
@@ -194,8 +193,11 @@ private fun BarPreview(states: Map<String, ItemState>, selected: String?, onSele
     val cfg by Store.config.collectAsState()
     val tick by Ticker.tick.collectAsState()
     var expanded by remember { mutableStateOf(false) }
-    val visible = cfg.items.filter { cfg.shows(it, states[it.id]?.active == true) }
-    val hidden = cfg.behindChevron { states[it.id]?.active == true }
+    // The preview is narrower than a status bar: what it has no room for is said under it, or an item
+    // that is in the list and not in the picture looks lost.
+    var dropped by remember { mutableStateOf(emptySet<String>()) }
+    // What the bar shows, by the same function: the preview makes no choice of its own.
+    val plan = cfg.stripPlan({ states[it.id]?.active == true }, expanded, dropped.isNotEmpty())
     val entries = { list: List<ItemConfig> -> list.map { StripEntry(it, states[it.id] ?: Ticker.placeholder(it)) } }
     // The preview uses the strip's real colours: the sampled bar when BentoBar is running and the
     // colour is automatic, else the forced Light or Dark choice.
@@ -205,26 +207,28 @@ private fun BarPreview(states: Map<String, ItemState>, selected: String?, onSele
         ColorMode.DARK -> Contrast.resolve(Contrast.DARK_TEXT, null)
         ColorMode.AUTO -> live ?: Contrast.resolve(Color.White, null)
     }
-    val look = StripLook(bar.fg, bar.barDark, cfg.textSize, cfg.spacing.dp, cfg.pill, bar.background)
+    val look = StripLook(bar.fg, bar.barDark, cfg.textSize, cfg.spacingDp.dp, cfg.pill, bar.background)
     val barBrush = when {
         bar.opaque -> androidx.compose.ui.graphics.SolidColor(bar.background)
         bar.barDark -> Brush.horizontalGradient(listOf(Color(0xFF5B6F8A), Color(0xFF3F6F73), Color(0xFF4F7E78)))
         else -> Brush.horizontalGradient(listOf(Color(0xFFDDE6F3), Color(0xFFD5E8E6), Color(0xFFE3EEE9)))
     }
-    val events = object : StripEvents {
-        override fun click(item: ItemConfig, at: Rect) = onSelect(item.id)
-        override fun context(item: ItemConfig, at: Rect) = onSelect(item.id)
-        override fun scroll(item: ItemConfig, steps: Int) { Items.of(item.type)?.onScroll(item, steps); Ticker.refresh() }
+    val select by androidx.compose.runtime.rememberUpdatedState(onSelect)
+    // One object for the page's life, as the bar's own events are: rebuilt each time, every item would redraw on every tick.
+    val events = remember { object : StripEvents {
+        override fun click(item: ItemConfig, at: Rect) = select(item.id)
+        override fun context(item: ItemConfig, at: Rect) = select(item.id)
+        // The picture only selects: a wheel over it must not start a timer that later rings, or change the volume.
+        override fun scroll(item: ItemConfig, steps: Int) {}
         // A slider is only drawn here: a click on it selects the item, like a click anywhere on an item.
         override val slidable: Boolean get() = false
+        // Nor can an item be picked up: Sections' rows are where the order changes.
+        override val draggable: Boolean get() = false
         override fun chevron(at: Rect) { expanded = !expanded }
         override fun chevronContext(at: Rect) { expanded = !expanded }
         override fun hover(inside: Boolean) {}
         override fun placed(id: String, at: Rect) {}
-    }
-    // The preview is narrower than a status bar: what it has no room for is said under it, or an item
-    // that is in the list and not in the picture looks lost.
-    var dropped by remember { mutableStateOf(emptySet<String>()) }
+    } }
     Column {
         BoxWithConstraints(
             Modifier.fillMaxWidth().height(52.dp).clip(RoundedCornerShape(18.dp))
@@ -239,8 +243,8 @@ private fun BarPreview(states: Map<String, ItemState>, selected: String?, onSele
                 Text(Dates.format(Dates.timeSkeleton(h24), now) + "   " + Dates.format("EEEMMMd", now), color = look.fg,
                     fontFamily = Fonts.bar, fontWeight = Fonts.barWeight, fontSize = 14.sp)
                 if (cfg.position == Position.LEFT) Spacer(Modifier.width(16.dp)) else Spacer(Modifier.weight(1f))
-                Strip(entries(visible), if (expanded) entries(hidden) else emptyList(), hidden.isNotEmpty(),
-                    chevronAlways = hidden.isNotEmpty(), chevronReservePx = 0, expanded = expanded,
+                Strip(entries(plan.visible), entries(plan.revealed), plan.chevron,
+                    chevronAlways = plan.chevronAlways, chevronReservePx = 0, expanded = plan.open,
                     chevronOnLeft = cfg.position != Position.LEFT, look = look, maxWidthPx = maxPx, heightDp = 52.dp, events = events,
                     onOverflow = { dropped = it })
                 if (cfg.position == Position.LEFT) Spacer(Modifier.weight(1f)) else if (cfg.position == Position.CENTER) Spacer(Modifier.weight(1f))
@@ -253,7 +257,7 @@ private fun BarPreview(states: Map<String, ItemState>, selected: String?, onSele
                 }
             }
         }
-        val hint = stringResource(if (hidden.isNotEmpty()) R.string.bar_preview_hint_hidden else R.string.bar_preview_hint)
+        val hint = stringResource(if (plan.hidden.isNotEmpty()) R.string.bar_preview_hint_hidden else R.string.bar_preview_hint)
         Text(if (dropped.isEmpty()) hint else hint + " " + pluralStringResource(R.plurals.bar_preview_more, dropped.size, dropped.size),
             style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant,
             modifier = Modifier.padding(start = 6.dp, top = 6.dp))
@@ -318,7 +322,7 @@ private fun SectionCard(section: Section, title: String, help: String, all: List
         modifier = Modifier.fillMaxWidth().padding(bottom = 14.dp).onGloballyPositioned { reorder.cards[section] = it }) {
         // The card grows and shrinks smoothly as a dragged row's opening comes and goes.
         Column(Modifier.animateContentSize().padding(vertical = 12.dp)) {
-            Text(title, style = MaterialTheme.typography.titleMedium, modifier = Modifier.padding(horizontal = 16.dp))
+            Text(title, style = MaterialTheme.typography.titleMedium, modifier = Modifier.padding(horizontal = 16.dp).semantics { heading() })
             Text(help, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant,
                 modifier = Modifier.padding(horizontal = 16.dp))
             Spacer(Modifier.height(6.dp))
@@ -348,7 +352,8 @@ private val rowShape = RoundedCornerShape(14.dp)
 
 @Composable
 private fun ItemRow(item: ItemConfig, state: ItemState?, index: Int, count: Int, selected: Boolean, onSelect: (String?) -> Unit, reorder: Reorder) {
-    val type = Items.of(item.type) ?: return
+    val type = Items.of(item.type)
+    val name = rowName(item)
     var menu by remember { mutableStateOf(false) }
     val moveUp = stringResource(R.string.row_move_up)
     val moveDown = stringResource(R.string.row_move_down)
@@ -360,9 +365,9 @@ private fun ItemRow(item: ItemConfig, state: ItemState?, index: Int, count: Int,
     val actions = buildList {
         if (index > 0) add(CustomAccessibilityAction(moveUp) { move(index - 1); true })
         if (index < count - 1) add(CustomAccessibilityAction(moveDown) { move(index + 1); true })
-        if (item.section != Section.SHOWN) add(CustomAccessibilityAction(toShown) { Store.move(item.id, Section.SHOWN, 999); true })
-        if (item.section != Section.HIDDEN) add(CustomAccessibilityAction(toHidden) { Store.move(item.id, Section.HIDDEN, 999); true })
-        if (item.section != Section.OFF) add(CustomAccessibilityAction(turnOff) { Store.move(item.id, Section.OFF, 999); true })
+        if (item.section != Section.SHOWN) add(CustomAccessibilityAction(toShown) { Store.update { it.show(item.id) }; true })
+        if (item.section != Section.HIDDEN) add(CustomAccessibilityAction(toHidden) { Store.update { it.hide(item.id) }; true })
+        if (item.section != Section.OFF) add(CustomAccessibilityAction(turnOff) { Store.update { it.turnOff(item.id) }; true })
     }
     val grab = remember { PointerIcon(android.view.PointerIcon.TYPE_GRAB) }
     Row(
@@ -382,8 +387,8 @@ private fun ItemRow(item: ItemConfig, state: ItemState?, index: Int, count: Int,
                         else -> false
                     }
                 }
-                .clickable { onSelect(item.id) }.pointerHoverIcon(PointerIcon.Hand)
-                .semantics { customActions = actions }
+                .clickable(enabled = type != null) { onSelect(item.id) }.pointerHoverIcon(PointerIcon.Hand)
+                .semantics { customActions = actions; this.selected = selected }
                 .padding(start = 2.dp, top = 6.dp, bottom = 6.dp),
             verticalAlignment = Alignment.CenterVertically,
         ) {
@@ -395,17 +400,17 @@ private fun ItemRow(item: ItemConfig, state: ItemState?, index: Int, count: Int,
             RowBody(item, state)
         }
         Box {
-            IconButton(onClick = { menu = true }) { SymIcon(Sym.MENU, size = 18.sp, contentDescription = stringResource(R.string.row_more, type.title)) }
+            IconButton(onClick = { menu = true }) { SymIcon(Sym.MENU, size = 18.sp, contentDescription = stringResource(R.string.row_more, name)) }
             DropdownMenu(expanded = menu, onDismissRequest = { menu = false }) {
                 if (index > 0) DropdownMenuItem(text = { Text(moveUp) }, onClick = { menu = false; move(index - 1) },
                     leadingIcon = { SymIcon(Sym.ARROW_UPWARD, size = 18.sp) })
                 if (index < count - 1) DropdownMenuItem(text = { Text(moveDown) }, onClick = { menu = false; move(index + 1) },
                     leadingIcon = { SymIcon(Sym.ARROW_DOWNWARD, size = 18.sp) })
-                if (item.section != Section.SHOWN) DropdownMenuItem(text = { Text(toShown) }, onClick = { menu = false; Store.move(item.id, Section.SHOWN, 999) },
+                if (item.section != Section.SHOWN) DropdownMenuItem(text = { Text(toShown) }, onClick = { menu = false; Store.update { it.show(item.id) } },
                     leadingIcon = { SymIcon(Sym.VISIBILITY, size = 18.sp) })
-                if (item.section != Section.HIDDEN) DropdownMenuItem(text = { Text(stringResource(R.string.section_hidden)) }, onClick = { menu = false; Store.move(item.id, Section.HIDDEN, 999) },
+                if (item.section != Section.HIDDEN) DropdownMenuItem(text = { Text(stringResource(R.string.section_hidden)) }, onClick = { menu = false; Store.update { it.hide(item.id) } },
                     leadingIcon = { SymIcon(Sym.VISIBILITY_OFF, size = 18.sp) })
-                if (item.section != Section.OFF) DropdownMenuItem(text = { Text(turnOff) }, onClick = { menu = false; Store.move(item.id, Section.OFF, 999) },
+                if (item.section != Section.OFF) DropdownMenuItem(text = { Text(turnOff) }, onClick = { menu = false; Store.update { it.turnOff(item.id) } },
                     leadingIcon = { SymIcon(Sym.REMOVE, size = 18.sp) })
                 DropdownMenuItem(text = { Text(stringResource(R.string.common_delete)) }, onClick = { menu = false; if (selected) onSelect(null); Undo.delete(item) },
                     leadingIcon = { SymIcon(Sym.DELETE, size = 18.sp) })
@@ -417,7 +422,7 @@ private fun ItemRow(item: ItemConfig, state: ItemState?, index: Int, count: Int,
 /** The floating copy of a row while it's dragged: same size and content, lifted. */
 @Composable
 private fun RowGhost(item: ItemConfig, state: ItemState?) {
-    val type = Items.of(item.type) ?: return
+    val name = rowName(item)
     Row(Modifier.fillMaxWidth().padding(horizontal = 8.dp).shadow(8.dp, rowShape).clip(rowShape)
         .background(MaterialTheme.colorScheme.surfaceContainerHighest), verticalAlignment = Alignment.CenterVertically) {
         Row(Modifier.weight(1f).padding(start = 2.dp, top = 6.dp, bottom = 6.dp), verticalAlignment = Alignment.CenterVertically) {
@@ -426,21 +431,26 @@ private fun RowGhost(item: ItemConfig, state: ItemState?) {
             }
             RowBody(item, state)
         }
-        Box(Modifier.size(48.dp), contentAlignment = Alignment.Center) { SymIcon(Sym.MENU, size = 18.sp, contentDescription = type.title) }
+        Box(Modifier.size(48.dp), contentAlignment = Alignment.Center) { SymIcon(Sym.MENU, size = 18.sp, contentDescription = name) }
     }
 }
+
+/** What a row calls an item: a type this version doesn't know has no name here, only where it came from. */
+@Composable
+private fun rowName(item: ItemConfig): String = Items.of(item.type)?.title ?: stringResource(R.string.row_from_newer)
 
 /** The item's icon, name and detail line, shared by the row and its dragged copy. */
 @Composable
 private fun RowScope.RowBody(item: ItemConfig, state: ItemState?) {
-    val type = Items.of(item.type) ?: return
+    val type = Items.of(item.type)
     Box(Modifier.size(36.dp).clip(RoundedCornerShape(10.dp)).background(MaterialTheme.colorScheme.surfaceContainerHighest),
-        contentAlignment = Alignment.Center) { SymIcon(type.icon, size = 20.sp) }
+        contentAlignment = Alignment.Center) { SymIcon(type?.icon ?: Sym.UPDATE, size = 20.sp) }
     Spacer(Modifier.width(12.dp))
     Column(Modifier.weight(1f)) {
-        Text(type.title, style = MaterialTheme.typography.bodyLarge, maxLines = 1, overflow = TextOverflow.Ellipsis)
+        Text(rowName(item), style = MaterialTheme.typography.bodyLarge, maxLines = 1, overflow = TextOverflow.Ellipsis)
         val overflow by com.meridian11.books.bentobar.bar.BarOverflow.ids.collectAsState()
-        val detail = listOfNotNull(if (item.id in overflow) stringResource(R.string.row_overflow) else null,
+        val detail = if (type == null) "" else listOfNotNull(
+            if (item.id in overflow) stringResource(R.string.row_overflow) else null,
             state?.text?.takeIf { it.isNotBlank() },
             // The rule in short ("shows above 80% CPU"), so the list says when each hidden item pops out.
             if (item.whenActive && item.section == Section.HIDDEN) type.trigger?.short(item) ?: stringResource(R.string.row_when_active) else null,
@@ -520,7 +530,7 @@ private fun ItemDetailCard(item: ItemConfig, state: ItemState?, onSelect: (Strin
             }
             ChoiceRow(stringResource(R.string.detail_where), listOf(Section.SHOWN to stringResource(R.string.section_shown),
                 Section.HIDDEN to stringResource(R.string.section_hidden), Section.OFF to stringResource(R.string.common_off)), item.section) { s ->
-                Store.move(item.id, s, 999)
+                Store.update { it.putIn(item.id, s) }
             }
             val trigger = type.trigger
             if (type.canBeActive && trigger != null) TriggerControl(item, trigger)
@@ -558,8 +568,7 @@ private fun TriggerControl(item: ItemConfig, trigger: Trigger) {
         item.whenActive -> R.string.detail_trigger_help_not_hidden
         else -> R.string.detail_trigger_help_move
     })) { on ->
-        // Only hidden items pop out, so turning the rule on moves a shown or turned-off item behind ‹.
-        Store.updateItem(item.id) { it.copy(whenActive = on, section = if (on) Section.HIDDEN else it.section) }
+        Store.update { it.setWhenActive(item.id, on) }
     }
     if (threshold != null) {
         val r = threshold.range

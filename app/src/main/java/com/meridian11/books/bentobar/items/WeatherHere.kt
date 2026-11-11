@@ -1,5 +1,6 @@
 package com.meridian11.books.bentobar.items
 
+import android.annotation.SuppressLint
 import android.Manifest
 import android.content.pm.PackageManager
 import android.location.Location
@@ -10,9 +11,9 @@ import com.meridian11.books.bentobar.data.ItemConfig
 import com.meridian11.books.bentobar.util.Now
 
 /**
- * Where the device is, for the Weather items of My location: Android's approximate location (the
- * only location permission BentoBar has), as Android said it. [WeatherLoad.place] rounds it to about
- * ten kilometers ([WeatherRules.nearby]) before anything is asked or held under it.
+ * Where the device is, for the items of My location: Android's approximate location (the
+ * only location permission BentoBar has), rounded here to about ten kilometers ([place]) before
+ * anything else sees it.
  *
  * It lives in memory only. The layout holds the choice and never the place, and nothing here is
  * logged or written, nor is the reading of the rounded place: that too is held in memory only.
@@ -23,15 +24,18 @@ import com.meridian11.books.bentobar.util.Now
 object WeatherHere {
     private val keeper = HereKeeper(Android, Now::elapsed) { Ticker.refresh(WeatherItem.type); Ticker.refresh(AirItem.type) }
 
-    /** Where the device is, as Android said it; null until it did, and once that is past its time ([HereRules.FIX_MS]). Any thread. */
-    val fix: Fix? get() = keeper.fix
+    /**
+     * Where the device is, rounded to about ten kilometers ([WeatherRules.nearby]): the only form anything outside this object
+     * gets, so that no caller can ask about or hold it as Android said it. Null until Android said, and once that is past its time ([HereRules.FIX_MS]). Any thread.
+     */
+    val place: Place? get() = keeper.fix?.let { WeatherRules.nearby(it.lat, it.lon) }
 
-    /** Why there is no [fix], while there is none. Any thread. */
+    /** Why there is no [place], while there is none. Any thread. */
     val why: Locate get() = keeper.why
 
     fun allowed(): Boolean = Android.allowed()
 
-    /** A tick of the Weather type: see [HereKeeper.follow]. Main thread. */
+    /** One tick, from the ticker, once ([TickLoop.Wiring.location]): see [HereKeeper.follow]. Main thread. */
     fun follow(layout: List<ItemConfig>, sampled: List<ItemConfig>, on: Boolean) = keeper.follow(layout, sampled, on)
 
     /** Something changed that could let a place be found now: the permission was answered, an item chose My location. Main thread. */
@@ -53,12 +57,16 @@ object WeatherHere {
 
         override fun on(): Boolean = service()?.isLocationEnabled == true
 
+        // The coarse-location grant is asked for only when a Weather item chooses My location (HereRules), and a call made
+        // without it throws SecurityException, which the runCatching here (and the try below) turns into "no fix".
+        @SuppressLint("MissingPermission")
         override fun last(): Located? {
             val lm = service() ?: return null
             return providers(lm).mapNotNull { runCatching { lm.getLastKnownLocation(it) }.getOrNull() }
                 .maxByOrNull { it.elapsedRealtimeNanos }?.let(::located)
         }
 
+        @SuppressLint("MissingPermission") // as in last(): a missing grant throws, and the catch below answers "no fix"
         override fun current(answer: (Located?) -> Unit): Locator.Cancel? {
             val lm = service() ?: return null
             val provider = providers(lm).firstOrNull() ?: return null

@@ -18,7 +18,14 @@ import kotlin.math.roundToInt
 object AirRules {
     const val FRESH_MS = 30 * 60_000L
     const val MENU_MS = 10 * 60_000L
+    /** After no answer. */
     const val RETRY_MS = 15 * 60_000L
+    /** After being told to slow down, unless the service named a longer time. */
+    const val SLOW_MS = 60 * 60_000L
+    /** Refresh after an answer: once a minute at most. */
+    const val AGAIN_MS = 60_000L
+    /** An old index is a wrong index: after this long without an answer the numbers go, from the bar and from the menu. */
+    const val OLD_MS = 3 * 60 * 60_000L
     const val BAR_CHARS = 20
 
     enum class Band { GOOD, MODERATE, SENSITIVE, UNHEALTHY, VERY_UNHEALTHY, HAZARDOUS }
@@ -35,10 +42,22 @@ object AirRules {
         val uvMax: Double? = null,
         val fetchedAt: Long = 0,
         val failure: Failure? = null,
+        /** How many tries in a row went out and failed. */
+        val misses: Int = 0,
+        /** How long the service asked to be left alone. */
+        val retryAfterSec: Long = 0,
+        /** The time since boot when the numbers were read; 0 when not known. See [Pace.old]. */
+        val fetchedUp: Long = 0,
     ) {
         val hasValues: Boolean get() = usAqi != null || euAqi != null || uv != null
         override fun toString() = "AirReading(hasValues=$hasValues, failure=$failure)"
     }
+
+    /** An index and the scale it is on: what a band, a label and a threshold have to go by, whichever scale was asked for. */
+    data class Aqi(val value: Int, val eu: Boolean)
+
+    /** Which parts of a reading an item shows: an index, a UV figure, or both. */
+    data class Parts(val aqi: Boolean, val uv: Boolean)
 
     class Bar(
         val icon: String,
@@ -86,8 +105,8 @@ object AirRules {
         return if (rounded10 % 10 == 0) "${rounded10 / 10}" else "${rounded10 / 10}.${rounded10 % 10}"
     }
 
-    /** Parses Open-Meteo's `/v1/air-quality` JSON reply. */
-    fun read(jsonText: String, place: Place, now: Long): AirReading? = try {
+    /** Parses Open-Meteo's `/v1/air-quality` JSON reply. [now] is the wall clock and [up] the time since boot, both of this moment. */
+    fun read(jsonText: String, place: Place, now: Long, up: Long = 0): AirReading? = try {
         val root = Json.parseToJsonElement(jsonText).jsonObject
         val cur = root["current"] as? JsonObject ?: return null
         val us = cur["us_aqi"]?.jsonPrimitive?.intOrNull
@@ -100,16 +119,41 @@ object AirRules {
         val uvHourly = (hourly?.get("uv_index") as? JsonArray)?.mapNotNull { it.jsonPrimitive.doubleOrNull }.orEmpty()
         val uvMax = (uvHourly + listOfNotNull(uv)).maxOrNull()
         if (us == null && eu == null && uv == null) null
-        else AirReading(place.key, us, eu, pm25, pm10, ozone, uv, uvMax, fetchedAt = now)
+        else AirReading(place.key, us, eu, pm25, pm10, ozone, uv, uvMax, fetchedAt = now, fetchedUp = up)
     } catch (e: Exception) {
         null
     }
 
-    fun every(reading: AirReading): Long = if (reading.failure != null) RETRY_MS else FRESH_MS
+    /** Half an hour after a good reading; a failure at its own pace, as Weather's: the two share a service and a user's expectations. */
+    fun every(r: AirReading): Long = if (r.failure == null) FRESH_MS else Pace.after(r.failure, r.misses, r.retryAfterSec, RETRY_MS, SLOW_MS)
 
-    fun aqiOf(reading: AirReading, eu: Boolean): Int? = if (eu) reading.euAqi ?: reading.usAqi else reading.usAqi ?: reading.euAqi
+    /** No numbers worth showing: there are none, or they are three hours old ([Pace.old]). Yesterday's AQI is no alert today. */
+    fun old(r: AirReading, now: Long, up: Long = 0): Boolean = Pace.old(r.fetchedAt, r.fetchedUp, now, up, OLD_MS)
 
-    fun bandOf(aqi: Int, eu: Boolean): Band = if (eu) euBand(aqi) else usBand(aqi)
+    /** The state of an item; see [Status.of]. [now] is the wall clock and [up] the time since boot ([old]). */
+    fun status(hasPlace: Boolean, on: Boolean, setUp: Boolean, reading: AirReading?, now: Long, up: Long = 0, locating: Locate? = null): Status<AirReading> =
+        Status.of(hasPlace, on, setUp, reading, locating, shows = { it.hasValues && !old(it, now, up) }, failure = { it.failure })
+
+    /**
+     * The index the reading has, on the scale asked for ([eu]) when the reply had that one, else on the other: with
+     * its scale, so that a US 75 is never called "EAQI 75, Unhealthy". Null: the reply had neither, and the item says so.
+     */
+    fun aqiOf(reading: AirReading, eu: Boolean): Aqi? {
+        val first = if (eu) reading.euAqi else reading.usAqi
+        val other = if (eu) reading.usAqi else reading.euAqi
+        return first?.let { Aqi(it, eu) } ?: other?.let { Aqi(it, !eu) }
+    }
+
+    fun bandOf(aqi: Aqi): Band = if (aqi.eu) euBand(aqi.value) else usBand(aqi.value)
+
+    /** What is shown of [show] ("aqi", "uv", "both"): a part with no value is left out, and if that leaves nothing the part that has one is shown instead. */
+    fun parts(show: String, hasAqi: Boolean, hasUv: Boolean): Parts {
+        val wantsAqi = show != "uv"
+        val wantsUv = show != "aqi"
+        val aqi = hasAqi && wantsAqi
+        val uv = hasUv && wantsUv
+        return if (aqi || uv) Parts(aqi, uv) else Parts(hasAqi, hasUv)
+    }
 
     fun toneOf(band: Band?, uv: Double?): Tone {
         val aqiTone = when (band) {
@@ -133,7 +177,7 @@ object AirRules {
     fun active(reading: AirReading, thresholdAqi: Int, eu: Boolean): Boolean {
         val aqi = aqiOf(reading, eu)
         val uv = reading.uv
-        val aqiHit = if (aqi == null) false else if (eu) aqi >= (thresholdAqi * 0.6).roundToInt() else aqi >= thresholdAqi
+        val aqiHit = if (aqi == null) false else if (aqi.eu) aqi.value >= (thresholdAqi * 0.6).roundToInt() else aqi.value >= thresholdAqi
         val uvHit = uv != null && uv >= 6.0
         return aqiHit || uvHit
     }

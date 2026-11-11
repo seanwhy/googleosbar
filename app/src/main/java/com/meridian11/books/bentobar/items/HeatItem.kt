@@ -34,6 +34,7 @@ import com.meridian11.books.bentobar.util.Units
  * level asked every five seconds while an item is live); what it makes of it is in [HeatRules].
  */
 object HeatItem : ItemType("heat", R.string.item_heat_title, Sym.DEVICE_THERMOSTAT, R.string.item_heat_desc) {
+    override val group = ItemGroup.SYSTEM
     override val canBeActive = true
     override val addsWhenActive = true
     // The battery's sampler reads the thermal status and the battery's temperature; the CPU's is for the menu's "CPU load" row.
@@ -114,6 +115,9 @@ object HeatItem : ItemType("heat", R.string.item_heat_title, Sym.DEVICE_THERMOST
         ChoiceRow(stringResource(R.string.option_temperature_unit), listOf("system" to stringResource(R.string.option_like_system),
             "c" to stringResource(R.string.option_celsius), "f" to stringResource(R.string.option_fahrenheit)), HeatRules.unit(item)) { set(item.with("unit", it)) }
     }
+
+    // Shutting down reads like Emergency (HeatRules.step), so it goes first, where it is told apart from what comes before it.
+    override val stages = (listOf(HeatRules.SHUTDOWN) + (HeatRules.NONE..HeatRules.EMERGENCY)).map { "stage $it" } + listOf("level 0.84", "level none", "temp 41.3")
 
     override fun debug(args: List<String>): String? = Heat.debug(args)
 }

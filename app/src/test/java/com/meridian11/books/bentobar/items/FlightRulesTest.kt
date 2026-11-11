@@ -47,9 +47,9 @@ class FlightRulesTest {
         }
     }
 
-    private fun lookup(n: FlightNumber, now: Instant, day: LocalDate? = null, get: (Request) -> Reply): AirLabs.Answer = AirLabs.lookup(n, day, "k", now, get = get)!!
+    private fun lookup(n: FlightNumber, now: Instant, day: LocalDate? = null, get: (Request) -> Reply): AirLabs.Answer = AirLabs.lookup(n, day, now, get = get)!!
     /** [was] asked about again a day before it is to leave: more than ten hours, so the one-flight question's turn, which these tests read. */
-    private fun again(was: Flight, get: (Request) -> Reply): AirLabs.Asked = AirLabs.again(lh455, "k", was, dayBefore(was), get)!!
+    private fun again(was: Flight, get: (Request) -> Reply): AirLabs.Asked = AirLabs.again(lh455, was, dayBefore(was), get)!!
     private fun dayBefore(f: Flight): Instant = f.from.moment(f.from.planned!!).minus(Duration.ofDays(1))
     private fun ok(text: String): (Request) -> Reply = { Reply.Ok(text) }
 
@@ -315,7 +315,7 @@ class FlightRulesTest {
         assertEquals(AirLabs.Again.Gone, again(soon, ok(later(reply("flight-JL101-landed-nine-hours-ago"), 2))).again)
         // Asked again a moment later (a press of Refresh), within ten hours of its leaving: the list is asked, and has it.
         val s = Service(mapOf("schedules" to list, "flight" to reply("flight-JL101-landed-nine-hours-ago")))
-        assertTrue(AirLabs.again(lh455, "k", soon, at("2026-10-02T21:00:00Z"), s::get)!!.again is AirLabs.Again.Is)
+        assertTrue(AirLabs.again(lh455, soon, at("2026-10-02T21:00:00Z"), s::get)!!.again is AirLabs.Again.Is)
         assertEquals(listOf("schedules"), s.asked)
     }
 

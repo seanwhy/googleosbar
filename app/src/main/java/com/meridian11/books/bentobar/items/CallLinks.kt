@@ -74,6 +74,8 @@ object CallLinks {
 
     /** Lowercased host (no user info or port) and the raw path of an http(s) URL. */
     private fun split(url: String): Pair<String, String>? {
+        // A browser ends the host at a backslash, so what follows one says nothing about where the link goes.
+        if ('\\' in url) return null
         val rest = url.substringAfter("://", "").ifEmpty { return null }
         val end = rest.indexOfFirst { it == '/' || it == '?' || it == '#' }.let { if (it < 0) rest.length else it }
         val host = rest.substring(0, end).substringAfterLast('@').substringBefore(':').lowercase(Locale.ROOT)

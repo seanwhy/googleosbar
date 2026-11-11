@@ -3,6 +3,7 @@ package com.meridian11.books.bentobar.items
 import android.graphics.Bitmap
 import androidx.annotation.StringRes
 import androidx.compose.runtime.Composable
+import com.meridian11.books.bentobar.R
 import com.meridian11.books.bentobar.data.ItemConfig
 import com.meridian11.books.bentobar.data.Online
 
@@ -121,8 +122,20 @@ interface MenuHost {
 }
 
 /**
+ * Where Add lists a type, and under which heading. A new type states its group and is listed: nothing else names types by
+ * hand. The only group that says so goes online, and every type that goes online is in it (`ItemCatalogTest`).
+ */
+enum class ItemGroup(@StringRes val title: Int, @StringRes val caption: Int? = null) {
+    SYSTEM(R.string.add_group_system),
+    TIME(R.string.add_group_time),
+    TOOLS(R.string.add_group_tools),
+    ONLINE(R.string.add_group_online, R.string.add_group_online_caption),
+}
+
+/**
  * One kind of bar item (network speed, timer, …). Types are stateless objects; per-instance
- * settings live in [ItemConfig.options], shared live data in [Env].
+ * settings live in [ItemConfig.options], shared live data in [Env]. A new type is one file and one
+ * line in [Items.all]; `ItemCatalogTest` fails for whatever else was forgotten.
  */
 abstract class ItemType(
     val type: String,
@@ -135,6 +148,18 @@ abstract class ItemType(
     val title: String get() = Env.app.getString(titleRes)
     val blurb: String get() = Env.app.getString(blurbRes)
 
+    /** Where Add lists it. */
+    abstract val group: ItemGroup
+
+    /** Its reading goes up and down around the user's line (speed, load): "has something to say" is held for a while ([TickRules.held]), so it doesn't blink. */
+    open val holds: Boolean = false
+
+    /** Still shown while presenting, while it has something to say: a running timer, a meeting about to start ([com.meridian11.books.bentobar.data.BarConfig.shows]). */
+    open val presents: Boolean = false
+
+    /** Asks for where the device is (Weather's and Air quality's My location), so that is known only while such an item is outside Off (`HereRules.wanted`). */
+    open val usesMyLocation: Boolean = false
+
     /** How often [state] is recomputed while the bar shows. */
     open val refreshMs: Long = 1000
 
@@ -143,7 +168,7 @@ abstract class ItemType(
 
     /** Whether "show when active" means something for this type. */
     open val canBeActive: Boolean = false
-    /** Only ever an icon in the bar (no text to show), so settings don't offer "Show as". */
+    /** Drawn one way only (Tools' icon, a Spacer's gap), so neither the settings nor the right-click menu offer "Show as". */
     open val iconOnly: Boolean = false
 
     /** The "Show when…" rule in words, for types that [canBeActive]. */
@@ -153,11 +178,15 @@ abstract class ItemType(
     open val permissions: List<String> = emptyList()
 
     /**
-     * The online service this type asks, or null: the type never goes online (every type but Weather,
-     * Flight and Stocks). A request reaches a service only while an item of a type that names it is outside
-     * Off, the service is switched on for this install and something shows items (see `Http.allowed`).
+     * The online service this type asks, or null: the type never goes online. A request reaches a service only while an
+     * item of a type that names it is outside Off, the service is switched on for this install and something shows items
+     * (see `Http.allowed`). A type that names one is in [ItemGroup.ONLINE], says what it sends in [onlineNote], and Setup
+     * has a switch for the service.
      */
     open val online: Online.Service? = null
+
+    /** What About says this type sends, for a type that goes [online] ("About" has one line for each). */
+    @get:StringRes open val onlineNote: Int? = null
 
     /** Shows more with Android's notification access (Now playing): the item's settings offer it. */
     open val notificationAccess: Boolean = false
@@ -174,6 +203,12 @@ abstract class ItemType(
     /** What it shows is the user's own business (a track's title): debug output says how long the text is, not what it says. */
     open val discreet: Boolean = false
 
+    /**
+     * What this item shows now. Asked only for an item the [Ticker] samples, and while it has been told [onLive]; but the
+     * debug hooks and the settings can ask in passing, for a type nobody samples. So this must read what is at hand and
+     * must not start a listener, a load or anything that outlives the call: those hang on [onLive], or on a [Refresher]'s
+     * want(), which nothing feeds while no item is sampled.
+     */
     abstract fun state(item: ItemConfig): ItemState
 
     /**
@@ -218,8 +253,25 @@ abstract class ItemType(
      */
     open fun debug(args: List<String>): String? = null
 
+    /**
+     * What [debug] can stage in this type's menu, each as the words that follow the type's name (`stage rain-soon`); `off` ends it.
+     * The test that composes every item's menu goes through these, in this order, under the registered types. Each must be answered
+     * (a hook says null to what it doesn't know, or can't do for the item it finds) and must change what the menu draws, or the test
+     * fails: a state that is named here and never reached would guard nothing. So the order matters where one stage hides another.
+     */
+    open val stages: List<String> = emptyList()
+
+    /** What an item of this type needs in its options for [stages] to have something to show, merged into the one the test composes. */
+    open val stageOptions: Map<String, String> = emptyMap()
+
     /** The drop-down menu. Null means the type has none (clicks go to [onClick]). */
     open val menu: (@Composable (item: ItemConfig, host: MenuHost) -> Unit)? = null
+
+    /**
+     * [item]'s menu is about to open, before its first composition: for what the menu must not read as it stands. In
+     * an effect it would come after the first frame, and in composition it would be a side effect. Main thread.
+     */
+    open fun menuOpening(item: ItemConfig) {}
 
     /** Type-specific settings, shown in BentoBar's settings. */
     open val options: (@Composable (item: ItemConfig, set: (ItemConfig) -> Unit) -> Unit)? = null
@@ -249,11 +301,10 @@ open class Trigger(@StringRes val sentence: Int, @StringRes val short: Int, val 
 
 /**
  * A number the user picks for a [Trigger], stored as [key] in [ItemConfig.options]. [default] applies
- * while the key is missing (configs saved before it existed), so it must match the old behavior.
+ * while the key is missing (configs saved before it existed), so it must match the old behavior. The value is read as it
+ * is stored ([of]): an out-of-range value from an older config keeps working, unlike an [IntOpt].
  */
-class Threshold(val key: String, val default: Int, val range: IntRange, val step: Int = 1, val format: (Int) -> String) {
-    /** The stored value, as is: an out-of-range value from an older config keeps working. */
-    fun of(item: ItemConfig): Int = item.optInt(key, default)
+class Threshold(key: String, default: Int, val range: IntRange, val step: Int = 1, val format: (Int) -> String) : Opt<Int>(key, default, { it.toIntOrNull() }) {
     /** For the slider and the words: the stored value, kept in range. */
     fun shown(item: ItemConfig): Int = of(item).coerceIn(range)
     fun snap(v: Float): Int = (range.first + Math.round((v - range.first) / step) * step).coerceIn(range)

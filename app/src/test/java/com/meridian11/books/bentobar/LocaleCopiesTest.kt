@@ -59,6 +59,29 @@ class LocaleCopiesTest {
         }
     }
 
+    /** What British English changes: the rest of a text is the default's, word for word. */
+    private fun american(british: String): String = listOf(
+        "colour" to "color", "Colour" to "Color", "favourite" to "favorite", "behaviour" to "behavior", "centre" to "center", "Centre" to "Center",
+        "organise" to "organize", "kilometre" to "kilometer", "greyed" to "grayed", "grey" to "gray", "cancelled" to "canceled", "Cancelled" to "Canceled",
+    ).fold(british) { text, (gb, us) -> text.replace(gb, us) }
+
+    private val textOf = Regex("""<string name="([^"]+)"[^>]*>(.*)</string>""")
+
+    /**
+     * Each British text is the default's after the spelling map. Editing a line in `values/` (the privacy text, say) must not pass every
+     * test while British-English users keep the old wording in six places.
+     */
+    @Test fun aBritishTextIsTheDefaultInBritishSpelling() {
+        val default = files("values")
+        for ((file, british) in files("values-en-rGB")) {
+            val us = textOf.findAll(default.getValue(file).readText()).associate { it.groupValues[1] to it.groupValues[2] }
+            for (m in textOf.findAll(british.readText())) {
+                val (_, name, text) = m.groupValues
+                assertEquals("values-en-rGB/$file $name: the British text and the default's differ by more than spelling", us[name], american(text))
+            }
+        }
+    }
+
     @Test fun aFeaturesFileHoldsOnlyThatFeaturesNames() {
         // strings_weather.xml: weather_…, item_weather_… and trigger_weather…; so two features can never pick the same name.
         for ((file, f) in files("values")) {

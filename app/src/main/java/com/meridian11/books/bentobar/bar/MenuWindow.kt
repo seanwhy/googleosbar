@@ -65,7 +65,8 @@ class MenuWindow(
     /** The shadow's window: never touched, never focused, just below the popup's. */
     private val shade = Overlay(service, "$title shadow", touchable = false)
 
-    private val dialog = object : ComponentDialog(service, R.style.Theme_BentoBar_Menu) {
+    @androidx.annotation.VisibleForTesting
+    internal val dialog = object : ComponentDialog(service, R.style.Theme_BentoBar_Menu) {
         override fun dispatchKeyEvent(event: KeyEvent): Boolean {
             if (com.meridian11.books.bentobar.items.RemoteKeyboardItem.onKeyEvent(event)) return true
             if (event.keyCode == KeyEvent.KEYCODE_ESCAPE) {
@@ -79,6 +80,14 @@ class MenuWindow(
             if (ev.actionMasked == MotionEvent.ACTION_OUTSIDE) { onOutside(ev); return true }
             return super.dispatchTouchEvent(ev)
         }
+    }
+
+    init {
+        // Back, and a screen reader's global Back, close the popup as Esc does, folding it away. setCancelable(false)
+        // stays: this is the only way a popup goes for Back, and nothing else cancels it behind the fold.
+        dialog.onBackPressedDispatcher.addCallback(object : androidx.activity.OnBackPressedCallback(true) {
+            override fun handleOnBackPressed() = onEscape()
+        })
     }
 
     /** The room around the card in the shadow's window, in px. */

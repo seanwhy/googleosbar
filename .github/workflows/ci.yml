@@ -1,0 +1,54 @@
+# The check every change has to pass: unit tests, lint (known errors in app/lint-baseline.xml) and a release build.
+# It needs no secrets: the release build is made without the signing key, so it is unsigned.
+#
+# No `paths:` filter on either trigger, on purpose. The repository ruleset requires a check named `check`, and a required
+# check that does not report (because a filter skipped the run) blocks a merge for good.
+name: CI
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+jobs:
+  check:
+    name: check
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - uses: actions/setup-java@de7274f081f381c8f8158605e0321c36c376e2e6 # v6.0.1
+        with:
+          distribution: temurin
+          java-version: "21"
+
+      - name: SDK packages
+        run: $ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager --install "platforms;android-37.0" "build-tools;36.0.0" > /dev/null
+
+      # The heap comes from gradle.properties. There is no keystore on this runner, so assembleRelease builds unsigned
+      # (app/build.gradle.kts signs only when ~/.config/bentobar holds a key); a real release is signed by release.yml.
+      - name: Tests, lint and release build
+        run: ./gradlew :app:testDebugUnitTest :app:testComposeTestUnitTest :app:lintDebug :app:assembleRelease --no-daemon --console=plain
+
+      - name: Reports
+        if: failure()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: reports
+          path: |
+            app/build/reports/tests
+            app/build/test-results
+            app/build/reports/lint-results-debug.html
+            app/build/reports/lint-results-debug.txt
+          if-no-files-found: ignore
+          retention-days: 14

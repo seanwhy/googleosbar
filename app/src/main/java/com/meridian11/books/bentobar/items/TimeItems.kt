@@ -1,5 +1,6 @@
 package com.meridian11.books.bentobar.items
 
+import android.annotation.SuppressLint
 import android.Manifest
 import android.text.format.DateFormat
 import androidx.compose.foundation.background
@@ -96,9 +97,13 @@ import java.util.Locale
  * timed or all-day (meetings, flights, holidays, birthdays), with Join and Directions where they apply.
  */
 object CalendarItem : ItemType("calendar", R.string.item_calendar_title, Sym.CALENDAR_MONTH, R.string.item_calendar_desc) {
+    override val group = ItemGroup.TIME
     override val refreshMs = 10_000L
     // Room for Join and Directions next to an event in the agenda.
     override val menuWidthDp = 340
+
+    override fun onLive() = Calendar.hold(type)
+    override fun onIdle() = Calendar.release(type)
 
     override fun state(item: ItemConfig): ItemState {
         val today = LocalDate.now()
@@ -131,6 +136,9 @@ object CalendarItem : ItemType("calendar", R.string.item_calendar_title, Sym.CAL
 /** The agenda shows this many events at most; the rest are a "+N more" row. */
 private const val AGENDA_MAX = 12
 
+// The menu is composed afresh each time it opens, and a language change restarts the service's windows, so a locale read
+// here once per opening is never stale: nothing needs to observe it.
+@SuppressLint("NonObservableLocale")
 @Composable
 private fun MonthMenu(item: ItemConfig, host: MenuHost) {
     rememberTick()
@@ -283,6 +291,8 @@ fun EventRow(e: Calendar.Event, close: () -> Unit) {
  * left in that horizon, just the icon. The menu lists the horizon's meetings.
  */
 object EventItem : ItemType("event", R.string.item_event_title, Sym.GROUPS, R.string.item_event_desc) {
+    override val group = ItemGroup.TIME
+    override val presents = true
     override val refreshMs = 5_000L
     // Room for Join and Directions next to a meeting.
     override val menuWidthDp = 340
@@ -291,24 +301,29 @@ object EventItem : ItemType("event", R.string.item_event_title, Sym.GROUPS, R.st
     /** How long before a meeting the item pops out (with "Show when") and turns the accent color. */
     val before = Threshold("soonMin", 15, 1..60) { Env.plural(R.plurals.common_minutes_short, it, it) }
     override val trigger = Trigger(R.string.trigger_event, R.string.trigger_event_short, before)
+    /** How many characters of a title the bar shows. */
+    val chars = IntOpt("chars", 20, 8..40)
+
+    override fun onLive() = Calendar.hold(type)
+    override fun onIdle() = Calendar.release(type)
 
     override fun state(item: ItemConfig): ItemState {
         if (!Calendar.allowed()) return ItemState(icon = Sym.GROUPS, desc = Env.str(R.string.event_access_needed))
         Calendar.refresh()
         val now = System.currentTimeMillis()
-        val max = item.optInt("chars", 20)
-        fun short(t: String) = if (t.length <= max) t else t.take(max - 1).trimEnd() + "…"
+        val max = chars.of(item)
         Calendar.current(now)?.let { e ->
             val left = Fmt.duration(e.end - now)
-            return ItemState(icon = Sym.GROUPS, text = Env.str(R.string.event_now_text, short(e.title), left), label = e.title, active = true,
-                tone = Tone.ACCENT, desc = Env.str(R.string.event_now_desc, e.title, left))
+            return ItemState(icon = Sym.GROUPS, text = Env.str(R.string.event_now_text, TextRules.short(e.title, max), left), label = e.title, active = true,
+                tone = Tone.ACCENT, desc = Env.str(R.string.event_now_desc, e.title, Fmt.spokenMinutes(e.end - now)))
         }
         val next = Calendar.next(now) ?: return ItemState(icon = Sym.GROUPS, desc = Env.str(R.string.event_no_more))
         val until = next.begin - now
         val near = until <= before.of(item) * 60_000L
         val whenText = if (until < 60 * 60_000L) Env.str(R.string.event_in, Fmt.duration(until.coerceAtLeast(60_000))) else shortTime(next.begin)
-        return ItemState(icon = Sym.GROUPS, text = Env.str(R.string.event_next_text, short(next.title), whenText), label = next.title, active = near,
-            tone = if (near) Tone.ACCENT else Tone.NORMAL, desc = Env.str(R.string.event_next_desc, next.title, whenText))
+        val whenSaid = if (until < 60 * 60_000L) Env.str(R.string.event_in, Fmt.spokenMinutes(until.coerceAtLeast(60_000))) else whenText
+        return ItemState(icon = Sym.GROUPS, text = Env.str(R.string.event_next_text, TextRules.short(next.title, max), whenText), label = next.title, active = near,
+            tone = if (near) Tone.ACCENT else Tone.NORMAL, desc = Env.str(R.string.event_next_desc, next.title, whenSaid))
     }
 
     override val menu: @Composable (ItemConfig, MenuHost) -> Unit = { _, host ->
@@ -344,12 +359,14 @@ object EventItem : ItemType("event", R.string.item_event_title, Sym.GROUPS, R.st
 
     override val options: @Composable (ItemConfig, (ItemConfig) -> Unit) -> Unit = { item, set ->
         val res = androidx.compose.ui.platform.LocalResources.current
-        SliderRow(stringResource(R.string.event_longest_title), item.optInt("chars", 20), 8..40,
-            { res.getQuantityString(R.plurals.event_characters, it, it) }) { set(item.with("chars", it.toString())) }
+        SliderRow(stringResource(R.string.event_longest_title), chars.of(item), chars.range,
+            { res.getQuantityString(R.plurals.event_characters, it, it) }) { set(chars.set(item, it)) }
     }
 }
 
 object TimerItem : ItemType("timer", R.string.item_timer_title, Sym.TIMER, R.string.item_timer_desc) {
+    override val group = ItemGroup.TIME
+    override val presents = true
     override val canBeActive = true
     // Room for the four presets and Custom on one line.
     override val menuWidthDp = 380
@@ -371,14 +388,14 @@ object TimerItem : ItemType("timer", R.string.item_timer_title, Sym.TIMER, R.str
         return when (s.mode) {
             Timers.Mode.STOPWATCH -> ItemState(icon = if (s.running) Sym.AVG_PACE else Sym.PAUSE, filled = true,
                 text = Fmt.clock(Timers.elapsed(s, now), elapsed = true), active = true, widthKey = "stopwatch",
-                desc = Env.str(R.string.timer_stopwatch_desc, Fmt.clock(Timers.elapsed(s, now), elapsed = true)))
+                desc = Env.str(R.string.timer_stopwatch_desc, Fmt.spoken(Timers.elapsed(s, now))))
             else -> {
                 val left = Timers.remaining(s, now)
                 val onBreak = s.mode == Timers.Mode.POMODORO && s.phase != Timers.Phase.WORK
                 ItemState(icon = if (!s.running) Sym.PAUSE else if (onBreak) Sym.COFFEE else Sym.TIMER, filled = true,
                     text = Fmt.clock(left), active = true, tone = if (left < 60_000 && s.running) Tone.ACCENT else Tone.NORMAL,
                     widthKey = "countdown",
-                    desc = Env.str(if (onBreak) R.string.timer_break_left_desc else R.string.timer_left_desc, Fmt.clock(left)))
+                    desc = Env.str(if (onBreak) R.string.timer_break_left_desc else R.string.timer_left_desc, Fmt.spokenLeft(left)))
             }
         }
     }
@@ -482,9 +499,13 @@ private fun CustomMinutes(onStart: (Int) -> Unit) {
 }
 
 object CountdownItem : ItemType("countdown", R.string.item_countdown_title, Sym.HOURGLASS_TOP, R.string.item_countdown_desc) {
+    override val group = ItemGroup.TIME
+    override val presents = true
     override val refreshMs = 10_000L
     override val canBeActive = true
     override val trigger = Trigger(R.string.trigger_countdown, R.string.trigger_countdown_short)
+    /** The name before the time. */
+    val label = Opt.text("label", 16)
 
     /** "2026-12-24 18:00". Strict: February 30 is an error, not March 2 or February 28. */
     private val format = DateTimeFormatter.ofPattern("uuuu-MM-dd HH:mm").withResolverStyle(java.time.format.ResolverStyle.STRICT)
@@ -496,17 +517,17 @@ object CountdownItem : ItemType("countdown", R.string.item_countdown_title, Sym.
     override fun state(item: ItemConfig): ItemState {
         val t = target(item) ?: return ItemState(icon = Sym.HOURGLASS_TOP, text = Env.str(R.string.countdown_set_date), desc = Env.str(R.string.countdown_no_date))
         val left = t.atZone(ZoneId.systemDefault()).toInstant().toEpochMilli() - System.currentTimeMillis()
-        val label = item.opt("label", "")
-        val text = if (left <= 0) "${label.ifBlank { Env.str(R.string.countdown_now) }} ✓" else (if (label.isBlank()) "" else "$label ") + Fmt.duration(left)
+        val name = label.of(item)
+        val text = if (left <= 0) "${name.ifBlank { Env.str(R.string.countdown_now) }} ✓" else (if (name.isBlank()) "" else "$name ") + Fmt.duration(left)
         return ItemState(icon = Sym.HOURGLASS_TOP, text = text.trim(), active = left in 0..86_400_000L,
-            desc = Env.str(R.string.countdown_desc, label.ifBlank { Env.str(R.string.item_countdown_title) }, Fmt.duration(left.coerceAtLeast(0))))
+            desc = Env.str(R.string.countdown_desc, name.ifBlank { Env.str(R.string.item_countdown_title) }, Fmt.spokenMinutes(left.coerceAtLeast(0))))
     }
 
     override val menu: @Composable (ItemConfig, MenuHost) -> Unit = { item, host ->
         rememberTick()
         val t = target(item)
         val name = stringResource(R.string.item_countdown_title)
-        MenuCard(Sym.HOURGLASS_TOP, item.opt("label", name).ifBlank { name },
+        MenuCard(Sym.HOURGLASS_TOP, label.of(item).ifBlank { name },
             t?.let { Dates.format("EEEEdMMMMyyyy" + Dates.timeSkeleton(DateFormat.is24HourFormat(Env.app)), it.atZone(ZoneId.systemDefault())) }) {
             if (t != null) {
                 val left = t.atZone(ZoneId.systemDefault()).toInstant().toEpochMilli() - System.currentTimeMillis()
@@ -519,8 +540,8 @@ object CountdownItem : ItemType("countdown", R.string.item_countdown_title, Sym.
     }
 
     override val options: @Composable (ItemConfig, (ItemConfig) -> Unit) -> Unit = { item, set ->
-        TextRow(stringResource(R.string.option_label), item.opt("label", ""), placeholder = stringResource(R.string.countdown_label_hint), maxLength = 16) {
-            set(item.with("label", it.take(16).ifBlank { null }))
+        TextRow(stringResource(R.string.option_label), label.of(item), placeholder = stringResource(R.string.countdown_label_hint), maxLength = 16) {
+            set(label.set(item, it))
         }
         val at = item.opt("at", "")
         TextRow(stringResource(R.string.countdown_date_time), at, placeholder = "2026-12-24 18:00",

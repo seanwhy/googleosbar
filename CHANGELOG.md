@@ -346,7 +346,7 @@ First version, tested on an HP Googlebook 14 (Googlebook OS, Android 17).
 
 - DiscoBar's own items in the status bar's free space, next to the system icons (or centred, or
   after the clock), in the status bar's own text colour.
-- Sections like Bartender's: in the bar, hidden behind ‹ (revealed on click or hover), or off.
+- Three sections: in the bar, hidden behind ‹ (revealed on click or hover), or off.
   Hidden items can show themselves while active (a running timer, a meeting about to start).
 - 16 item types: network speed, battery details, memory, storage, date and month calendar, next
   meeting, world clock, timer/stopwatch/Pomodoro, countdown, keep awake, sound, tools, app folder,

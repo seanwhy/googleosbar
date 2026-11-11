@@ -39,12 +39,14 @@ import androidx.compose.ui.input.key.type
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
+import androidx.compose.ui.semantics.stateDescription
 import androidx.compose.ui.semantics.Role
 import androidx.compose.foundation.selection.toggleable
 import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.unit.dp
+import com.meridian11.books.bentobar.bar.SliderMath
 import com.meridian11.books.bentobar.R
 import com.meridian11.books.bentobar.util.SymIcon
 
@@ -118,11 +120,12 @@ fun SliderRow(label: String, value: Int, range: IntRange, format: (Int) -> Strin
     Column(Modifier.fillMaxWidth().padding(vertical = 6.dp)) {
         Row {
             Text(label, style = MaterialTheme.typography.labelLarge, modifier = Modifier.weight(1f))
-            Text(format(v.toInt()), style = MaterialTheme.typography.labelLarge, color = MaterialTheme.colorScheme.primary)
+            Text(format(SliderMath.stop(v)), style = MaterialTheme.typography.labelLarge, color = MaterialTheme.colorScheme.primary)
         }
-        Slider(value = v, onValueChange = { v = it }, onValueChangeFinished = { onChange(v.toInt()) },
-            valueRange = range.first.toFloat()..range.last.toFloat(), steps = (range.last - range.first - 1).coerceIn(0, 40),
-            modifier = Modifier.semantics { contentDescription = label })
+        Slider(value = v, onValueChange = { v = it }, onValueChangeFinished = { onChange(SliderMath.stop(v)) },
+            valueRange = range.first.toFloat()..range.last.toFloat(), steps = SliderMath.stops(range),
+            // Read out as its value and unit ("12 dp"), not as a percentage of the track.
+            modifier = Modifier.semantics { contentDescription = label; stateDescription = format(SliderMath.stop(v)) })
     }
 }
 

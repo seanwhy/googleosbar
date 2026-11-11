@@ -18,7 +18,13 @@ object ClipboardRules {
     const val MOST_RECENT = 8
     const val BAR_CHARS = 20
     const val MENU_CHARS = 80
+    /** The longest a pinned snippet is: pins are kept in the layout, and copied with it. */
     const val MAX_CHARS = 500
+    /** The longest recent copy kept in memory: eight of these are under 2 MB, and a click puts the whole text back. */
+    const val RECENT_CHARS = 100_000
+
+    /** How a BentoBar settings export (Copy settings) begins. */
+    private const val EXPORT_START = """{"version":"""
 
     class Bar(
         val icon: String,
@@ -79,16 +85,33 @@ object ClipboardRules {
         return withPins(item, list)
     }
 
-    /** Adds [clip] to the front of [recent], deduplicating and keeping at most [MOST_RECENT] entries. */
-    fun recordRecent(recent: List<String>, clip: String?): List<String> {
-        val c = clip?.let(::clean) ?: return recent
-        return (listOf(c) + recent.filterNot { it == c }).take(MOST_RECENT)
+    /**
+     * What of a clip may become a recent copy: its own text, or nothing. No text ([text] is null: a copied file or
+     * link, which nothing opens to find out), a clip its app marked [sensitive] (Android's EXTRA_IS_SENSITIVE: a
+     * password manager's) and BentoBar's own settings export are not recorded.
+     */
+    fun recentText(text: CharSequence?, sensitive: Boolean): String? {
+        if (sensitive || text == null) return null
+        return text.toString().takeUnless { it.trimStart().startsWith(EXPORT_START) }
     }
+
+    /**
+     * Adds [clip] to the front of [recent], deduplicating and keeping at most [MOST_RECENT] entries. As it was copied,
+     * ends included, since a click puts exactly this back on the clipboard. One over [RECENT_CHARS] isn't kept: better
+     * no row than a row that copies back less than was copied.
+     */
+    fun recordRecent(recent: List<String>, clip: String?): List<String> {
+        if (clip.isNullOrBlank() || clip.length > RECENT_CHARS) return recent
+        return (listOf(clip) + recent.filterNot { it == clip }).take(MOST_RECENT)
+    }
+
+    /** Whether [text] survives being pinned ([clean] keeps [MAX_CHARS]): a longer recent copy offers no pin. */
+    fun pinsWhole(text: String): Boolean = clean(text) == text.trim()
 
     /** Recent clips that aren't already pinned on [item]. */
     fun unpinnedRecent(recent: List<String>, pins: List<String>): List<String> {
         val pinnedSet = pins.toHashSet()
-        return recent.filterNot { it in pinnedSet }.take(MOST_RECENT)
+        return recent.filterNot { clean(it) in pinnedSet }.take(MOST_RECENT)
     }
 
     /** What the bar shows for [pins] and [recent]. Spoken description never quotes the snippet text. */

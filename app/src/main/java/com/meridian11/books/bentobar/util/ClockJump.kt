@@ -22,6 +22,9 @@ data class ClockAnchor(val wall: Long, val elapsed: Long, val boot: Int) {
         return if (kotlin.math.abs(moved) < 2_000) 0 else moved
     }
 
+    /** Real time from [now] to [deadline], a wall-clock time set at this anchor, whatever the clock did in between. */
+    fun left(deadline: Long, now: ClockAnchor): Long = deadline + jump(now) - now.wall
+
     companion object {
         private var bootCount: Int? = null
 

@@ -38,7 +38,11 @@
     <string name="air_show_aqi_uv">AQI and UV</string>
     <string name="air_show_uv">UV index</string>
     <string name="air_note">Air quality and UV by Open-Meteo · %1$s</string>
-    <string name="air_desc_live">%1$s: AQI %2$d (%3$s), UV %4$s</string>
+    <string name="air_subtitle_uv">UV %1$s (%2$s)</string>
+    <string name="air_desc_live">%1$s: %2$s (%3$s), UV %4$s</string>
+    <string name="air_desc_aqi">%1$s: %2$s (%3$s)</string>
+    <string name="air_desc_uv">%1$s: UV %2$s</string>
+    <string name="air_desc_no_location">Air quality: location not available</string>
     <string name="air_desc_not_set_up">Air quality: not set up</string>
     <string name="air_desc_off">Air quality: off</string>
     <string name="air_desc_loading">Air quality: loading</string>

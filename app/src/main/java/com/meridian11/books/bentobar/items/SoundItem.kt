@@ -46,6 +46,7 @@ import kotlin.math.roundToInt
  * the item before there was a slider.
  */
 object SoundItem : ItemType("sound", R.string.item_sound_title, Sym.VOLUME_UP, R.string.item_sound_desc) {
+    override val group = ItemGroup.TOOLS
     private const val STREAM = AudioManager.STREAM_MUSIC
 
     private fun am() = Env.app.getSystemService(AudioManager::class.java)
@@ -95,7 +96,7 @@ object SoundItem : ItemType("sound", R.string.item_sound_title, Sym.VOLUME_UP, R
             SoundRules.slider(on = true, fixed = fixed(am), volume = v, min = min, max = max, muted = silenced, kept = kept)
         }
         return ItemState(icon = when { muted -> Sym.VOLUME_OFF; pct < 34 -> Sym.VOLUME_MUTE; pct < 67 -> Sym.VOLUME_DOWN; else -> Sym.VOLUME_UP },
-            text = if (muted) Env.str(R.string.sound_muted) else "$pct%", widthKey = if (muted) null else "pct",
+            text = if (muted) Env.str(R.string.sound_muted) else com.meridian11.books.bentobar.util.Fmt.percent(pct), widthKey = if (muted) null else "pct",
             desc = if (muted) Env.str(R.string.sound_muted_desc) else Env.plural(R.plurals.sound_volume_desc, pct),
             slider = slider,
             // The number the slider stands for; shown as an icon only, the item has no slider and keeps its name as the tooltip.
@@ -181,12 +182,13 @@ object SoundItem : ItemType("sound", R.string.item_sound_title, Sym.VOLUME_UP, R
     }
 
     override fun debug(args: List<String>): String? = when (args.firstOrNull()) {
-        // `sound fixed on|off` stages a fixed (or a settable) volume, anything else ends the staging.
+        // `sound fixed on|off` stages a fixed (or a settable) volume; `sound off`, or `sound fixed` with no word, ends the staging.
         "fixed" -> {
-            fixedStaged = when (args.getOrNull(1)) { "on" -> true; "off" -> false; else -> null }
+            fixedStaged = when (args.getOrNull(1)) { "on" -> true; "off" -> false; null -> null; else -> return null }
             Ticker.refresh()
             "fixed volume staged=$fixedStaged"
         }
+        "off" -> { fixedStaged = null; Ticker.refresh(); "fixed volume staging off" }
         else -> null
     }
 }

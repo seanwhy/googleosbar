@@ -95,7 +95,7 @@ object HeatRules {
     /** A level as a whole percentage, rounded (0.84 is 83.99999 in a float); it can pass 100. */
     fun percent(level: Float): Int = (level * 100).roundToInt()
 
-    fun percentText(level: Float): String = "${percent(level)}%"
+    fun percentText(level: Float): String = com.meridian11.books.bentobar.util.Fmt.percent(percent(level))
 
     /** At 100% or beyond, by the number that is shown: the menu draws the level in the error color. */
     fun over(level: Float): Boolean = percent(level) >= 100

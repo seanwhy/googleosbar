@@ -6,7 +6,7 @@
     <string name="app_name">BentoBar</string>
     <string name="a11y_label">BentoBar</string>
     <string name="a11y_summary">Draws your items in the status bar</string>
-    <string name="a11y_description">BentoBar draws your items (network speed, timer, calendar, tools…) on the status bar. Android allows that only through an accessibility service.\n\nWith it on, BentoBar: reads only the status bar\'s layout, to find free space for your items; reads the color of the status bar clock, so your items match it; and runs the system actions you pick in the Tools menu or as a Shortcut item, such as screenshot or lock.\n\nIt doesn\'t read other apps\' windows or watch your keyboard, mouse or touches. Nothing the service reads ever leaves your Googlebook: BentoBar never collects or shares it.</string>
+    <string name="a11y_description">BentoBar draws your items (network speed, timer, calendar, tools…) on the status bar. Android allows that only through an accessibility service.\n\nWith it on, BentoBar: reads the status bar\'s layout, to find free space for your items; reads where windows are on the screen, never what is in them, to hide for full-screen apps and panels and to keep your items matching the status bar; reads the color of the status bar clock, so your items match it; and runs the system actions you pick in the Tools menu or as a Shortcut item, such as screenshot or lock.\n\nIt never reads what is in another app\'s window, and it doesn\'t watch your keyboard, mouse or touches. Nothing the service reads ever leaves your Googlebook: BentoBar never collects or shares it.</string>
     <string name="tile_bar">BentoBar</string>
     <string name="tile_awake">Keep awake</string>
     <string name="tile_timer">Timer</string>
@@ -124,6 +124,7 @@
     <string name="usage_top_storage">Largest apps</string>
     <string name="usage_loading">Loading…</string>
     <string name="usage_none_data">No data used yet today</string>
+    <string name="usage_storage_launcher_only">Only apps with a launcher entry are counted.</string>
     <string name="usage_none_storage">No app sizes available</string>
     <string name="usage_no_ethernet">Ethernet isn\'t included: Android doesn\'t report it per app.</string>
     <string name="usage_android_system">Android system</string>
@@ -388,6 +389,7 @@
     <string name="status_hidden">Hidden. Show it again here or with the Quick Settings tile.</string>
     <string name="status_starting">Starting…</string>
     <string name="status_no_room">No free space in the status bar right now.</string>
+    <string name="status_empty">Nothing to show in the status bar right now.</string>
     <string name="status_no_bar">A full-screen app hides the status bar, and BentoBar with it.</string>
     <string name="status_covered">A system panel covers the status bar. BentoBar returns when it closes.</string>
     <string name="status_live">Live in the status bar. Changes apply right away.</string>
@@ -494,6 +496,14 @@
     <string name="look_copy">Copy settings</string>
     <string name="look_restored">Settings restored</string>
     <string name="look_not_settings">No BentoBar settings on the clipboard</string>
+    <string name="look_paste_newer">Those settings come from a newer BentoBar. Update BentoBar to use them.</string>
+    <string name="look_kept_readable">A layout BentoBar couldn\'t read earlier was kept, and it can be read now.</string>
+    <string name="look_kept_newer">A layout from a newer BentoBar was set aside. Update BentoBar and it can be put back.</string>
+    <string name="look_kept_unreadable">A saved layout couldn\'t be read, so BentoBar started fresh. The old one was kept.</string>
+    <string name="look_kept_restore">Put it back</string>
+    <string name="look_kept_copy">Copy it</string>
+    <string name="look_kept_discard">Discard</string>
+    <string name="row_from_newer">From a newer version</string>
     <string name="look_paste">Paste settings</string>
     <string name="setup_optional">optional</string>
     <string name="setup_done">done</string>
@@ -502,10 +512,11 @@
     <string name="setup_turn_on_title">Turn on BentoBar</string>
     <string name="setup_turn_on_text">Apps can draw on the status bar only through an accessibility service, which Android says can \"view and control your screen\". With it on, BentoBar:</string>
     <string name="setup_turn_on_draws">draws your items in the status bar\'s free space</string>
-    <string name="setup_turn_on_reads">reads only the status bar\'s layout, to find free space for your items</string>
+    <string name="setup_turn_on_reads">reads the status bar\'s layout, to find free space for your items</string>
+    <string name="setup_turn_on_windows">reads where windows are on the screen, never what is in them, to hide for full-screen apps and panels and to keep your items matching the status bar</string>
     <string name="setup_turn_on_copies">reads the color of the status bar clock, so your items match it</string>
     <string name="setup_turn_on_runs">runs the system actions you pick in the Tools menu or as a Shortcut item, such as screenshot or lock</string>
-    <string name="setup_turn_on_doesnt">It doesn\'t read other apps\' windows or watch your keyboard, mouse or touches. What it reads stays on your Googlebook: BentoBar never collects or shares it.</string>
+    <string name="setup_turn_on_doesnt">It never reads what is in another app\'s window, and it doesn\'t watch your keyboard, mouse or touches. What it reads stays on your Googlebook: BentoBar never collects or shares it.</string>
     <string name="disclosure_title">BentoBar uses the Accessibility API</string>
     <string name="disclosure_intro">Android lets an app draw on the status bar only through an accessibility service (the AccessibilityService API). With its service on, BentoBar:</string>
     <string name="disclosure_next">Agree opens Android\'s Accessibility settings, where you turn BentoBar on. You can turn it off there at any time.</string>
@@ -545,16 +556,16 @@
     <string name="about_version">BentoBar %1$s</string>
     <string name="about_tagline">Add, hide and organize items in your Googlebook\'s status bar.</string>
     <string name="about_privacy">Privacy</string>
-    <string name="about_privacy_text">BentoBar goes online for five items only, and only after you set them up: Weather and Air quality &amp; UV ask Open-Meteo about the city you search for (or, with My location, about where the device is, rounded to about 10 km), Exchange rates asks Frankfurter for the European Central Bank\'s reference rates, Flight asks AirLabs about the flight you enter, and US stocks asks Finnhub about the stocks you follow, the last two with a key of your own. BentoBar sends nothing else anywhere: not your layout, your calendar, your clipboard, what\'s playing or anything it measures. It has no accounts of its own, no ads and no analytics, and it sends its developer nothing. Its accessibility service reads only the status bar (its layout and its clock\'s color), never other apps. With Usage access on, it also reads how much data and storage each app uses, for the Network and Storage menus, and nothing else.</string>
+    <string name="about_privacy_text">BentoBar goes online for five items only, and only after you set them up: Weather and Air quality &amp; UV ask Open-Meteo about the city you search for (or, with My location, about where the device is, rounded to about 10 km), Exchange rates asks Frankfurter for the European Central Bank\'s reference rates, Flight asks AirLabs about the flight you enter, and US stocks asks Finnhub about the stocks you follow, the last two with a key of your own. BentoBar sends nothing else anywhere: not your layout, your calendar, your clipboard, what\'s playing or anything it measures. It has no accounts of its own, no ads and no analytics, and it sends its developer nothing. Its accessibility service reads the status bar (its layout and its clock\'s color) and where windows are on the screen, never what is in them. With Usage access on, it also reads how much data and storage each app uses, for the Network and Storage menus, and nothing else.</string>
     <string name="about_privacy_weather">Weather sends Open-Meteo the city you search for. For the forecast it sends the coordinates of the city you pick, rounded to about a kilometer: about every 30 minutes while the bar is on screen, and when you open its menu or press Refresh. With My location it sends where this device is instead, rounded to about 10 km: BentoBar asks Android for the approximate location only while such an item is in the bar or waits in Hidden to show for rain or snow, or while BentoBar\'s settings window is open, and keeps it and its forecast in memory only. Open-Meteo sees your IP address, as any website does, and may keep it in its logs for 90 days.</string>
     <string name="about_privacy_air">Air quality &amp; UV sends Open-Meteo what Weather does: the city you search for, then the coordinates of the city you pick, or with My location where this device is, rounded in the same way. It asks about every 30 minutes while the bar is on screen, and when you open its menu or press Refresh, and keeps its readings in memory only. Weather\'s switch in Setup › Online services covers it too.</string>
-    <string name="about_privacy_clipboard">Clipboard reads the text you copy while the item is in use, and keeps your last few copies in memory only: they are gone when BentoBar stops, and are never stored or sent. The snippets you pin are saved with the item, in your layout. With Paste into active field on click on, the accessibility service pastes the snippet you click into the text field you are typing in, without reading that field or its app.</string>
+    <string name="about_privacy_clipboard">Clipboard reads the text you copy while the item is in use, and keeps your last few copies in memory only: they are gone when BentoBar stops, and are never stored or sent. The snippets you pin are saved with the item, in your layout.</string>
     <string name="about_privacy_stocks">US stocks sends Finnhub your own key with the symbol of each stock you follow: every 2 minutes while the market is open and the bar is on screen, once after the close, and when you open its menu, press Refresh or save a new key. Its search sends what you type when you press Search. Finnhub sees your IP address and can tie requests to your key\'s account. BentoBar ships no key.</string>
-    <string name="about_privacy_fx">Exchange rates asks Frankfurter (api.frankfurter.dev) for the European Central Bank\'s reference table of currencies at most once an hour while the bar is on screen, and when you open its menu or press Refresh. No key is needed, and the pairs you follow are calculated on your device. Frankfurter sees your IP address, as any website does.</string>
+    <string name="about_privacy_fx">Exchange rates asks Frankfurter (api.frankfurter.dev) for the European Central Bank\'s reference table of currencies about once an hour while the bar is on screen, and when you open its menu or press Refresh; a failed try is repeated sooner. No key is needed, and the pairs you follow are calculated on your device. Frankfurter sees your IP address, as any website does.</string>
     <string name="about_privacy_flight">Flight sends AirLabs the flight number and your own key: when you track a flight, when you press Refresh or save a new key, and while it follows the flight, about every 3 hours until 3 hours before departure, then every 30 minutes or sooner until it lands; a failed try is repeated sooner. Once it knows the flight has landed it stops asking; after sleeping through a landing it asks once more. AirLabs sees your IP address and can tie lookups to your key\'s account. BentoBar ships no key. Open flight page opens FlightAware in your browser.</string>
     <string name="about_privacy_media">Now playing, with notification access, reads the title, artist and artwork your media players publish. BentoBar tells Android to send it no notifications, and receives none. Nothing is stored or sent.</string>
     <string name="about_privacy_others">Device batteries, Heat, External displays, World clock and the volume slider use only what Android tells every app. They need no permission and send nothing. New event hands the chosen time to your calendar app.</string>
-    <string name="about_privacy_backup">If you use Android\'s backup, Android keeps a copy of BentoBar\'s settings in your Google account. Your AirLabs and Finnhub keys and the online switches are left out of it.</string>
+    <string name="about_privacy_backup">If you use Android\'s backup, Android keeps a copy of BentoBar\'s settings in your Google account. Your AirLabs and Finnhub keys, the online switches, your answer to the accessibility explanation, a running timer and keep awake are left out of it.</string>
     <string name="about_privacy_policy">Privacy policy</string>
     <string name="about_how">How it works</string>
     <string name="about_how_text">Apps can\'t change Android\'s own status bar icons, so BentoBar draws its items in its own windows over the status bar\'s free space. It moves them aside when the system icons change and hides them when an app goes full screen. A running timer or meeting can also appear as a Live Update chip.</string>
@@ -569,7 +580,7 @@
     <string name="about_credit_frankfurter">Reference exchange rates by the European Central Bank via Frankfurter (frankfurter.dev), MIT License</string>
     <string name="about_who">Who made this</string>
     <string name="about_who_text">Made by Meridian11 LLC (github.com/Meridian11Labs), developed on a Googlebook.</string>
-    <string name="about_independent_text">BentoBar isn\'t made, sponsored or endorsed by Google, or by the makers of Bartender (Surtees Studios) or iStat Menus (Bjango), and it doesn\'t endorse them. The views and choices in it are Meridian11\'s own.</string>
+    <string name="about_independent_text">BentoBar isn\'t made, sponsored or endorsed by Google. The views and choices in it are Meridian11\'s own.</string>
 
     <!-- plurals: system -->
     <plurals name="cpu_menu_subtitle">
@@ -581,6 +592,11 @@
     <plurals name="event_characters">
         <item quantity="one">%1$d character</item>
         <item quantity="other">%1$d characters</item>
+    </plurals>
+    <!-- A choice of how long each value shows in the bar: "3 s", "10 s". -->
+    <plurals name="common_seconds_short">
+        <item quantity="one">%1$d s</item>
+        <item quantity="other">%1$d s</item>
     </plurals>
     <plurals name="common_minutes_short">
         <item quantity="one">%1$d min</item>
@@ -645,6 +661,35 @@
     <plurals name="common_minutes">
         <item quantity="one">%1$d minute</item>
         <item quantity="other">%1$d minutes</item>
+    </plurals>
+    <!-- The words of the formats in util/Fmt.kt (Fmt.Words): a percentage, the units in the strip, a length of time. -->
+    <string name="common_percent">%1$s%%</string>
+    <string name="common_dp">%1$d dp</string>
+    <string name="fmt_days_hours">%1$dd %2$dh</string>
+    <string name="fmt_hours_minutes">%1$dh %2$02dm</string>
+    <string name="fmt_minutes">%1$dm</string>
+    <string name="fmt_seconds">%1$ds</string>
+    <string name="fmt_spoken_pair">%1$s %2$s</string>
+    <string-array name="fmt_units_bytes">
+        <item>B</item>
+        <item>KB</item>
+        <item>MB</item>
+        <item>GB</item>
+        <item>TB</item>
+    </string-array>
+    <string-array name="fmt_units_rate">
+        <item>B</item>
+        <item>K</item>
+        <item>M</item>
+        <item>G</item>
+    </string-array>
+    <plurals name="common_days">
+        <item quantity="one">%1$d day</item>
+        <item quantity="other">%1$d days</item>
+    </plurals>
+    <plurals name="common_seconds">
+        <item quantity="one">%1$d second</item>
+        <item quantity="other">%1$d seconds</item>
     </plurals>
     <string name="option_temperature_unit">Temperature unit</string>
     <string name="option_celsius">°C</string>

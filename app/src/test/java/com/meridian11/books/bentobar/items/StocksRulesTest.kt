@@ -404,4 +404,11 @@ class StocksRulesTest {
         assertEquals("a stock", aapl.toString())
         assertEquals("a stock", Listing("AAPL", "APPLE INC").toString())
     }
+
+    @Test fun cachedNumberFormatsDontMixLocalesOrDecimals() {
+        assertEquals("227.52", StocksRules.price(227.52, java.util.Locale.US))
+        assertEquals("227,52", StocksRules.price(227.52, java.util.Locale.GERMANY))
+        assertEquals("0.4512", StocksRules.price(0.4512, java.util.Locale.US))
+        assertEquals("227.52", StocksRules.price(227.52, java.util.Locale.US))
+    }
 }

@@ -467,50 +467,18 @@ class HeatRulesTest {
         assertEquals("shows above 80% CPU, or when hot", text.format("trigger_cpu_hot_short", "80%"))
     }
 
-    // ---- the words, as the copy deck has them
+    // ---- the words
 
-    @Test fun theTextIsTheCopyDecksToTheCharacter() {
-        val heat = mapOf(
-            "item_heat_title" to "Heat",
-            "item_heat_desc" to "Shows when Android slows a hot device; heat level in its menu",
-            "trigger_heat" to "Show when the device is at least %1\$s, and for a minute after it cools",
-            "trigger_heat_short" to "shows when %1\$s",
-            "heat_rule_warm" to "warm",
-            "heat_rule_hot" to "hot",
-            "heat_rule_very_hot" to "very hot",
-            "heat_bar_warm" to "Warm",
-            "heat_bar_hot" to "Hot",
-            "heat_bar_very_hot" to "Very hot",
-            "heat_bar_critical" to "Critical",
-            "heat_bar_too_hot" to "Too hot",
-            "heat_bar_temp_word" to "%1\$s · %2\$s",
-            "heat_level" to "Heat level",
-            "heat_battery_temp" to "Battery temperature",
-            "heat_temp_c" to "%1\$s\u00A0°C",
-            "heat_temp_f" to "%1\$s\u00A0°F",
-            "heat_cpu_load" to "CPU load",
-            "heat_note" to "At 100% Android slows the device down noticeably to cool it; a little slowing can start sooner. " +
-                "Android doesn't share CPU temperature or fan speed with apps.",
-            "heat_note_no_level" to "Android doesn't share CPU temperature or fan speed with apps.",
-            "heat_show_state" to "State",
-            "heat_desc" to "Heat: %1\$s",
-        )
-        val cpu = mapOf(
-            "cpu_also_hot" to "Also show when the device runs hot",
-            "cpu_also_hot_help" to "Hot means Android has started to slow the device.",
-            "trigger_cpu_hot" to "Show when CPU load is above %1\$s, or the device runs hot",
-            "trigger_cpu_hot_short" to "shows above %1\$s CPU, or when hot",
-            "cpu_heat" to "Heat",
-            "cpu_state_desc_hot" to "CPU %1\$s busy, device hot",
-        )
-        val ownHeat = HeatDevicesStrings("strings_heat.xml")
-        val ownCpu = HeatDevicesStrings("strings_cpu.xml")
-        for ((name, words) in heat) assertEquals(name, words, ownHeat[name])
-        for ((name, words) in cpu) assertEquals(name, words, ownCpu[name])
-        // The copy deck's sentence, as a plural: a battery at one degree is not at "1 degrees".
-        assertEquals("Heat: %1\$s, battery %2\$d degree" to "Heat: %1\$s, battery %2\$d degrees", ownHeat.forms("heat_desc_temp"))
-        assertEquals("strings_heat.xml holds the copy deck's strings and no other", heat.keys + "heat_desc_temp", ownHeat.names)
-        assertEquals("strings_cpu.xml holds the copy deck's strings and no other", cpu.keys, ownCpu.names)
+    @Test fun theStringsFilesHoldNothingNobodyAsksFor() {
+        for (file in listOf("strings_heat.xml", "strings_cpu.xml")) {
+            assertEquals("a string in $file that no code shows", emptyList<String>(), StringFiles.unused("src/main/res/values/$file"))
+        }
+    }
+
+    @Test fun aBatteryAtOneDegreeIsNotAtOneDegrees() {
+        val (one, other) = HeatDevicesStrings("strings_heat.xml").forms("heat_desc_temp")
+        assertTrue(one, one.endsWith("degree"))
+        assertTrue(other, other.endsWith("degrees"))
     }
 
     @Test fun theRulesSentences() {

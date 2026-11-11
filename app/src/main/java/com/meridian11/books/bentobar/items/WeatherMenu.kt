@@ -30,14 +30,8 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.focus.FocusRequester
-import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.graphics.TransformOrigin
-import androidx.compose.ui.input.key.Key
-import androidx.compose.ui.input.key.KeyEventType
 import androidx.compose.ui.input.key.key
-import androidx.compose.ui.input.key.onPreviewKeyEvent
-import androidx.compose.ui.input.key.type
 import androidx.compose.ui.platform.LocalLayoutDirection
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.semantics.clearAndSetSemantics
@@ -61,8 +55,10 @@ import com.meridian11.books.bentobar.ui.MenuCard
 import com.meridian11.books.bentobar.ui.MenuDivider
 import com.meridian11.books.bentobar.ui.MenuEntry
 import com.meridian11.books.bentobar.ui.MenuNote
+import com.meridian11.books.bentobar.ui.OffGate
 import com.meridian11.books.bentobar.ui.SearchField
 import com.meridian11.books.bentobar.ui.SearchStatus
+import com.meridian11.books.bentobar.ui.SearchWithResults
 import com.meridian11.books.bentobar.ui.SectionLabel
 import com.meridian11.books.bentobar.ui.Setup
 import com.meridian11.books.bentobar.ui.TextRow
@@ -165,7 +161,7 @@ internal fun WeatherMenu(item: ItemConfig, host: MenuHost) {
     val source = WeatherItem.source
     val now = Now.wall()
     val staged = WeatherItem.staged(item) != null
-    val place = WeatherLoad.place(item, WeatherHere.fix)
+    val place = WeatherLoad.place(item, WeatherHere.place)
     // On opening (and when the city or the switch changes under the menu): a reading older than ten minutes is asked again.
     LaunchedEffect(item.id, place, on, staged) { if (!staged) source.opened(item) }
 
@@ -223,10 +219,8 @@ internal fun WeatherMenu(item: ItemConfig, host: MenuHost) {
             MenuEntry(Sym.CLOSE, stringResource(R.string.common_cancel)) { source.typed(by); changing = false }
         }
         // A layout that came with a city, or the switch off in Setup: the words, and the one entry that turns it on. Nothing is sent before it.
-        status is Status.Off -> MenuCard(Sym.CLOUD, city, stringResource(if (status.everOn) R.string.common_off_in_setup else R.string.weather_not_turned_on)) {
-            MenuNote(stringResource(R.string.weather_consent))
-            MenuEntry(Sym.TOGGLE_ON, stringResource(R.string.weather_turn_on)) { source.turnOn(); Ticker.refresh() }
-        }
+        status is Status.Off -> OffGate(Sym.CLOUD, city, stringResource(if (status.everOn) R.string.common_off_in_setup else R.string.weather_not_turned_on),
+            stringResource(R.string.weather_consent), stringResource(R.string.weather_turn_on)) { source.turnOn(); Ticker.refresh() }
         // My location, and where the device is isn't known: why, the one thing that helps, and a city instead.
         status is Status.NoLocation -> MenuCard(Sym.CLOUD, city, stringResource(when (status.why) {
             Locate.NOT_ALLOWED -> R.string.weather_here_not_allowed
@@ -338,41 +332,33 @@ internal fun CitySearch(item: ItemConfig, by: String, initial: String, canSubmit
     rememberTick()
     val state = WeatherItem.stagedSearch ?: WeatherSource.shown(asked, by)
     var short by remember { mutableStateOf(false) }
-    val field = remember { FocusRequester() }
-    val first = remember { FocusRequester() }
     val places = ((state as? Ask.State.Done)?.answer as? Found.Places)?.list.orEmpty()
     // What was found belongs to this field while it is drawn: gone with it, so a menu opened later starts empty.
     DisposableEffect(by) { onDispose { source.typed(by) } }
-    // When places arrive the focus moves to the first, so Enter, Enter is search and take.
-    LaunchedEffect(places) { if (places.isNotEmpty()) runCatching { first.requestFocus() } }
-
-    // Down from the field goes to the first place, Up from there comes back.
-    Box(Modifier.onPreviewKeyEvent { e ->
-        if (places.isEmpty() || e.key != Key.DirectionDown) false
-        else { if (e.type == KeyEventType.KeyDown) runCatching { first.requestFocus() }; true }
-    }) {
-        SearchField(label = stringResource(R.string.weather_city_label), initial = initial, submit = stringResource(R.string.common_search), selectAll = true,
-            error = if (short) stringResource(R.string.weather_two_letters) else null, canSubmit = canSubmit, focus = field,
-            onChange = { short = false; source.typed(by) },
-            onEnter = { text -> short = WeatherRules.query(text) == null; if (!short) source.search(text, item, by) })
-    }
-    if (short) return
-    when (state) {
-        Ask.State.Idle -> {}
-        is Ask.State.Busy -> SearchStatus(stringResource(R.string.weather_searching))
-        is Ask.State.Done -> when (val found = state.answer) {
-            Found.Offline -> SearchStatus(stringResource(R.string.common_no_connection))
-            Found.NoAnswer -> SearchStatus(stringResource(R.string.weather_search_no_answer))
-            Found.Unasked -> {}
-            is Found.Places -> if (found.list.isEmpty()) SearchStatus(stringResource(R.string.weather_not_found)) else found.list.forEachIndexed { i, city ->
-                // Region and country on every place, so two of one name can be told apart.
-                val region = WeatherRules.region(city, WeatherItem.Words)
-                MenuEntry(Sym.LOCATION_ON, city.name, sub = region, modifier = if (i != 0) Modifier else Modifier.focusRequester(first).onPreviewKeyEvent { e ->
-                    if (e.key != Key.DirectionUp) false else { if (e.type == KeyEventType.KeyDown) runCatching { field.requestFocus() }; true }
-                }) { onPick(city, region) }
+    SearchWithResults(hasResults = places.isNotEmpty(), arrival = places,
+        field = {
+            SearchField(label = stringResource(R.string.weather_city_label), initial = initial, submit = stringResource(R.string.common_search), selectAll = true,
+                error = if (short) stringResource(R.string.weather_two_letters) else null, canSubmit = canSubmit, focus = field,
+                onChange = { short = false; source.typed(by) },
+                onEnter = { text -> short = WeatherRules.query(text) == null; if (!short) source.search(text, item, by) })
+        },
+        results = results@{ firstResult ->
+            if (short) return@results
+            when (state) {
+                Ask.State.Idle -> {}
+                is Ask.State.Busy -> SearchStatus(stringResource(R.string.weather_searching))
+                is Ask.State.Done -> when (val found = state.answer) {
+                    Found.Offline -> SearchStatus(stringResource(R.string.common_no_connection))
+                    Found.NoAnswer -> SearchStatus(stringResource(R.string.weather_search_no_answer))
+                    Found.Unasked -> {}
+                    is Found.Places -> if (found.list.isEmpty()) SearchStatus(stringResource(R.string.weather_not_found)) else found.list.forEachIndexed { i, city ->
+                        // Region and country on every place, so two of one name can be told apart.
+                        val region = WeatherRules.region(city, WeatherItem.Words)
+                        MenuEntry(Sym.LOCATION_ON, city.name, sub = region, modifier = if (i != 0) Modifier else firstResult) { onPick(city, region) }
+                    }
+                }
             }
-        }
-    }
+        })
 }
 
 /** The item's settings: the city (the same search as in the menu) or My location, what the bar shows, the unit and a label. */

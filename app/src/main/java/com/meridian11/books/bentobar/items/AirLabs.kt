@@ -110,11 +110,11 @@ object AirLabs {
 
     /**
      * One question about [n]: the host, the path, and the two things that are sent, the number and the
-     * user's own [key]. Nothing else goes to the service. (The transport encodes them; a request prints
+     * user's own key, which the transport adds. Nothing else goes to the service. (The transport encodes them; a request prints
      * as its host and path alone.)
      */
-    fun request(path: String, n: FlightNumber, key: String): Request =
-        Request(Host.AIRLABS, path, listOf((if (n.callsign) "flight_icao" else "flight_iata") to n.code, "api_key" to key.trim()))
+    fun request(path: String, n: FlightNumber): Request =
+        Request(Host.AIRLABS, path, listOf((if (n.callsign) "flight_icao" else "flight_iata") to n.code))
 
     /** What a lookup came to: the flight, or why there is none; and how many lookups the key has left, where a reply said. */
     class Answer(val flight: Flight?, val failure: Failure?, val left: Int?)
@@ -136,8 +136,8 @@ object AirLabs {
      * Null: a request was not sent at all (the service was switched off or the bar hid under the
      * lookup), so there is nothing to say, neither an answer nor a failure.
      */
-    fun lookup(n: FlightNumber, day: LocalDate?, key: String, now: Instant, zone: ZoneId? = null, get: (Request) -> Reply): Answer? =
-        hear(n, day, null, key, now, zone, withTimetable = false, get)?.answer
+    fun lookup(n: FlightNumber, day: LocalDate?, now: Instant, zone: ZoneId? = null, get: (Request) -> Reply): Answer? =
+        hear(n, day, null, now, zone, withTimetable = false, get)?.answer
 
     /**
      * [lookup] for a flight that is followed already, when what was heard of it is gone: the flight of
@@ -148,8 +148,8 @@ object AirLabs {
      * and nobody is asked a second time which one was meant. Null [from]: any airport's, which is what
      * was kept before there was a choice.
      */
-    fun lookup(n: FlightNumber, day: LocalDate?, from: String?, key: String, now: Instant, get: (Request) -> Reply): Answer? =
-        hear(n, day, from, key, now, null, withTimetable = false, get)?.answer
+    fun lookup(n: FlightNumber, day: LocalDate?, from: String?, now: Instant, get: (Request) -> Reply): Answer? =
+        hear(n, day, from, now, null, withTimetable = false, get)?.answer
 
     /**
      * What a press of Track came to: the flights it can mean, or why there is none; and how many lookups
@@ -188,8 +188,8 @@ object AirLabs {
      * Fewer than two to choose from, or no timetable to be had: the one flight, as [lookup] finds it.
      * Never more than [MOST_CANDIDATES]. Null, and every failure: as for [lookup].
      */
-    fun candidates(n: FlightNumber, day: LocalDate?, key: String, now: Instant, zone: ZoneId? = null, get: (Request) -> Reply): Candidates? {
-        val heard = hear(n, day, null, key, now, zone, withTimetable = true, get) ?: return null
+    fun candidates(n: FlightNumber, day: LocalDate?, now: Instant, zone: ZoneId? = null, get: (Request) -> Reply): Candidates? {
+        val heard = hear(n, day, null, now, zone, withTimetable = true, get) ?: return null
         val one = heard.answer.flight ?: return Candidates(emptyList(), heard.answer.failure, heard.answer.left)
         val like = heard.nearest ?: unnamed(n)
         val live = listOfNotNull(heard.nearest) + heard.coming.map { named(it, like) }
@@ -259,7 +259,7 @@ object AirLabs {
      * [withTimetable]: the timetable is asked for also where a flight was found without it (a press of
      * Track: it says what else the number flies). No question is asked twice.
      */
-    private fun hear(n: FlightNumber, day: LocalDate?, from: String?, key: String, now: Instant, zone: ZoneId?, withTimetable: Boolean, get: (Request) -> Reply): Heard? {
+    private fun hear(n: FlightNumber, day: LocalDate?, from: String?, now: Instant, zone: ZoneId?, withTimetable: Boolean, get: (Request) -> Reply): Heard? {
         var left: Int? = null
         var unsent = false
         // What is asked for: the number as it was entered, until the service has named the ticket's form of a callsign.
@@ -270,7 +270,7 @@ object AirLabs {
         fun <T> ask(path: String, read: (String) -> Read<T>): Read<T> {
             // Once a request was not sent, the lookup is over: nothing more is tried.
             if (unsent) return Read(null, Failure.NO_ANSWER)
-            return when (val reply = send(request(path, number, key), get)) {
+            return when (val reply = send(request(path, number), get)) {
                 is Reply.Ok -> read(reply.text).also { r -> r.left?.let { left = it } }
                 is Reply.Failed -> { if (reply.why == Why.OFF) unsent = true; Read(null, failure(reply)) }
             }
@@ -360,12 +360,12 @@ object AirLabs {
      *
      * Null: the request was not sent at all, as for [lookup].
      */
-    fun again(n: FlightNumber, key: String, was: Flight, now: Instant, get: (Request) -> Reply): Asked? {
+    fun again(n: FlightNumber, was: Flight, now: Instant, get: (Request) -> Reply): Asked? {
         var listLeft: Int? = null
         if (FlightRules.listed(was, now)) {
             // Asked for by the number as it was entered; a callsign by the ticket's number the flight that is followed has.
             val ticket = if (n.callsign) FlightNumber.read(was.number)?.takeUnless { it.callsign } ?: n else n
-            val list = when (val reply = send(request(SCHEDULES, ticket, key), get)) {
+            val list = when (val reply = send(request(SCHEDULES, ticket), get)) {
                 is Reply.Ok -> schedules(reply.text)
                 is Reply.Failed -> return if (reply.why == Why.OFF) null else Asked(Again.Failed, null, failure(reply), reply.retryAfterSec)
             }
@@ -378,7 +378,7 @@ object AirLabs {
                 else -> return Asked(Again.Failed, list.left, list.failure)
             }
         }
-        val r = when (val reply = send(request(FLIGHT, n, key), get)) {
+        val r = when (val reply = send(request(FLIGHT, n), get)) {
             is Reply.Ok -> flight(reply.text)
             is Reply.Failed -> return if (reply.why == Why.OFF) null else Asked(Again.Failed, listLeft, failure(reply), reply.retryAfterSec)
         }

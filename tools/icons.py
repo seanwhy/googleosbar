@@ -68,7 +68,8 @@ DRAWABLES = ["coffee", "timer", "avg_pace", "event", "pause", "play_arrow", "add
 
 ROOT = pathlib.Path(__file__).resolve().parent.parent
 CACHE = pathlib.Path(os.environ.get("BENTOBAR_CACHE", pathlib.Path.home() / ".cache/bentobar"))
-BASE = "https://raw.githubusercontent.com/google/material-design-icons/master/variablefont/"
+# Pinned to a commit, not master: with no cached font an icon added later must not change every glyph. Move it on purpose.
+BASE = "https://raw.githubusercontent.com/google/material-design-icons/10ecc14790612ca8fd164e3f4ffe9c16fc50d5b7/variablefont/"
 VF = "MaterialSymbolsRounded[FILL,GRAD,opsz,wght]"
 
 

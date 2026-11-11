@@ -32,6 +32,10 @@ class CallLinksTest {
         assertNull(CallLinks.find("https://notzoom.us/j/1"))
         assertNull(CallLinks.find("https://teams.microsoft.com/v2/"))
         assertNull(CallLinks.find("https://webex.com/"))
+        // A browser ends the host at the backslash: this goes to evil.example, however the text after it reads.
+        assertNull(CallLinks.find("https://evil.example\\@meet.google.com/x"))
+        assertFalse(CallLinks.isCall("https://evil.example\\@meet.google.com/x"))
+        assertFalse(CallLinks.isTask("https://evil.example\\@todoist.com/app/task/1"))
     }
 
     @Test fun otherServices() {
