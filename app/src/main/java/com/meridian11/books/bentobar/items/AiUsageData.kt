@@ -326,9 +326,11 @@ internal fun formatTokens(count: Long): String {
 object AiUsageReader {
     private val json = Json { ignoreUnknownKeys = true }
     private val executor = Executors.newSingleThreadExecutor()
+    private const val UNREACHABLE_POLL_STREAK = 3
     @Volatile private var lastPollAt = 0L
     @Volatile private var isPolling = false
     @Volatile private var cached: AiUsageSnapshot? = null
+    @Volatile private var consecutivePollFailures = 0
 
     @Volatile private var memAntigravity: AntigravityQuota? = null
     @Volatile private var memAntigravityAt: Long? = null
@@ -441,19 +443,31 @@ object AiUsageReader {
         }
     }
 
+    internal fun applyPollResult(snapshot: AiUsageSnapshot?) {
+        if (snapshot != null) {
+            consecutivePollFailures = 0
+            cached = snapshot
+            rememberLastOk(snapshot)
+            refreshItems()
+            return
+        }
+        val misses = consecutivePollFailures + 1
+        consecutivePollFailures = misses
+        if (misses >= UNREACHABLE_POLL_STREAK && cached != null) {
+            cached = null
+            refreshItems()
+        }
+    }
+
     private fun triggerPoll(force: Boolean = false) {
         val sysNow = System.currentTimeMillis()
         if ((!force && sysNow - lastPollAt <= 4000L) || isPolling) return
         isPolling = true
         executor.execute {
             try {
-                val s = fetchFromDaemon() ?: readFiles(null)
-                if (s != null) {
-                    cached = s
-                    rememberLastOk(s)
-                    refreshItems()
-                }
+                applyPollResult(fetchFromDaemon() ?: readFiles(null))
             } catch (_: Throwable) {
+                applyPollResult(null)
             } finally {
                 lastPollAt = System.currentTimeMillis()
                 isPolling = false
@@ -540,9 +554,12 @@ object AiUsageReader {
         )
     }
 
+    internal fun currentSnapshotForTesting(): AiUsageSnapshot? = cached
+
     /** Clears in-memory cache, primarily for unit testing. */
     fun clearCacheForTesting() {
         lastPollAt = 0L
+        consecutivePollFailures = 0
         cached = null
         memAntigravity = null
         memAntigravityAt = null

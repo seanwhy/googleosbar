@@ -10,6 +10,7 @@ Periodically inspects local CLI quotas and tokens:
 Outputs sanitized, credential-free snapshots to shared JSON locations for BentoBar to display.
 """
 
+from concurrent.futures import ThreadPoolExecutor
 import datetime
 import json
 import os
@@ -42,27 +43,46 @@ _token_expires_at = 0.0
 _latest_snapshot_bytes = b'{"status": "waiting"}\n'
 _last_snapshot = None
 
+_EXTERNAL_PROXY_SET = bool(
+    os.environ.get("https_proxy")
+    or os.environ.get("HTTPS_PROXY")
+    or os.environ.get("http_proxy")
+    or os.environ.get("HTTP_PROXY")
+)
+_active_auto_proxy = None
+
 
 def ensure_proxy():
-    """Detects and activates local proxy if available on Android Laptop."""
-    if os.environ.get("https_proxy") or os.environ.get("HTTPS_PROXY"):
+    """Detects and refreshes local proxy settings unless configured externally via env."""
+    global _active_auto_proxy
+    if _EXTERNAL_PROXY_SET:
         return
     candidates = [("127.0.0.1", 7890), ("127.0.0.1", 7897), ("10.192.190.62", 7890), ("127.0.0.1", 10808)]
+    detected = None
     for host, port in candidates:
         try:
             s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
             s.settimeout(0.3)
             s.connect((host, port))
             s.close()
-            proxy_url = f"http://{host}:{port}"
-            os.environ["http_proxy"] = proxy_url
-            os.environ["https_proxy"] = proxy_url
-            proxy_handler = urllib.request.ProxyHandler({"http": proxy_url, "https": proxy_url})
-            opener = urllib.request.build_opener(proxy_handler)
-            urllib.request.install_opener(opener)
-            return
+            detected = f"http://{host}:{port}"
+            break
         except Exception:
             pass
+
+    if detected == _active_auto_proxy:
+        return
+
+    _active_auto_proxy = detected
+    if detected:
+        os.environ["http_proxy"] = detected
+        os.environ["https_proxy"] = detected
+        proxy_handler = urllib.request.ProxyHandler({"http": detected, "https": detected})
+    else:
+        os.environ.pop("http_proxy", None)
+        os.environ.pop("https_proxy", None)
+        proxy_handler = urllib.request.ProxyHandler({})
+    urllib.request.install_opener(urllib.request.build_opener(proxy_handler))
 
 
 import http.server
@@ -670,6 +690,7 @@ def _merge_grok_build_history(gk: dict, prev_gk: dict | None, prev_snapshot_ts: 
 
 def update_snapshot():
     global _latest_snapshot_bytes, _last_snapshot
+    ensure_proxy()
     prev = _last_snapshot or {}
     if not prev:
         for target in SNAPSHOT_TARGETS:
@@ -681,15 +702,24 @@ def update_snapshot():
                 except Exception:
                     pass
 
-    now_sec = int(time.time())
     prev_ts = prev.get("updated_at") if isinstance(prev, dict) else None
     prev_ag = prev.get("antigravity") if isinstance(prev, dict) else None
     prev_cx = prev.get("codex") if isinstance(prev, dict) else None
     prev_gk = prev.get("grok") if isinstance(prev, dict) else None
 
-    ag = _merge_provider_history(fetch_antigravity_quota(), prev_ag, prev_ts, now_sec, require_key="gemini_weekly")
-    cx = _merge_provider_history(fetch_codex_quota(), prev_cx, prev_ts, now_sec)
-    gk = _merge_provider_history(fetch_grok_quota(), prev_gk, prev_ts, now_sec, require_key="cycle")
+    # Fetch providers concurrently so timeouts across all backends resolve within one request window.
+    with ThreadPoolExecutor(max_workers=3) as pool:
+        fut_ag = pool.submit(fetch_antigravity_quota)
+        fut_cx = pool.submit(fetch_codex_quota)
+        fut_gk = pool.submit(fetch_grok_quota)
+        raw_ag = fut_ag.result()
+        raw_cx = fut_cx.result()
+        raw_gk = fut_gk.result()
+
+    now_sec = int(time.time())
+    ag = _merge_provider_history(raw_ag, prev_ag, prev_ts, now_sec, require_key="gemini_weekly")
+    cx = _merge_provider_history(raw_cx, prev_cx, prev_ts, now_sec)
+    gk = _merge_provider_history(raw_gk, prev_gk, prev_ts, now_sec, require_key="cycle")
     gk = _merge_grok_build_history(gk, prev_gk, prev_ts, now_sec)
 
     snapshot = {

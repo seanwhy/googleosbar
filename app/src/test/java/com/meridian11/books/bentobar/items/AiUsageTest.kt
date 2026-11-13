@@ -440,4 +440,47 @@ class AiUsageTest {
             tmpDir.deleteRecursively()
         }
     }
+
+    @Test
+    fun readerMarksUnreachableAfterConsecutiveFailedPollsWhilePreservingLastOk() {
+        AiUsageReader.clearCacheForTesting()
+        try {
+            val snap = AiUsageSnapshot(
+                updatedAt = 1000L,
+                antigravity = AntigravityQuota(
+                    status = "ok",
+                    fetchedAt = 1000L,
+                    lastOkAt = 1000L,
+                    geminiWeekly = QuotaBucket(usedPercent = 24f, remainingPercent = 76f, resetInSec = 3600L),
+                ),
+            )
+            AiUsageReader.applyPollResult(snap)
+
+            // Transient 1-2 poll misses keep the cached snapshot (still within STALE_TIMEOUT_SEC)
+            AiUsageReader.applyPollResult(null)
+            AiUsageReader.applyPollResult(null)
+            val duringBriefGlitch = AiUsageResolver.resolveAntigravity(
+                snapshot = AiUsageReader.currentSnapshotForTesting(),
+                nowSec = 1010L,
+            )
+            assertNotNull(duringBriefGlitch.live)
+
+            // 3rd consecutive failure transitions immediately to UNREACHABLE while keeping lastOk
+            AiUsageReader.applyPollResult(null)
+            assertNull(AiUsageReader.currentSnapshotForTesting())
+            val afterStreak = AiUsageResolver.resolveAntigravity(
+                snapshot = null,
+                nowSec = 1015L,
+                memLastOk = snap.antigravity,
+                memLastOkAtSec = 1000L,
+            )
+            assertNull(afterStreak.live)
+            assertEquals(QuotaProblem.UNREACHABLE, afterStreak.problem)
+            assertTrue(afterStreak.isTimedOut)
+            assertEquals(1000L, afterStreak.lastOkAtSec)
+            assertEquals(76.0f, afterStreak.lastOk?.geminiWeekly?.remainingPercent ?: -1f, 0.01f)
+        } finally {
+            AiUsageReader.clearCacheForTesting()
+        }
+    }
 }
