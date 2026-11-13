@@ -26,6 +26,7 @@ import androidx.compose.material3.Checkbox
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -204,11 +205,29 @@ object ToolsItem : ItemType("tools", R.string.item_tools_title, Sym.HANDYMAN, R.
     override val iconOnly = true
     override fun state(item: ItemConfig) = ItemState(icon = Sym.HANDYMAN, desc = Env.str(R.string.item_tools_title))
 
+    override fun menuOpening(item: ItemConfig) {
+        runCatching { ChargeOptimization.refreshFromSystem(Env.app) }
+    }
+
     override val menu: @Composable (ItemConfig, MenuHost) -> Unit = { item, host ->
+        rememberTick()
+        val chargeOptOn by ChargeOptimization.on.collectAsState()
+
         MenuCard(Sym.HANDYMAN, stringResource(R.string.item_tools_title)) {
             if (item.optBool("system", true)) {
                 SectionLabel(stringResource(R.string.tools_section_system))
-                TileGrid { system.forEach { t -> ActionTile(t.icon, stringResource(t.label)) { host.afterClose(t.run) } } }
+                TileGrid {
+                    system.forEach { t -> ActionTile(t.icon, stringResource(t.label)) { host.afterClose(t.run) } }
+                    ActionTile(
+                        icon = Sym.BATTERY_CHARGING_FULL,
+                        label = stringResource(R.string.tools_charge_optimization),
+                        selected = chargeOptOn == true,
+                    ) {
+                        if (!ChargeOptimization.tryFastToggle()) {
+                            host.afterClose { ChargeOptimization.startUiToggle() }
+                        }
+                    }
+                }
             }
             if (item.optBool("settings", true)) {
                 SectionLabel(stringResource(R.string.tools_settings))

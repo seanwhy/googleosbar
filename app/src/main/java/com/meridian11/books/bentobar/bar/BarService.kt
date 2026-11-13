@@ -1,12 +1,15 @@
 package com.meridian11.books.bentobar.bar
 
 import android.accessibilityservice.AccessibilityService
+import android.accessibilityservice.AccessibilityServiceInfo
+import android.accessibilityservice.GestureDescription
 import android.app.KeyguardManager
 import android.content.BroadcastReceiver
 import android.content.Context
 import android.content.Intent
 import android.content.IntentFilter
 import android.content.res.Configuration
+import android.graphics.Path
 import android.graphics.Rect
 import android.os.Handler
 import android.os.Looper
@@ -37,6 +40,8 @@ import com.meridian11.books.bentobar.data.Pill
 import com.meridian11.books.bentobar.data.Position
 import com.meridian11.books.bentobar.data.Section
 import com.meridian11.books.bentobar.data.Store
+import com.meridian11.books.bentobar.items.ChargeOptimization
+import com.meridian11.books.bentobar.items.ChargeOptimizationRules
 import com.meridian11.books.bentobar.items.Chips
 import com.meridian11.books.bentobar.items.CloudClipboardItem
 import com.meridian11.books.bentobar.items.DisplaysItem
@@ -64,6 +69,9 @@ class BarService : AccessibilityService() {
 
         /** One of the Tools and Shortcut menu's global actions (Back, Home, Recents...), false with no service. */
         fun global(action: Int): Boolean = current?.performGlobalAction(action) ?: false
+
+        fun toggleChargeOptimization(): Boolean =
+            current?.controller()?.toggleChargeOptimization() ?: false
 
         fun pasteIntoFocus(text: CharSequence) {
             val node = current?.findFocus(AccessibilityNodeInfo.FOCUS_INPUT) ?: return
@@ -258,6 +266,8 @@ class BarController(private val service: AccessibilityService) {
     fun stop() {
         if (!started) return // stopped already: the status and the ticker may be a newer controller's by now
         started = false
+        chargeOptSession = null
+        chargeOptDueAt = 0L
         BarLook.current.value = null
         BarStatus.current.value = BarStatus.STOPPED
         BarOverflow.ids.value = emptySet()
@@ -303,6 +313,14 @@ class BarController(private val service: AccessibilityService) {
             AccessibilityEvent.TYPE_WINDOWS_CHANGED -> {
                 if (Log.isLoggable(EVENTS_TAG, Log.DEBUG)) Log.d(EVENTS_TAG, "windows changed id=${e.windowId} changes=0x${Integer.toHexString(e.windowChanges)} ours=${e.windowId in overlayIds}")
                 if (e.windowId in overlayIds) return // our own windows resizing
+                chargeOptSession?.let { cs ->
+                    if (!cs.inFlightGesture) {
+                        val nowUp = SystemClock.uptimeMillis()
+                        if (chargeOptDueAt == 0L || chargeOptDueAt - nowUp > 30L) {
+                            scheduleChargeOptTick(25L)
+                        }
+                    }
+                }
                 // Only windows appearing, going or moving can hide or cover the bar; titles, focus
                 // and stacking changes (every page load, every terminal command) can't.
                 if (e.windowChanges and RELEVANT == 0) return
@@ -778,6 +796,393 @@ class BarController(private val service: AccessibilityService) {
         }
         return SelectionCapture(extracted, copiedAny)
     }
+
+    // ---- direct charging optimization navigation ---------------------------------------------
+
+    private class ChargeOptSession(
+        val startedAt: Long,
+        val preExistingWindowIds: Set<Int>,
+        var inFlightGesture: Boolean = false,
+        var firstScreenSeenAt: Long = 0L,
+        var lastNavKey: String? = null,
+        var navAttempts: Int = 0,
+        var navUsedGesture: Boolean = false,
+        var lastNavAt: Long = 0L,
+        var scrollCount: Int = 0,
+        var triedBatteryHealth: Boolean = false,
+    )
+
+    private var chargeOptSession: ChargeOptSession? = null
+    private var chargeOptDueAt: Long = 0L
+    private val chargeOptTick = Runnable {
+        chargeOptDueAt = 0L
+        stepChargeOptimization()
+    }
+
+    private fun scheduleChargeOptTick(delayMs: Long) {
+        main.removeCallbacks(chargeOptTick)
+        chargeOptDueAt = SystemClock.uptimeMillis() + delayMs
+        if (delayMs <= 0L) main.post(chargeOptTick) else main.postDelayed(chargeOptTick, delayMs)
+    }
+
+    private fun flattenWindows(topWindows: List<AccessibilityWindowInfo>): List<AccessibilityWindowInfo> {
+        val out = ArrayList<AccessibilityWindowInfo>(topWindows.size + 4)
+        val seen = HashSet<Int>(topWindows.size * 2)
+        fun visit(w: AccessibilityWindowInfo) {
+            if (!seen.add(w.id)) return
+            // Visit attached child popups/dialogs before their parent window so modals win first
+            val count = runCatching { w.childCount }.getOrDefault(0)
+            for (i in 0 until count) {
+                val child = runCatching { w.getChild(i) }.getOrNull() ?: continue
+                visit(child)
+            }
+            out += w
+        }
+        for (w in topWindows) visit(w)
+        return out
+    }
+
+    fun toggleChargeOptimization(): Boolean {
+        if (!started) return false
+        val existing = chargeOptSession
+        if (existing != null) {
+            if (!existing.inFlightGesture) scheduleChargeOptTick(0L)
+            return true
+        }
+
+        if (menus.menuKey != null) menus.closeMenu(now = true)
+
+        service.clearCache()
+        val now = SystemClock.uptimeMillis()
+        val ownPkg = service.packageName
+        val wins = flattenWindows(runCatching { service.windows }.getOrDefault(emptyList()))
+        val preWinIds = wins.mapTo(HashSet()) { it.id }
+        val probeNodes = ArrayList<AccessibilityNodeInfo>(256)
+        val initialScreens = ArrayList<ChargeOptimizationRules.SettingScreen>()
+        for (w in wins) {
+            if (w.type != AccessibilityWindowInfo.TYPE_APPLICATION) continue
+            val rootNode = runCatching { w.root }.getOrNull() ?: continue
+            val pkg = rootNode.packageName?.toString().orEmpty()
+            if (ChargeOptimizationRules.isSettingsPackage(pkg, ownPkg)) {
+                val wb = Rect().also { w.getBoundsInScreen(it) }
+                initialScreens += ChargeOptimizationRules.SettingScreen(
+                    pkg = pkg,
+                    windowId = w.id,
+                    tree = toUiTree(rootNode, probeNodes, maxWindowNodes = 3_500),
+                    isNewWindow = false,
+                    windowLeft = wb.left,
+                    windowTop = wb.top,
+                    windowRight = wb.right,
+                    windowBottom = wb.bottom,
+                    displayId = w.displayId,
+                )
+            }
+        }
+        ChargeOptimizationRules.observeBatteryRowState(initialScreens)?.let { ChargeOptimization.recordConfirmed(it) }
+
+        val topAppWin = wins
+            .filter { it.type == AccessibilityWindowInfo.TYPE_APPLICATION }
+            .maxByOrNull { it.layer }
+        val topAppIsSettings = topAppWin?.let { w ->
+            val pkg = runCatching { w.root?.packageName?.toString() }.getOrNull().orEmpty()
+            ChargeOptimizationRules.isSettingsPackage(pkg, ownPkg)
+        } ?: false
+
+        // Already looking at the Charging Optimization page on top: nothing to open or flicker.
+        if (topAppIsSettings && ChargeOptimizationRules.isSubpageVisible(initialScreens)) return true
+
+        val launched = Env.launch(ChargeOptimization.buildBatteryIntent(), quiet = true) ||
+            Env.launch(Intent(android.provider.Settings.ACTION_BATTERY_SAVER_SETTINGS), quiet = true)
+        if (!launched) return false
+
+        chargeOptSession = ChargeOptSession(
+            startedAt = now,
+            preExistingWindowIds = preWinIds,
+        )
+        scheduleChargeOptTick(90L)
+        return true
+    }
+
+    private fun toUiTree(
+        node: AccessibilityNodeInfo,
+        liveNodes: MutableList<AccessibilityNodeInfo>,
+        maxWindowNodes: Int = 3_500,
+        windowStartIdx: Int = liveNodes.size,
+        depth: Int = 0,
+    ): ChargeOptimizationRules.UiNode {
+        val ref = liveNodes.size
+        liveNodes += node
+        val bounds = Rect().also { node.getBoundsInScreen(it) }
+        val checkedInt = if (android.os.Build.VERSION.SDK_INT >= 36) node.checked else -1
+        val rawText = node.text?.toString().orEmpty()
+        val suppText = if (android.os.Build.VERSION.SDK_INT >= 36) {
+            node.supplementalDescription?.toString().orEmpty()
+        } else {
+            ""
+        }
+        val combinedText = when {
+            rawText.isEmpty() -> suppText
+            suppText.isEmpty() || suppText == rawText -> rawText
+            else -> "$rawText\n$suppText"
+        }
+        val hasClick = node.isClickable ||
+            node.actionList.any { it.id == AccessibilityNodeInfo.ACTION_CLICK }
+        val childCount = node.childCount
+        val withinCap = depth < 48 &&
+            (liveNodes.size - windowStartIdx) < maxWindowNodes &&
+            liveNodes.size < 12_000
+        val children = if (withinCap && childCount > 0) {
+            buildList {
+                for (i in 0 until childCount) {
+                    if ((liveNodes.size - windowStartIdx) >= maxWindowNodes || liveNodes.size >= 12_000) break
+                    val child = runCatching { node.getChild(i) }.getOrNull() ?: continue
+                    if (!child.isVisibleToUser && child.childCount == 0) {
+                        val cb = Rect().also { child.getBoundsInScreen(it) }
+                        if (cb.width() <= 0 || cb.height() <= 0) continue
+                    }
+                    add(toUiTree(child, liveNodes, maxWindowNodes, windowStartIdx, depth + 1))
+                }
+            }
+        } else {
+            emptyList()
+        }
+        return ChargeOptimizationRules.UiNode(
+            ref = ref,
+            id = node.viewIdResourceName.orEmpty(),
+            cls = node.className?.toString().orEmpty(),
+            text = combinedText,
+            desc = node.contentDescription?.toString().orEmpty(),
+            stateDesc = node.stateDescription?.toString().orEmpty(),
+            paneTitle = node.paneTitle?.toString().orEmpty(),
+            checkable = node.isCheckable,
+            checked = node.isChecked,
+            checkedState = checkedInt,
+            selected = node.isSelected,
+            clickable = hasClick,
+            scrollable = node.isScrollable,
+            enabled = node.isEnabled,
+            visible = node.isVisibleToUser,
+            left = bounds.left,
+            top = bounds.top,
+            right = bounds.right,
+            bottom = bounds.bottom,
+            children = children,
+        )
+    }
+
+    private fun collectSettingScreens(
+        wins: List<AccessibilityWindowInfo>,
+        sess: ChargeOptSession,
+        liveNodes: MutableList<AccessibilityNodeInfo>,
+        ownPkg: String,
+    ): List<ChargeOptimizationRules.SettingScreen> {
+        val screens = ArrayList<ChargeOptimizationRules.SettingScreen>()
+        val seenScreenWinIds = HashSet<Int>()
+
+        for (w in wins) {
+            val rootNode = when (w.type) {
+                AccessibilityWindowInfo.TYPE_APPLICATION,
+                AccessibilityWindowInfo.TYPE_SYSTEM -> runCatching { w.root }.getOrNull()
+                else -> null
+            } ?: continue
+            runCatching { rootNode.refresh() }
+            val pkg = rootNode.packageName?.toString().orEmpty()
+            val isNew = w.id !in sess.preExistingWindowIds
+            val eligible = if (w.type == AccessibilityWindowInfo.TYPE_APPLICATION) {
+                ChargeOptimizationRules.isCandidateWindow(pkg, ownPkg, isNew)
+            } else {
+                ChargeOptimizationRules.isSettingsPackage(pkg, ownPkg)
+            }
+            if (!eligible) continue
+            val wb = Rect().also { w.getBoundsInScreen(it) }
+            seenScreenWinIds += w.id
+            screens += ChargeOptimizationRules.SettingScreen(
+                pkg = pkg,
+                windowId = w.id,
+                tree = toUiTree(rootNode, liveNodes, maxWindowNodes = 3_500),
+                isNewWindow = isNew,
+                windowLeft = wb.left,
+                windowTop = wb.top,
+                windowRight = wb.right,
+                windowBottom = wb.bottom,
+                displayId = w.displayId,
+            )
+        }
+
+        // Fallback: include rootInActiveWindow if it belongs to Settings and wasn't in getWindows()
+        runCatching { service.rootInActiveWindow }.getOrNull()?.let { activeRoot ->
+            val winId = activeRoot.windowId
+            if (winId !in seenScreenWinIds) {
+                runCatching { activeRoot.refresh() }
+                val pkg = activeRoot.packageName?.toString().orEmpty()
+                val isNew = winId !in sess.preExistingWindowIds
+                if (ChargeOptimizationRules.isCandidateWindow(pkg, ownPkg, isNew)) {
+                    val rb = Rect().also { activeRoot.getBoundsInScreen(it) }
+                    screens.add(
+                        0,
+                        ChargeOptimizationRules.SettingScreen(
+                            pkg = pkg,
+                            windowId = winId,
+                            tree = toUiTree(activeRoot, liveNodes, maxWindowNodes = 3_500),
+                            isNewWindow = isNew,
+                            windowLeft = rb.left,
+                            windowTop = rb.top,
+                            windowRight = rb.right,
+                            windowBottom = rb.bottom,
+                            displayId = 0,
+                        ),
+                    )
+                }
+            }
+        }
+
+        return screens
+    }
+
+    private fun isPointCovered(
+        wins: List<AccessibilityWindowInfo>,
+        targetWinId: Int,
+        x: Float,
+        y: Float,
+        displayId: Int,
+    ): Boolean {
+        if (x < 0f || y < 0f) return true
+        val targetWin = wins.firstOrNull { it.id == targetWinId } ?: return false
+        val targetLayer = targetWin.layer
+        val ix = x.toInt()
+        val iy = y.toInt()
+        val rect = Rect()
+        for (w in wins) {
+            if (w.id == targetWinId || w.id in overlayIds || w.type == WINDOW_TYPE_CONTROL) continue
+            if (w.displayId != displayId || w.layer <= targetLayer) continue
+            w.getBoundsInScreen(rect)
+            if (rect.contains(ix, iy)) return true
+        }
+        return false
+    }
+
+    private fun uncoveredCenterOf(
+        wins: List<AccessibilityWindowInfo>,
+        node: AccessibilityNodeInfo?,
+    ): Triple<Float, Float, Int>? {
+        node ?: return null
+        val rect = Rect().also { node.getBoundsInScreen(it) }
+        if (rect.width() <= 0 || rect.height() <= 0) return null
+        val x = rect.exactCenterX()
+        val y = rect.exactCenterY()
+        val winId = node.windowId
+        val displayId = wins.firstOrNull { it.id == winId }?.displayId ?: 0
+        if (isPointCovered(wins, winId, x, y, displayId)) return null
+        return Triple(x, y, displayId)
+    }
+
+    private fun stepChargeOptimization() {
+        val sess = chargeOptSession ?: return
+        val now = SystemClock.uptimeMillis()
+        val limitMs = if (sess.inFlightGesture) 5_200L else 4_500L
+        if (!started || now - sess.startedAt > limitMs) {
+            chargeOptSession = null
+            chargeOptDueAt = 0L
+            return
+        }
+        if (sess.inFlightGesture) return
+
+        service.clearCache()
+        val wins = flattenWindows(runCatching { service.windows }.getOrDefault(emptyList()))
+        val liveNodes = ArrayList<AccessibilityNodeInfo>(512)
+        val screens = collectSettingScreens(wins, sess, liveNodes, service.packageName)
+        if (screens.isNotEmpty() && sess.firstScreenSeenAt == 0L) sess.firstScreenSeenAt = now
+        ChargeOptimizationRules.observeBatteryRowState(screens)?.let { ChargeOptimization.recordConfirmed(it) }
+
+        val step = ChargeOptimizationRules.nextStep(
+            screens = screens,
+            lastNavKey = sess.lastNavKey,
+            navAttempts = sess.navAttempts,
+            scrollCount = sess.scrollCount,
+            triedBatteryHealth = sess.triedBatteryHealth,
+            sinceNavMs = if (sess.lastNavAt == 0L) Long.MAX_VALUE else now - sess.lastNavAt,
+        )
+
+        when (step) {
+            ChargeOptimizationRules.Step.Arrived -> {
+                chargeOptSession = null
+                chargeOptDueAt = 0L
+            }
+            is ChargeOptimizationRules.Step.ClickNav -> {
+                val settleRemaining = ChargeOptimizationRules.PRE_NAV_SETTLE_MS - (now - sess.firstScreenSeenAt)
+                if (sess.firstScreenSeenAt != 0L && settleRemaining > 0L) {
+                    scheduleChargeOptTick(settleRemaining + 15L)
+                    return
+                }
+                val targetNode = liveNodes.getOrNull(step.ref)
+                val isSameNav = sess.lastNavKey == step.navKey
+                val coords = if (hasGestureCapability()) uncoveredCenterOf(wins, targetNode) else null
+                fun recordNav(usedGesture: Boolean) {
+                    if (isSameNav) sess.navAttempts++ else sess.navAttempts = 1
+                    sess.lastNavKey = step.navKey
+                    sess.navUsedGesture = usedGesture
+                    sess.lastNavAt = now
+                    if (step.navKey == "battery_health") {
+                        sess.triedBatteryHealth = true
+                        sess.scrollCount = 0
+                    }
+                }
+                if (coords != null && (!isSameNav || !sess.navUsedGesture)) {
+                    val (nx, ny, displayId) = coords
+                    sess.inFlightGesture = true
+                    recordNav(usedGesture = true)
+                    val dispatched = tapAt(nx, ny, displayId) {
+                        if (chargeOptSession !== sess) return@tapAt
+                        sess.inFlightGesture = false
+                        sess.lastNavAt = SystemClock.uptimeMillis()
+                        scheduleChargeOptTick(120L)
+                    }
+                    if (dispatched) return
+                    sess.inFlightGesture = false
+                }
+                targetNode?.performAction(AccessibilityNodeInfo.ACTION_CLICK)
+                recordNav(usedGesture = false)
+                scheduleChargeOptTick(120L)
+            }
+            is ChargeOptimizationRules.Step.Scroll -> {
+                liveNodes.getOrNull(step.ref)?.performAction(AccessibilityNodeInfo.ACTION_SCROLL_FORWARD)
+                sess.scrollCount++
+                sess.lastNavKey = "scroll"
+                sess.lastNavAt = now
+                scheduleChargeOptTick(120L)
+            }
+            ChargeOptimizationRules.Step.Wait -> scheduleChargeOptTick(80L)
+        }
+    }
+
+    private fun hasGestureCapability(): Boolean = runCatching {
+        val info = service.serviceInfo ?: return@runCatching false
+        (info.capabilities and AccessibilityServiceInfo.CAPABILITY_CAN_PERFORM_GESTURES) != 0
+    }.getOrDefault(false)
+
+    private fun tapAt(x: Float, y: Float, displayId: Int, onDone: (Boolean) -> Unit): Boolean {
+        if (!hasGestureCapability()) return false
+        val path = Path().apply { moveTo(x.coerceAtLeast(1f), y.coerceAtLeast(1f)) }
+        val stroke = GestureDescription.StrokeDescription(path, 0L, 45L)
+        val builder = GestureDescription.Builder()
+        if (displayId >= 0) runCatching { builder.setDisplayId(displayId) }
+        builder.addStroke(stroke)
+        return runCatching {
+            service.dispatchGesture(
+                builder.build(),
+                object : AccessibilityService.GestureResultCallback() {
+                    override fun onCompleted(gestureDescription: GestureDescription?) {
+                        main.post { onDone(true) }
+                    }
+                    override fun onCancelled(gestureDescription: GestureDescription?) {
+                        main.post { onDone(false) }
+                    }
+                },
+                main,
+            )
+        }.getOrDefault(false)
+    }
+
     // ---- tests (adb only) --------------------------------------------------------------------
 
     fun debug(cmd: List<String>): String {
@@ -806,6 +1211,7 @@ class BarController(private val service: AccessibilityService) {
     }
 
     companion object {
+        private const val WINDOW_TYPE_CONTROL = 7
         private const val RELEVANT = AccessibilityEvent.WINDOWS_CHANGE_ADDED or AccessibilityEvent.WINDOWS_CHANGE_REMOVED or
             AccessibilityEvent.WINDOWS_CHANGE_BOUNDS
     }

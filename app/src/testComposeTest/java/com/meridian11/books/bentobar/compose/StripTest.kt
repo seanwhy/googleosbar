@@ -259,4 +259,72 @@ class StripTest {
         }
         assertTrue("it slid between the two places", moving)
     }
+
+    @Test fun quotaTimeoutRingShowsToBadgeAndIconDisplayStaysLegible() {
+        val ringTimeout = entry(
+            "ag",
+            ItemState(
+                icon = "ai:antigravity",
+                text = "TO",
+                quotaRing = com.meridian11.books.bentobar.items.QuotaRing(
+                    status = com.meridian11.books.bentobar.items.QuotaRingStatus.TIMEOUT
+                ),
+                desc = "Antigravity: timeout"
+            )
+        )
+        val iconOnlyTimeout = StripEntry(
+            ItemConfig("cx", "cpu", display = com.meridian11.books.bentobar.data.Display.ICON),
+            ItemState(
+                icon = "ai:codex",
+                text = "TO",
+                quotaRing = com.meridian11.books.bentobar.items.QuotaRing(
+                    status = com.meridian11.books.bentobar.items.QuotaRingStatus.TIMEOUT
+                ),
+                desc = "Codex: timeout"
+            )
+        )
+        strip(listOf(ringTimeout, iconOnlyTimeout))
+        rule.mainClock.advanceTimeBy(500L)
+        rule.onNode(androidx.compose.ui.test.hasText("TO"), useUnmergedTree = true).assertIsDisplayed()
+        rule.onNodeWithContentDescription("Antigravity: timeout").assertIsDisplayed()
+        rule.onNodeWithContentDescription("Codex: timeout").assertIsDisplayed()
+    }
+
+    @Test fun quotaItemsStageTimeoutAndOkStatesUnderRobolectric() {
+        val types = listOf(
+            com.meridian11.books.bentobar.items.AntigravityItem,
+            com.meridian11.books.bentobar.items.CodexItem,
+            com.meridian11.books.bentobar.items.GrokItem,
+            com.meridian11.books.bentobar.items.GrokBotItem,
+        )
+        com.meridian11.books.bentobar.data.Store.init(androidx.test.core.app.ApplicationProvider.getApplicationContext())
+        com.meridian11.books.bentobar.items.AiUsageReader.clearCacheForTesting()
+        try {
+            for (type in types) {
+                val item = com.meridian11.books.bentobar.data.Store.config.value.items.firstOrNull {
+                    it.type == type.type && it.section != com.meridian11.books.bentobar.data.Section.OFF
+                } ?: com.meridian11.books.bentobar.data.ItemConfig(
+                    "test-${type.type}",
+                    type.type,
+                    com.meridian11.books.bentobar.data.Section.SHOWN
+                )
+                org.junit.Assert.assertNull(type.debug(listOf("stage", "no-such-state")))
+                for (mode in listOf("timeout", "timeout-cached")) {
+                    org.junit.Assert.assertNotNull(type.debug(listOf("stage", mode)))
+                    val st = type.state(item)
+                    assertEquals(com.meridian11.books.bentobar.items.QuotaRingStatus.TIMEOUT, st.quotaRing?.status)
+                    assertEquals("TO", st.text)
+                    assertFalse(st.active)
+                }
+                org.junit.Assert.assertNotNull(type.debug(listOf("stage", "ok")))
+                val ok = type.state(item)
+                assertEquals(com.meridian11.books.bentobar.items.QuotaRingStatus.NORMAL, ok.quotaRing?.status)
+                assertTrue(ok.text != "TO")
+                org.junit.Assert.assertNotNull(type.debug(listOf("off")))
+            }
+        } finally {
+            types.forEach { it.debug(listOf("off")) }
+            com.meridian11.books.bentobar.items.AiUsageReader.clearCacheForTesting()
+        }
+    }
 }

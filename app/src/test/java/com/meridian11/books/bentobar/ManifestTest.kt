@@ -44,6 +44,7 @@ class ManifestTest {
             "android.permission.SCHEDULE_EXACT_ALARM",
             "android.permission.QUERY_ADVANCED_PROTECTION_MODE",
             "android.permission.PACKAGE_USAGE_STATS",
+            "android.permission.WRITE_SECURE_SETTINGS",
             "android.permission.MANAGE_EXTERNAL_STORAGE",
             "android.permission.READ_EXTERNAL_STORAGE",
             "android.permission.WRITE_EXTERNAL_STORAGE",
@@ -167,7 +168,10 @@ class ManifestTest {
         assertEquals("true", serviceConfig.attr("canTakeScreenshot"))
         val attributes = (0 until serviceConfig.attributes.length).map { serviceConfig.attributes.item(it) }
             .filter { it.namespaceURI == android }.map { it.localName }.toSet()
-        assertEquals(setOf("canRetrieveWindowContent", "canTakeScreenshot", "canRequestFilterKeyEvents"), attributes.filter { it.startsWith("can") }.toSet())
+        assertEquals(
+            setOf("canRetrieveWindowContent", "canTakeScreenshot", "canRequestFilterKeyEvents", "canPerformGestures"),
+            attributes.filter { it.startsWith("can") }.toSet(),
+        )
     }
 
     @Test fun theBarServiceIsDeclaredWithThatConfigAndTheSystemsPermission() {

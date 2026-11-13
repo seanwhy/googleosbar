@@ -82,6 +82,7 @@ object Env {
         com.meridian11.books.bentobar.util.Fonts.init(app)
         Timers.init(app)
         Caffeine.init(app)
+        ChargeOptimization.init(app)
     }
 
     /**
@@ -156,6 +157,8 @@ object Env {
         if (args.isEmpty()) app.resources.getQuantityString(id, count, count) else app.resources.getQuantityString(id, count, *args)
 
     fun global(action: Int): Boolean = BarService.global(action)
+
+    fun toggleChargeOptimization(): Boolean = BarService.toggleChargeOptimization()
 
     /** Puts [text] on the clipboard (a flight's status, the times of a planned moment). */
     fun copy(text: String) {

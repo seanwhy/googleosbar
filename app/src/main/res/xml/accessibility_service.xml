@@ -12,6 +12,7 @@
     android:canRetrieveWindowContent="true"
     android:canRequestFilterKeyEvents="true"
     android:canTakeScreenshot="true"
+    android:canPerformGestures="true"
     android:notificationTimeout="0"
     android:isAccessibilityTool="false"
     android:settingsActivity="com.meridian11.books.bentobar.ui.MainActivity"

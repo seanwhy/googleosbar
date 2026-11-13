@@ -48,12 +48,17 @@ data class BarRoute(
     val whole: Boolean = false,
 )
 
+/** Visual state of a [QuotaRing] badge in the strip. */
+enum class QuotaRingStatus { NORMAL, TIMEOUT, UNAVAILABLE }
+
 @androidx.compose.runtime.Immutable
 data class QuotaRing(
     /** Outer ring remaining percentage (0..100), e.g., Weekly remaining. */
-    val outerPercent: Int,
+    val outerPercent: Int = 0,
     /** Optional inner ring remaining percentage (0..100), e.g., 5-hour remaining. */
     val innerPercent: Int? = null,
+    /** Normal quota progress, network timeout indicator, or unconfigured/unavailable state. */
+    val status: QuotaRingStatus = QuotaRingStatus.NORMAL,
 )
 
 /** What one item shows right now. Immutable (never mutate [image]), so Compose can skip unchanged items. */

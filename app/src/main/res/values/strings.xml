@@ -265,6 +265,7 @@
     <string name="tools_notifications">Notifications</string>
     <string name="tools_quick_settings">Quick settings</string>
     <string name="tools_power">Power</string>
+    <string name="tools_charge_optimization">Charging optimization</string>
     <string name="tools_wifi">Wi-Fi</string>
     <string name="tools_display">Display</string>
     <string name="tools_sound">Sound</string>

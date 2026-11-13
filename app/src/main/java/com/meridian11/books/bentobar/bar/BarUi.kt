@@ -100,7 +100,15 @@ import com.meridian11.books.bentobar.items.BarRoute
 import com.meridian11.books.bentobar.items.BarSlider
 import com.meridian11.books.bentobar.items.ItemState
 import com.meridian11.books.bentobar.items.QuotaRing
+import com.meridian11.books.bentobar.items.QuotaRingStatus
 import com.meridian11.books.bentobar.items.Stands
+import androidx.compose.animation.core.LinearEasing
+import androidx.compose.animation.core.RepeatMode
+import androidx.compose.animation.core.animateFloat
+import androidx.compose.animation.core.infiniteRepeatable
+import androidx.compose.animation.core.rememberInfiniteTransition
+import androidx.compose.animation.core.tween
+import androidx.compose.ui.graphics.PathEffect
 import com.meridian11.books.bentobar.items.Tone
 import com.meridian11.books.bentobar.util.Fonts
 import com.meridian11.books.bentobar.util.Sym
@@ -129,6 +137,8 @@ data class StripLook(
     // colour), the text colour is used instead.
     val accent: Color get() = Contrast.orElse(if (lightText) Color(0xFFA8C7FA) else Color(0xFF0B57D0), background, fg)
     val warn: Color get() = Contrast.orElse(if (lightText) Color(0xFFFFD27A) else Color(0xFF8A5100), background, fg)
+    /** Amber/orange accent for AI quota timeout indicator, held to 4.5:1 on [background]. */
+    val quotaTimeout: Color get() = Contrast.orElse(if (lightText) Color(0xFFFFA726) else Color(0xFFB45309), background, fg)
     val alertBg: Color get() = if (lightText) Color(0xFFFFB4AB) else Color(0xFFB3261E)
     val alertFg: Color get() = if (lightText) Color(0xFF690005) else Color.White
 
@@ -679,15 +689,21 @@ private fun ItemView(entry: StripEntry, look: StripLook, events: StripEvents, gl
             // 6 dp to the words, as much as the item has at its two ends: the line is no glyph that belongs to them.
             if (parts.gapAfterRoute) Spacer(Modifier.width(6.dp))
         }
+        val ringTimeout = s.quotaRing?.status == QuotaRingStatus.TIMEOUT
+        val iconColor = when {
+            ringTimeout && quotaRing == null -> look.quotaTimeout
+            ringTimeout -> color.copy(alpha = 0.88f)
+            else -> color
+        }
         if (parts.iconDrawn) {
             val img = s.image
             if (img != null) {
                 Image(img.asImageBitmap(), null, Modifier.size(look.iconDp),
-                    colorFilter = if (AppItem.mono.of(entry.item) && entry.item.type == "app") ColorFilter.tint(color) else null)
+                    colorFilter = if (AppItem.mono.of(entry.item) && entry.item.type == "app") ColorFilter.tint(iconColor) else null)
             } else if (s.dayNumber != null) {
-                DayBadge(s.dayNumber, look.iconDp, color, look.background)
+                DayBadge(s.dayNumber, look.iconDp, iconColor, look.background)
             } else if (s.icon != null) {
-                SymIcon(s.icon, size = dpFont(look.iconDp), filled = s.filled, color = color)
+                SymIcon(s.icon, size = dpFont(look.iconDp), filled = s.filled, color = iconColor)
             }
         }
         if (parts.iconDrawn && (showText || slider != null || quotaRing != null) && (s.image != null || !s.icon.isNullOrEmpty())) {
@@ -696,7 +712,7 @@ private fun ItemView(entry: StripEntry, look: StripLook, events: StripEvents, gl
             Spacer(Modifier.width(5.dp))
         }
         if (quotaRing != null) {
-            QuotaRingBadge(quotaRing, look.iconDp, look.fg, look.lightText)
+            QuotaRingBadge(quotaRing, look)
         }
         if (slider != null) {
             VolumeTrack(slider, held, handle = hovered || held != null, look = look, rtl = rtl,
@@ -1022,91 +1038,183 @@ private fun DayBadge(day: Int, size: Dp, fg: Color, bg: Color) {
 }
 
 /**
- * Option C: Concentric Dual-Track Progress Ring with centered remaining percentage number.
- * Outer ring represents weekly remaining percentage; optional inner ring represents 5-hour remaining percentage.
+ * Concentric Dual-Track Progress Ring with centered remaining percentage number, or a rotating
+ * amber clock-sweep arc with centered "TO" when backend quota fetching times out.
  */
 @Composable
-private fun QuotaRingBadge(ring: QuotaRing, iconDp: Dp, fg: Color, lightText: Boolean = true) {
+private fun QuotaRingBadge(ring: QuotaRing, look: StripLook) {
+    val iconDp = look.iconDp
+    val fg = look.fg
     val boxSize = iconDp + 7.5.dp
-    val pct = ring.outerPercent.coerceIn(0, 100)
-    val innerPct = ring.innerPercent?.coerceIn(0, 100)
-    val lowOuter = pct <= 20
-    val lowInner = innerPct != null && innerPct <= 20
-    val warnPink = if (lightText) Color(0xFFFF4D94) else Color(0xFFD81B60)
-    val outerColor = if (lowOuter) warnPink else fg
-    val innerColor = if (lowInner) warnPink else fg.copy(alpha = 0.78f)
-    val fontScale = when {
-        pct >= 100 -> 0.44f
-        innerPct != null -> 0.50f
-        else -> 0.55f
-    }
-    val fontSize = dpFont(iconDp * fontScale)
-    Box(Modifier.size(boxSize), contentAlignment = Alignment.Center) {
-        Canvas(Modifier.size(boxSize)) {
-            val outerStroke = 1.9.dp.toPx()
-            val outerRadius = (size.minDimension - outerStroke) / 2f
-            val centerOffset = Offset(size.width / 2f, size.height / 2f)
-
-            // Outer track & progress arc (Weekly remaining)
-            drawCircle(
-                color = outerColor.copy(alpha = 0.22f),
-                radius = outerRadius,
-                center = centerOffset,
-                style = androidx.compose.ui.graphics.drawscope.Stroke(width = outerStroke)
-            )
-            if (pct > 0) {
-                drawArc(
-                    color = outerColor,
-                    startAngle = -90f,
-                    sweepAngle = 360f * (pct / 100f),
-                    useCenter = false,
-                    topLeft = Offset(centerOffset.x - outerRadius, centerOffset.y - outerRadius),
-                    size = Size(outerRadius * 2f, outerRadius * 2f),
-                    style = androidx.compose.ui.graphics.drawscope.Stroke(
-                        width = outerStroke,
-                        cap = androidx.compose.ui.graphics.StrokeCap.Round
-                    )
+    when (ring.status) {
+        QuotaRingStatus.TIMEOUT -> {
+            val timeoutColor = look.quotaTimeout
+            val sweepStart = if (!Motion.off) {
+                val transition = rememberInfiniteTransition(label = "quotaTimeout")
+                val angle by transition.animateFloat(
+                    initialValue = -90f,
+                    targetValue = 270f,
+                    animationSpec = infiniteRepeatable(
+                        animation = tween(durationMillis = 2200, easing = LinearEasing),
+                        repeatMode = RepeatMode.Restart,
+                    ),
+                    label = "quotaSweep",
                 )
+                angle
+            } else {
+                -90f
             }
-
-            // Inner track & progress arc (5-Hour remaining)
-            if (innerPct != null) {
-                val innerStroke = 1.15.dp.toPx()
-                val innerRadius = outerRadius - outerStroke / 2f - 1.05.dp.toPx() - innerStroke / 2f
-                drawCircle(
-                    color = innerColor.copy(alpha = 0.20f),
-                    radius = innerRadius,
-                    center = centerOffset,
-                    style = androidx.compose.ui.graphics.drawscope.Stroke(width = innerStroke)
-                )
-                if (innerPct > 0) {
+            val fontSize = dpFont(iconDp * 0.46f)
+            Box(Modifier.size(boxSize), contentAlignment = Alignment.Center) {
+                Canvas(Modifier.size(boxSize)) {
+                    val stroke = 2.0.dp.toPx()
+                    val radius = (size.minDimension - stroke) / 2f
+                    val centerOffset = Offset(size.width / 2f, size.height / 2f)
+                    drawCircle(
+                        color = fg.copy(alpha = 0.22f),
+                        radius = radius,
+                        center = centerOffset,
+                        style = androidx.compose.ui.graphics.drawscope.Stroke(width = stroke),
+                    )
                     drawArc(
-                        color = innerColor,
-                        startAngle = -90f,
-                        sweepAngle = 360f * (innerPct / 100f),
+                        color = timeoutColor,
+                        startAngle = sweepStart,
+                        sweepAngle = 100f,
                         useCenter = false,
-                        topLeft = Offset(centerOffset.x - innerRadius, centerOffset.y - innerRadius),
-                        size = Size(innerRadius * 2f, innerRadius * 2f),
+                        topLeft = Offset(centerOffset.x - radius, centerOffset.y - radius),
+                        size = Size(radius * 2f, radius * 2f),
                         style = androidx.compose.ui.graphics.drawscope.Stroke(
-                            width = innerStroke,
-                            cap = androidx.compose.ui.graphics.StrokeCap.Round
-                        )
+                            width = stroke,
+                            cap = androidx.compose.ui.graphics.StrokeCap.Round,
+                        ),
                     )
                 }
+                Text(
+                    text = "TO",
+                    color = timeoutColor,
+                    maxLines = 1,
+                    style = TextStyle(
+                        fontFamily = Fonts.bar,
+                        fontSize = fontSize,
+                        lineHeight = fontSize,
+                        letterSpacing = (-0.3).sp,
+                        fontWeight = androidx.compose.ui.text.font.FontWeight.ExtraBold,
+                    ),
+                )
             }
         }
-        Text(
-            text = "$pct",
-            color = outerColor,
-            maxLines = 1,
-            style = TextStyle(
-                fontFamily = Fonts.bar,
-                fontSize = fontSize,
-                lineHeight = fontSize,
-                fontWeight = androidx.compose.ui.text.font.FontWeight.Bold,
-                fontFeatureSettings = "tnum"
-            )
-        )
+        QuotaRingStatus.UNAVAILABLE -> {
+            val muted = fg.copy(alpha = 0.32f)
+            val fontSize = dpFont(iconDp * 0.50f)
+            Box(Modifier.size(boxSize), contentAlignment = Alignment.Center) {
+                Canvas(Modifier.size(boxSize)) {
+                    val stroke = 1.7.dp.toPx()
+                    val radius = (size.minDimension - stroke) / 2f
+                    drawCircle(
+                        color = muted,
+                        radius = radius,
+                        center = Offset(size.width / 2f, size.height / 2f),
+                        style = androidx.compose.ui.graphics.drawscope.Stroke(
+                            width = stroke,
+                            pathEffect = PathEffect.dashPathEffect(floatArrayOf(3.dp.toPx(), 2.5.dp.toPx())),
+                        ),
+                    )
+                }
+                Text(
+                    text = "--",
+                    color = fg.copy(alpha = 0.72f),
+                    maxLines = 1,
+                    style = TextStyle(
+                        fontFamily = Fonts.bar,
+                        fontSize = fontSize,
+                        lineHeight = fontSize,
+                        fontWeight = androidx.compose.ui.text.font.FontWeight.Bold,
+                    ),
+                )
+            }
+        }
+        QuotaRingStatus.NORMAL -> {
+            val pct = ring.outerPercent.coerceIn(0, 100)
+            val innerPct = ring.innerPercent?.coerceIn(0, 100)
+            val lowOuter = pct <= 20
+            val lowInner = innerPct != null && innerPct <= 20
+            val warnPink = if (look.lightText) Color(0xFFFF4D94) else Color(0xFFD81B60)
+            val outerColor = if (lowOuter) warnPink else fg
+            val innerColor = if (lowInner) warnPink else fg.copy(alpha = 0.78f)
+            val fontScale = when {
+                pct >= 100 -> 0.44f
+                innerPct != null -> 0.50f
+                else -> 0.55f
+            }
+            val fontSize = dpFont(iconDp * fontScale)
+            Box(Modifier.size(boxSize), contentAlignment = Alignment.Center) {
+                Canvas(Modifier.size(boxSize)) {
+                    val outerStroke = 1.9.dp.toPx()
+                    val outerRadius = (size.minDimension - outerStroke) / 2f
+                    val centerOffset = Offset(size.width / 2f, size.height / 2f)
+
+                    // Outer track & progress arc (Weekly remaining)
+                    drawCircle(
+                        color = outerColor.copy(alpha = 0.22f),
+                        radius = outerRadius,
+                        center = centerOffset,
+                        style = androidx.compose.ui.graphics.drawscope.Stroke(width = outerStroke),
+                    )
+                    if (pct > 0) {
+                        drawArc(
+                            color = outerColor,
+                            startAngle = -90f,
+                            sweepAngle = 360f * (pct / 100f),
+                            useCenter = false,
+                            topLeft = Offset(centerOffset.x - outerRadius, centerOffset.y - outerRadius),
+                            size = Size(outerRadius * 2f, outerRadius * 2f),
+                            style = androidx.compose.ui.graphics.drawscope.Stroke(
+                                width = outerStroke,
+                                cap = androidx.compose.ui.graphics.StrokeCap.Round,
+                            ),
+                        )
+                    }
+
+                    // Inner track & progress arc (5-Hour remaining)
+                    if (innerPct != null) {
+                        val innerStroke = 1.15.dp.toPx()
+                        val innerRadius = outerRadius - outerStroke / 2f - 1.05.dp.toPx() - innerStroke / 2f
+                        drawCircle(
+                            color = innerColor.copy(alpha = 0.20f),
+                            radius = innerRadius,
+                            center = centerOffset,
+                            style = androidx.compose.ui.graphics.drawscope.Stroke(width = innerStroke),
+                        )
+                        if (innerPct > 0) {
+                            drawArc(
+                                color = innerColor,
+                                startAngle = -90f,
+                                sweepAngle = 360f * (innerPct / 100f),
+                                useCenter = false,
+                                topLeft = Offset(centerOffset.x - innerRadius, centerOffset.y - innerRadius),
+                                size = Size(innerRadius * 2f, innerRadius * 2f),
+                                style = androidx.compose.ui.graphics.drawscope.Stroke(
+                                    width = innerStroke,
+                                    cap = androidx.compose.ui.graphics.StrokeCap.Round,
+                                ),
+                            )
+                        }
+                    }
+                }
+                Text(
+                    text = "$pct",
+                    color = outerColor,
+                    maxLines = 1,
+                    style = TextStyle(
+                        fontFamily = Fonts.bar,
+                        fontSize = fontSize,
+                        lineHeight = fontSize,
+                        fontWeight = androidx.compose.ui.text.font.FontWeight.Bold,
+                        fontFeatureSettings = "tnum",
+                    ),
+                )
+            }
+        }
     }
 }
 

@@ -67,6 +67,7 @@ class ContrastTest {
                 androidx.compose.ui.unit.Dp(12f), com.meridian11.books.bentobar.data.Pill.NONE, look.background)
             assertTrue("accent on $bg", Contrast.ratio(strip.accent, bg) >= Contrast.MIN)
             assertTrue("warn on $bg", Contrast.ratio(strip.warn, bg) >= Contrast.MIN)
+            assertTrue("quotaTimeout on $bg", Contrast.ratio(strip.quotaTimeout, bg) >= Contrast.MIN)
         }
     }
 
