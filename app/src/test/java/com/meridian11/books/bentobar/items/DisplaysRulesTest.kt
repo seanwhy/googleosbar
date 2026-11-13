@@ -41,6 +41,25 @@ class DisplaysRulesTest {
         assertEquals("2", twoCount.text)
     }
 
+    @Test fun theKeepAwakeRuleComesFromTheLayoutWhateverIsSampled() {
+        val awakeItem = ItemConfig("d1", "displays", options = mapOf("awake" to "true"))
+        assertTrue(DisplaysRules.ruleOn(listOf(awakeItem)))
+        // Folded behind ‹ without Show when: never sampled, and the promise holds all the same.
+        assertTrue(DisplaysRules.ruleOn(listOf(awakeItem.copy(section = Section.HIDDEN, whenActive = false))))
+        assertFalse(DisplaysRules.ruleOn(listOf(awakeItem.copy(section = Section.OFF))))
+        assertFalse(DisplaysRules.ruleOn(listOf(ItemConfig("d2", "displays"))))
+        assertFalse(DisplaysRules.ruleOn(listOf(ItemConfig("c", "clock", options = mapOf("awake" to "true")))))
+        // Only the connection is left for wantAwake to add.
+        assertTrue(DisplaysRules.wantAwake(listOf(awakeItem.copy(section = Section.HIDDEN)), listOf(builtIn, uhd)))
+    }
+
+    @Test fun theItemGoingIdleDoesNotEndKeepAwake() {
+        // What used to happen: the bar hides, the ticker stops, onIdle cleared the rule and the screen timed out.
+        val source = java.io.File("src/main/java/com/meridian11/books/bentobar/items/DisplaysItem.kt").readText()
+        val onIdle = source.substringAfter("override fun onIdle()").substringBefore("override fun sample")
+        assertFalse(onIdle, "keepingAwake" in onIdle.substringBefore("}"))
+    }
+
     @Test fun wantAwakeRequiresActiveDisplaysItemWithAwakeOptionAndExternalScreen() {
         val awakeItem = ItemConfig("d1", "displays", options = mapOf("awake" to "true"))
         val offItem = awakeItem.copy(section = Section.OFF)

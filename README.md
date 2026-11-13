@@ -6,7 +6,7 @@
 
 <p align="center">
   <b>Add, hide and organise items in your Googlebook's status bar.</b><br>
-  What Bartender and iStat Menus do for the Mac menu bar, as an ordinary Android app: no root, no adb.
+  Your own items next to the system's icons, as an ordinary Android app: no root, no adb.
 </p>
 
 <p align="center">
@@ -78,7 +78,7 @@ hides when an app goes full screen or the screen locks.
 | **Device batteries** | the lowest of your mouse, keyboard, stylus or controller, when it's low | every device that reports a battery |
 | **External displays** | connected monitor resolution & refresh rate (`4K 60Hz`), when plugged in | every display's resolution, refresh rate and HDR status, plus **Keep awake while connected** |
 | **Heat** | a word when Android slows a hot device | heat level, battery temperature |
-| **Clipboard & scratchpad** | latest snippet preview or count | pinned snippets and session clipboard history; click any row to copy and optionally paste into the active field |
+| **Clipboard & scratchpad** | latest snippet preview or count | pinned snippets and session clipboard history; click any row to copy it |
 | **Weather** *(online)* | conditions and temperature of a city you pick or of where you are; rain or snow that is coming; optionally a word for the sky ("Partly cloudy", "Windy") | the next hours and days, sunrise and sunset. From [Open-Meteo](https://open-meteo.com) |
 | **Air quality & UV** *(online)* | US or European AQI and/or UV index for your city or location; pops out when AQI or UV is high | AQI band, PM2.5, PM10, Ozone ($\text{O}_3$), current and max daily UV. From [Open-Meteo](https://open-meteo.com) |
 | **Flight** *(online)* | a line with the plane where the flight is, a countdown to departure with the gate, then to landing, and delays | times at both airports, terminal, gate, baggage belt; a choice where a number flies more than once a day. From AirLabs, with a free key of your own |
@@ -144,13 +144,14 @@ with that access:
 
 - It listens only for **windows appearing, going or moving**, not their content, so it can hide
   for full-screen apps and shades.
-- It reads the **status bar's layout, and no other window**, to find free space.
+- It reads the **status bar's layout**, to find free space, and **where other windows are**, never what is
+  in them, to hide for full-screen apps and panels and to keep your items matching the status bar.
 - It copies the **colour of the status bar clock**, from a picture of the status bar's own window
   (not your screen), so your items match.
 - It runs **system actions** (screenshot, lock, overview, all apps, notifications, Quick Settings,
   power) when you pick them in the Tools menu or click a Shortcut item.
 
-BentoBar doesn't read other apps' windows and doesn't watch your keyboard, mouse or touches.
+BentoBar never reads what is in another app's window and doesn't watch your keyboard, mouse or touches.
 
 **BentoBar goes online for five items only, and only after you set them up** on this device:
 
@@ -169,7 +170,7 @@ BentoBar doesn't read other apps' windows and doesn't watch your keyboard, mouse
   minutes while the bar is on screen, and when you open its menu or press Refresh. Its readings are
   kept in memory only. Weather's switch in Setup › Online services covers it too.
 - **Exchange rates** asks [Frankfurter](https://frankfurter.dev) for the European Central Bank's
-  reference table of currencies, at most once an hour while the bar is on screen, and when you open
+  reference table of currencies, about once an hour while the bar is on screen (a failed try is repeated sooner), and when you open
   its menu or press Refresh. No key is needed, and the pairs you follow and the converter's amounts are
   worked out on the device. Frankfurter sees your IP address, as any website does.
 - **Flight** sends [AirLabs](https://airlabs.co) the flight number and your own AirLabs key: when you
@@ -190,9 +191,7 @@ sends its developer nothing.
 
 **Clipboard** reads the text you copy while the item is in use, and keeps your last few copies in
 memory only: they are gone when BentoBar stops, and are never stored or sent. The snippets you pin are
-saved with the item, in your layout. With *Paste into active field on click* on, the accessibility
-service pastes the snippet you click into the text field you are typing in, without reading that field
-or its app.
+saved with the item, in your layout.
 
 **Now playing** reads the title, artist and artwork your media players publish, which Android shares
 only with apps that have notification access. That access is optional, and BentoBar tells Android to
@@ -200,7 +199,8 @@ send it no notifications: it receives none. Without it the item still shows that
 controls it. Nothing about what you play is stored or sent.
 
 If you use Android's backup, Android keeps a copy of BentoBar's settings in your Google account. Your
-AirLabs and Finnhub keys and the online switches are left out of it.
+AirLabs and Finnhub keys, the online switches, your answer to the accessibility explanation, a running timer and
+keep awake are left out of it.
 
 **Usage access is optional and off by default.** If you turn it on (Setup, or the Network and
 Storage menus), BentoBar reads how much data and storage each app uses, to list the top five in
@@ -215,10 +215,10 @@ show the whole system instead.
 | Accessibility service | drawing items on the status bar and running Tools actions |
 | Notifications *(optional)* | timer alerts, and the Live Update chip |
 | Calendar *(optional)* | Next meeting, and events in the month view |
-| Approximate location *(optional)* | Weather's My location, rounded to about 10 km before it is sent |
+| Approximate location *(optional)* | Weather's and Air quality & UV's My location, rounded to about 10 km before it is sent |
 | Alarms and reminders *(optional)* | timers that ring on the second while the Googlebook sleeps |
 | Usage access *(optional)* | the apps using the most data today and the largest apps, in the Network and Storage menus |
-| Internet | Weather (Open-Meteo), Flight (AirLabs) and US stocks (Finnhub), only after you set them up; nothing else |
+| Internet | Weather and Air quality & UV (Open-Meteo), Flight (AirLabs), US stocks (Finnhub) and Exchange rates (Frankfurter), only after you set them up; nothing else |
 | Notification access *(optional)* | Now playing's title, artist and artwork; BentoBar receives no notifications |
 | Network state, launcher apps | the network menu, and picking apps for shortcuts |
 
@@ -265,7 +265,7 @@ It was proudly developed on a Googlebook: written, built and tested on the devic
 itself, in its Linux terminal and on its own Android, from the first probe of the status bar to
 this release.
 
-— Meridian11 LLC
+— Meridian11
 
 ## License
 
@@ -273,5 +273,4 @@ BentoBar is free software under the [MIT License](LICENSE). It includes Google's
 [Material Symbols](https://fonts.google.com/icons) (Apache License 2.0) and uses Jetpack Compose,
 AndroidX, Kotlin and kotlinx.serialization (Apache License 2.0).
 
-BentoBar is an independent project. It isn't made by or affiliated with Google, or with Surtees
-Studios (Bartender) or Bjango (iStat Menus).
+BentoBar is an independent project.

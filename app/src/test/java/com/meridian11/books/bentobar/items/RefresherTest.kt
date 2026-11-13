@@ -30,6 +30,48 @@ class RefresherTest {
             restore = restore,
             load = load ?: { key, _ -> loads += key; "$key#${loads.size}" })
 
+    @Test fun aLoadThatThrowsIsReportedByItsKindAndNeverItsMessage() {
+        val reported = ArrayList<String>()
+        val r = Refresher<String, String>(Refresher.Wiring(background, { it.run() }, { clock }, report = { reported += it }), every = { _, _ -> null }) { _, _ ->
+            throw IllegalStateException("https://airlabs.co/x?api_key=a-key-nobody-may-see")
+        }
+        r.want("x")
+        assertEquals(listOf("IllegalStateException"), reported)
+        assertNull(r.peek("x"))
+    }
+
+    @Test fun nothingOfAForgottenKeyRemains() {
+        val r = refresher()
+        r.want("zurich"); r.want("oslo")
+        r.forget("zurich")
+        assertEquals(setOf("oslo"), r.heldKeys())
+        r.forget()
+        assertEquals(emptySet<String>(), r.heldKeys())
+    }
+
+    @Test fun nothingOfAKeyForgottenWhileItLoadsRemainsOnceTheLoadIsBack() {
+        held = true
+        val r = refresher()
+        r.want("zurich")
+        r.forget("zurich")
+        assertEquals("held only until the load comes back", setOf("zurich"), r.heldKeys())
+        held = false
+        run()
+        assertNull(r.peek("zurich"))
+        assertEquals(emptySet<String>(), r.heldKeys())
+    }
+
+    @Test fun aKeyForgottenTwiceWhileItLoadsAndThenWantedAgainStillLoads() {
+        held = true
+        val r = refresher()
+        r.want("zurich")
+        r.forget("zurich"); r.forget("zurich")
+        run()
+        held = false
+        r.want("zurich")
+        assertEquals("zurich#2", r.peek("zurich"))
+    }
+
     @Test fun theFirstWantLoads() {
         val r = refresher()
         assertNull(r.peek("zurich")); assertNull(r.age("zurich"))

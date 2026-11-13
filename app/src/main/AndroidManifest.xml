@@ -23,6 +23,9 @@
     <uses-permission
         android:name="android.permission.PACKAGE_USAGE_STATS"
         tools:ignore="ProtectedPermissions" />
+    <uses-permission
+        android:name="android.permission.WRITE_SECURE_SETTINGS"
+        tools:ignore="ProtectedPermissions" />
     <!-- Optional file access for Cloud Clipboard file upload: reading files copied by the user on the device. -->
     <uses-permission
         android:name="android.permission.MANAGE_EXTERNAL_STORAGE"

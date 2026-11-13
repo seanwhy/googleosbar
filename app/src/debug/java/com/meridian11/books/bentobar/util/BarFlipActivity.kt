@@ -11,6 +11,7 @@ import android.os.Bundle
 import android.os.Handler
 import android.os.Looper
 import android.util.Log
+import android.view.WindowInsets
 import android.view.WindowInsetsController
 import com.meridian11.books.bentobar.bar.BarService
 
@@ -24,6 +25,8 @@ import com.meridian11.books.bentobar.bar.BarService
  *   … --ez dark true --ei unlock 3000     from screen off the icons are light (a lock screen's look) and
  *                                         stay light until 3 s after the unlock, then turn dark
  *   … --ez close true                     closes the window (on a desktop the Back key doesn't)
+ *   … --ez hidebars true                  hides the system bars, as a full-screen video does, so that the bar leaves
+ *                                         with no other app on screen; false shows them again. Needs a full-screen window
  *
  * Only the shell can start it (android.permission.DUMP, like [DebugReceiver]).
  */
@@ -66,11 +69,19 @@ class BarFlipActivity : Activity() {
     private fun read(i: Intent) {
         main.removeCallbacksAndMessages(null)
         if (i.getBooleanExtra("close", false)) return finishAndRemoveTask()
+        if (i.hasExtra("hidebars")) return bars(i.getBooleanExtra("hidebars", false))
         val to = i.getBooleanExtra("dark", true)
         unlockMs = i.getIntExtra("unlock", -1)
         val after = i.getIntExtra("after", 0)
         if (unlockMs >= 0 || after <= 0) { dark = to; icons(to, "now") }
         else main.postDelayed({ dark = to; icons(to, "after $after ms") }, after.toLong())
+    }
+
+    private fun bars(hide: Boolean) {
+        val all = WindowInsets.Type.systemBars()
+        val controller = window.decorView.windowInsetsController
+        if (hide) controller?.hide(all) else controller?.show(all)
+        Log.i(BarService.TAG, "bar flip: system bars ${if (hide) "hidden" else "shown"}")
     }
 
     private fun icons(dark: Boolean, why: String) {

@@ -4,8 +4,9 @@ import com.meridian11.books.bentobar.data.Kept
 import com.meridian11.books.bentobar.data.Online
 import com.meridian11.books.bentobar.items.AirLabs.Failure
 import com.meridian11.books.bentobar.items.FlightRules.Tracked
-import com.meridian11.books.bentobar.net.Host
 import com.meridian11.books.bentobar.net.Http
+import com.meridian11.books.bentobar.net.Reply
+import com.meridian11.books.bentobar.net.Request
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.json.Json
 import java.time.Instant
@@ -27,8 +28,7 @@ import java.util.concurrent.ConcurrentHashMap
  * what the item follows (the number, the day that flight leaves and the airport it leaves from) as
  * the feature's own note, and the last answer as [Tracked] with what the service sent. Switching the
  * service off deletes the answers and keeps the notes; removing the key deletes both. The key itself
- * is `Online`'s: it is read here for the one request that needs it and goes into nothing that is
- * kept, shown or said.
+ * is `Online`'s and is added to the request by the transport; it goes into nothing that is kept, shown or said.
  */
 object FlightLoad {
     private const val OWN = "flight"
@@ -122,7 +122,7 @@ object FlightLoad {
     /** [text] and the chosen [day] as a question for [item], or null: what is not a flight number is never asked. */
     fun question(item: String, text: String, day: LocalDate?, zone: ZoneId? = null): Question? = FlightNumber.read(text)?.let { Question(item, it, day, zone) }
 
-    private fun mayAsk(key: String) = key.isNotEmpty() && Online.on(service)
+    private fun mayAsk() = Online.hasKey(service) && Online.on(service)
 
     /**
      * Finds the flight for a press of Track, or the flights where the number flies more than once on
@@ -131,10 +131,9 @@ object FlightLoad {
      * hour is not asked for again.
      */
     fun track(q: Question, now: Long): Outcome {
-        val key = Online.key(service)
-        if (!mayAsk(key)) return Outcome.Unasked
+        if (!mayAsk()) return Outcome.Unasked
         notFoundLately(q, now)?.let { return Outcome.Failed(it) }
-        val a = AirLabs.candidates(q.number, q.day, key, Instant.ofEpochMilli(now), q.zone) { Http.get(it) } ?: return Outcome.Unasked
+        val a = AirLabs.candidates(q.number, q.day, Instant.ofEpochMilli(now), q.zone) { Http.get(it) } ?: return Outcome.Unasked
         said(a.left)
         if (a.flights.isEmpty()) {
             val failure = a.failure ?: Failure.NO_ANSWER
@@ -246,8 +245,7 @@ object FlightLoad {
      * follows something else by now.
      */
     fun load(item: String, last: Tracked?, now: Long, items: Set<String>): Tracked? {
-        val key = Online.key(service)
-        if (!mayAsk(key)) return null
+        if (!mayAsk()) return null
         val asked = synchronized(lock) { tidy(items); following(item) } ?: return Tracked()
         val was = last?.takeIf { asked.isFor(it) }
         val number = FlightNumber.read(asked.number)
@@ -258,33 +256,37 @@ object FlightLoad {
             }
         }
         val flight = was?.flight
-        val next = (if (was == null || flight == null) lookUp(asked, number, was, key, now) else again(number, was, flight, key, now)) ?: return null
+        val next = (if (was == null || flight == null) lookUp(asked, number, was, now) else again(number, was, flight, now)) ?: return null
         return synchronized(lock) {
             if (following(item)?.isFor(next) == true) next.also { store(item, it, now) } else null
         }
     }
 
-    private fun lookUp(asked: Following, number: FlightNumber, was: Tracked?, key: String, now: Long): Tracked? {
+    private fun lookUp(asked: Following, number: FlightNumber, was: Tracked?, now: Long): Tracked? {
         val day = asked.day?.let { runCatching { LocalDate.parse(it) }.getOrNull() }
-        val before = Http.sent(Host.AIRLABS)
-        val a = AirLabs.lookup(number, day, asked.from, key, Instant.ofEpochMilli(now)) { Http.get(it) } ?: return null
+        val went = Went()
+        val a = AirLabs.lookup(number, day, asked.from, Instant.ofEpochMilli(now), went::get) ?: return null
         said(a.left)
         val left = a.left ?: was?.left
         val f = a.flight ?: return Tracked(asked.number, asked.day, failure = a.failure ?: Failure.NO_ANSWER,
-            failures = counted(was?.failures ?: 0, before), askedAt = now, left = left, from = asked.from)
+            failures = went.counted(was?.failures ?: 0), askedAt = now, left = left, from = asked.from)
         return Tracked(asked.number, asked.day, f, askedAt = now, heardAt = now, left = left, alertSince = FlightRules.alertSince(f, null, now), from = asked.from)
     }
 
     /**
-     * The failures in a row after one more, as for Weather: it counts only if a request left the device since [sentBefore]
-     * ([Http.sent]). Without a network nothing went out and the back-off doesn't grow; a connection that broke after the
+     * Asks through [get], and says whether any of a lookup's requests left the device: the failures in a row grow only then,
+     * as for Weather. Without a network nothing went out and the back-off doesn't grow; a connection that broke after the
      * request was sent may have cost a lookup, and does.
      */
-    private fun counted(failures: Int, sentBefore: Int): Int = if (Http.sent(Host.AIRLABS) != sentBefore) failures + 1 else failures
+    private class Went {
+        private var any = false
+        fun get(request: Request): Reply = Http.get(request).also { if (it.sent) any = true }
+        fun counted(failures: Int): Int = if (any) failures + 1 else failures
+    }
 
-    private fun again(number: FlightNumber, was: Tracked, flight: Flight, key: String, now: Long): Tracked? {
-        val before = Http.sent(Host.AIRLABS)
-        val r = AirLabs.again(number, key, flight, Instant.ofEpochMilli(now)) { Http.get(it) } ?: return null
+    private fun again(number: FlightNumber, was: Tracked, flight: Flight, now: Long): Tracked? {
+        val went = Went()
+        val r = AirLabs.again(number, flight, Instant.ofEpochMilli(now), went::get) ?: return null
         said(r.left)
         val left = r.left ?: was.left
         return when (val a = r.again) {
@@ -296,7 +298,7 @@ object FlightLoad {
             AirLabs.Again.Gone -> (r.failure == Failure.REFUSED || r.failure == Failure.USED_UP).let { ofTheKey ->
                 was.copy(failure = r.failure.takeIf { ofTheKey }, failures = 0, askedAt = now, left = left, ended = !ofTheKey, waitSec = null)
             }
-            AirLabs.Again.Failed -> was.copy(failure = r.failure ?: Failure.NO_ANSWER, failures = counted(was.failures, before), askedAt = now,
+            AirLabs.Again.Failed -> was.copy(failure = r.failure ?: Failure.NO_ANSWER, failures = went.counted(was.failures), askedAt = now,
                 left = left, waitSec = r.retryAfterSec)
         }
     }

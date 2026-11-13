@@ -4,7 +4,6 @@ import com.meridian11.books.bentobar.data.ItemConfig
 import com.meridian11.books.bentobar.data.Kept
 import com.meridian11.books.bentobar.data.Online
 import com.meridian11.books.bentobar.data.Section
-import com.meridian11.books.bentobar.net.Host
 import com.meridian11.books.bentobar.net.Http
 import com.meridian11.books.bentobar.net.Reply
 
@@ -33,8 +32,7 @@ sealed interface StockFound {
  *
  * What is kept, outside the layout (so in no backup and no copied settings): the last quote of each
  * stock the layout follows, as [Quote]. Switching the service off deletes it. The key itself is
- * `Online`'s: it is read here for the request that needs it and goes into nothing that is kept,
- * shown or said.
+ * `Online`'s and is added to the request by the transport; it goes into nothing that is kept, shown or said.
  */
 object StocksLoad {
     private val service = Online.Service.FINNHUB
@@ -43,7 +41,7 @@ object StocksLoad {
     fun symbols(items: List<ItemConfig>): Set<String> =
         items.filter { it.type == "stocks" && it.section != Section.OFF }.flatMapTo(HashSet()) { StocksRules.stocks(it).map(Stock::symbol) }
 
-    private fun mayAsk(key: String) = key.isNotEmpty() && Online.on(service)
+    private fun mayAsk() = Online.hasKey(service) && Online.on(service)
 
     /**
      * Asks the service for [symbol]'s quote; blocks, so only a background load calls it. A good answer
@@ -51,13 +49,11 @@ object StocksLoad {
      * wrong. Null: it was not asked after all. [now]: the wall clock; [symbols]: the layout's right now.
      */
     fun load(symbol: String, last: Quote?, now: Long, symbols: () -> Set<String>): Quote? {
-        val key = Online.key(service)
-        if (!mayAsk(key)) return null
+        if (!mayAsk()) return null
         val sym = Finnhub.symbol(symbol) ?: return null
-        val before = Http.sent(Host.FINNHUB)
-        val reply = Http.get(Finnhub.quoteRequest(sym, key))
+        val reply = Http.get(Finnhub.quoteRequest(sym))
         // Without a network the request helper answers by itself and nothing leaves the device.
-        val went = Http.sent(Host.FINNHUB) != before
+        val went = reply.sent
         return when (reply) {
             is Reply.Ok -> when (val read = Finnhub.quote(reply.text)) {
                 is Finnhub.Read.Numbers -> {
@@ -107,9 +103,8 @@ object StocksLoad {
 
     /** Asks the service for US stocks matching [text]; blocks. */
     fun search(text: String): StockFound {
-        val key = Online.key(service)
-        if (!mayAsk(key)) return StockFound.Unasked
-        return when (val reply = Http.get(Finnhub.searchRequest(text, key))) {
+        if (!mayAsk()) return StockFound.Unasked
+        return when (val reply = Http.get(Finnhub.searchRequest(text))) {
             is Reply.Ok -> Finnhub.listings(reply.text)?.let { StockFound.Listings(it) } ?: StockFound.Failed(Finnhub.Failure.NO_ANSWER)
             is Reply.Failed -> Finnhub.failure(reply)?.let { StockFound.Failed(it) } ?: StockFound.Unasked
         }

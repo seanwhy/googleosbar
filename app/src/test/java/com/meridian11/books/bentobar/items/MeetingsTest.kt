@@ -13,6 +13,17 @@ class MeetingsTest {
     private fun at(y: Int, mo: Int, d: Int, h: Int, mi: Int = 0) = LocalDateTime.of(y, mo, d, h, mi).atZone(zone).toInstant().toEpochMilli()
     private val min = 60_000L
 
+    @Test fun aTaskLinkMakesATaskOnlyWithNoCallLinkAndNoOneElse() {
+        // A plain task synced in from a task app.
+        assertTrue(Meetings.isTask(linksTask = true, hasCallLink = false, hasOthers = false))
+        // A real meeting whose notes link a task: it must still show.
+        assertFalse(Meetings.isTask(linksTask = true, hasCallLink = true, hasOthers = false))
+        assertFalse(Meetings.isTask(linksTask = true, hasCallLink = false, hasOthers = true))
+        assertFalse(Meetings.isTask(linksTask = true, hasCallLink = true, hasOthers = true))
+        // An event with no task link is never a task.
+        assertFalse(Meetings.isTask(linksTask = false, hasCallLink = false, hasOthers = false))
+    }
+
     @Test fun horizonIsThreeTomorrow() {
         assertEquals(at(2026, 10, 1, 3), Meetings.horizon(at(2026, 9, 30, 9, 30), zone))
         assertEquals(at(2026, 9, 30, 3), Meetings.horizon(at(2026, 9, 30, 0, 0), zone))
@@ -53,5 +64,28 @@ class MeetingsTest {
         assertFalse("a flight or solo appointment", Meetings.isMeeting(allDay = false, editable = true, hasCallLink = false, hasOthers = false))
         assertFalse("all-day", Meetings.isMeeting(allDay = true, editable = true, hasCallLink = true, hasOthers = true))
         assertFalse("a calendar you can't edit", Meetings.isMeeting(allDay = false, editable = false, hasCallLink = true, hasOthers = true))
+    }
+
+    @Test fun anAllDayOrReadOnlyEventWithATaskLinkIsAskedAboutAttendeesSoItIsNotLostAsATask() {
+        assertTrue(Meetings.asksAttendees(hasCallLink = false, linksTask = true, allDay = true, editable = true))
+        assertTrue(Meetings.asksAttendees(hasCallLink = false, linksTask = true, allDay = false, editable = false))
+        assertTrue(Meetings.asksAttendees(hasCallLink = false, linksTask = false, allDay = false, editable = true))
+        // Plain all-day or read-only events stay unasked, and a call link needs no attendees.
+        assertFalse(Meetings.asksAttendees(hasCallLink = false, linksTask = false, allDay = true, editable = true))
+        assertFalse(Meetings.asksAttendees(hasCallLink = true, linksTask = true, allDay = false, editable = true))
+    }
+
+    @Test fun anInvitationsTitleIsCleanedWhereItComesIn() {
+        // Written by whoever sent it: a U+202E must not turn the countdown beside it around, a line break must not drop it.
+        assertEquals("evil meeting", Meetings.title("\u202Eevil\nmeeting", "No title"))
+        assertEquals("No title", Meetings.title(" \n\u202E", "No title"))
+        assertEquals("No title", Meetings.title(null, "No title"))
+        assertEquals(Meetings.TITLE_CHARS, Meetings.title("x".repeat(100_000), "No title").length)
+    }
+
+    @Test fun aLocationIsOneLineAndHasALimit() {
+        assertEquals("Room 4, 2nd floor", Meetings.location("Room 4,\n2nd floor"))
+        assertEquals("", Meetings.location(null))
+        assertEquals(Meetings.LOCATION_CHARS, Meetings.location("y".repeat(100_000)).length)
     }
 }

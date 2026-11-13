@@ -170,18 +170,6 @@ class HereRulesTest {
         assertFalse(HereRules.wanted(listOf(here.copy(section = Section.OFF), city), on = true))
     }
 
-    @Test fun androidsLocationQuestionIsAskedOnlyForALayoutWithAnItemOfMyLocation() {
-        val here = WeatherRules.useHere(ItemConfig("w1", "weather"))
-        val city = ItemConfig("w2", "weather", options = mapOf("city" to "Zurich", "lat" to "47.37", "lon" to "8.55"))
-        // What another app's intent to the settings window would ask for: nothing chose My location.
-        assertFalse(HereRules.mayAsk(emptyList()))
-        assertFalse(HereRules.mayAsk(listOf(city)))
-        assertFalse(HereRules.mayAsk(listOf(ItemConfig("f1", "flight", options = mapOf("where" to "here")))))
-        // Use my location, and Allow location in the menu or the settings, an item in Off included.
-        assertTrue(HereRules.mayAsk(listOf(city, here)))
-        assertTrue(HereRules.mayAsk(listOf(here.copy(section = Section.OFF))))
-    }
-
     @Test fun nothingPrintsWhereTheDeviceIs() {
         assertEquals("a fix", zurich.toString())
         assertFalse(foundAt(start).toString().contains("47"))

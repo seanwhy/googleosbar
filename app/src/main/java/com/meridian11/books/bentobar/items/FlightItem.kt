@@ -40,6 +40,8 @@ import java.util.Locale
  * description, no tooltip and nothing a debug hook prints.
  */
 object FlightItem : ItemType("flight", R.string.item_flight_title, Sym.FLIGHT, R.string.item_flight_desc) {
+    override val group = ItemGroup.ONLINE
+    override val onlineNote = R.string.about_privacy_flight
     override val refreshMs = 10_000L
     override val menuWidthDp = 340
     override val online = Online.Service.AIRLABS
@@ -302,12 +304,12 @@ object FlightItem : ItemType("flight", R.string.item_flight_title, Sym.FLIGHT, R
     }
 
     /**
-     * The menu of the item [id] opens. Several flights found for it while the menu was closed are not
+     * The menu of [item] opens. Several flights found for it while the menu was closed are not
      * asked about now: a hidden item has no tick that would have let them go, and a list from an
      * earlier look is nobody's question. Before the menu reads what there is to show. Main thread.
      */
-    internal fun menuOpens(id: String) {
-        if (FlightLoad.turn(search.state.value, focused = id, opening = true) == FlightLoad.Turn.DROP) drop()
+    override fun menuOpening(item: ItemConfig) {
+        if (FlightLoad.turn(search.state.value, focused = item.id, opening = true) == FlightLoad.Turn.DROP) drop()
     }
 
     /**
@@ -497,6 +499,8 @@ object FlightItem : ItemType("flight", R.string.item_flight_title, Sym.FLIGHT, R
      * followed. A sample is a made-up flight. Of the real thing nothing is printed but whether there is
      * a key and a switch: never the key, and never a number the user entered.
      */
+    override val stages get() = FlightSamples.stages
+
     override fun debug(args: List<String>): String? = when (args.firstOrNull()) {
         null -> "items=${ids().size} key=${Online.hasKey(online)} on=${Online.on(online)} staged=" + (staged?.let { "${stagedAs.orEmpty()}: ${reads(it)}" } ?: "nothing")
         "off" -> { unstage(); "the real thing again" }
@@ -504,10 +508,10 @@ object FlightItem : ItemType("flight", R.string.item_flight_title, Sym.FLIGHT, R
         else -> null
     }
 
-    private fun show(name: String?, turn: String?): String {
+    private fun show(name: String?, turn: String?): String? {
         if (name == null) return FlightSamples.names
-        if (first() == null) return "no Flight item outside Off: add one first (add flight)"
-        val sample = FlightSamples.of(name, turn, Now.wall()) ?: return "no sample $name ${turn.orEmpty()}: ${FlightSamples.names}"
+        if (first() == null) return null
+        val sample = FlightSamples.of(name, turn, Now.wall()) ?: return null
         stage(sample, listOfNotNull(name, turn).joinToString(" "))
         return "$stagedAs: ${reads(sample)}"
     }

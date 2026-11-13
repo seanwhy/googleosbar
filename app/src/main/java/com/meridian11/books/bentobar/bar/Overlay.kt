@@ -89,6 +89,7 @@ class Overlay(
         }
         compose = cv
         root = frame
+        applied = Placement(params.x, params.y, params.width, params.height, params.gravity, params.flags)
     }
 
     /**
@@ -98,8 +99,16 @@ class Overlay(
      */
     fun setContentVisible(visible: Boolean) { root?.visibility = if (visible) android.view.View.VISIBLE else android.view.View.INVISIBLE }
 
+    /** What the window was last given: a [relayout] that changes nothing is skipped, or every look at the bar costs a layout pass. */
+    private var applied: Placement? = null
+
     /** Applies changed [params] (position, size, flags). */
-    fun relayout() { root?.let { runCatching { wm.updateViewLayout(it, params) } } }
+    fun relayout() {
+        val r = root ?: return
+        val now = Placement(params.x, params.y, params.width, params.height, params.gravity, params.flags)
+        if (now == applied) return
+        runCatching { wm.updateViewLayout(r, params) }.onSuccess { applied = now }
+    }
 
     /** Hear about clicks outside this window ([onOutside]) only while it matters, e.g. while hidden items are out. */
     fun watchOutside(on: Boolean) {
@@ -113,6 +122,7 @@ class Overlay(
         runCatching { wm.removeViewImmediate(r) }
         root = null
         compose = null
+        applied = null
         life.hidden()
     }
 
@@ -125,6 +135,9 @@ class Overlay(
 
     /** Screen position of the window's top-left corner. */
     fun locationOnScreen(): IntArray = IntArray(2).also { root?.getLocationOnScreen(it) }
+
+    /** Everything of a window that [relayout] can change. */
+    private data class Placement(val x: Int, val y: Int, val width: Int, val height: Int, val gravity: Int, val flags: Int)
 
     @SuppressLint("ViewConstructor")
     private inner class Frame(context: Context) : FrameLayout(context) {

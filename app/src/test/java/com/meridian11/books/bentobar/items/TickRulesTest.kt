@@ -55,11 +55,11 @@ class TickRulesTest {
 
     @Test fun onlyReadingsThatCrossTheirLineNowAndThenAreHeld() {
         // Speed and load go up and down around the line the user set: those items blink without the hold.
-        for (type in listOf("network", "cpu", "memory")) assertTrue(type, TickRules.holds(type))
+        for (type in listOf("network", "cpu", "memory")) assertTrue(type, Items.of(type)!!.holds)
         // Something that has ended is gone at once: a meeting over (its next one must not show while presenting), a timer
         // stopped, Keep awake turned off, a flight no longer shown. Now playing and Heat have holds of their own.
         for (type in listOf("event", "timer", "countdown", "caffeine", "flight", "media", "heat", "weather", "battery", "clock"))
-            assertFalse(type, TickRules.holds(type))
+            assertFalse(type, Items.of(type)!!.holds)
     }
 
     @Test fun beforeTheFirstTickAnItemComputedByHandIsStampedWhenItWas() {

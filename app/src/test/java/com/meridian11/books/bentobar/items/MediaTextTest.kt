@@ -12,9 +12,7 @@ import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Assume.assumeTrue
 import org.junit.Test
-import org.w3c.dom.Element
 import java.io.File
-import javax.xml.parsers.DocumentBuilderFactory
 
 /**
  * What Now playing says, in the bar and in its menu: every example of the product and design
@@ -26,51 +24,13 @@ import javax.xml.parsers.DocumentBuilderFactory
  * never as themselves: the file then shows what it holds. The last test checks that.
  */
 class MediaTextTest {
-    /** The copy deck, as written there. The rules below are run with these words. */
-    private val deck = mapOf(
-        "item_media_title" to "Now playing",
-        "item_media_desc" to "What's playing, with pause and skip; shows while something plays",
-        "trigger_media" to "Show while something is playing, and for %1\$s after it pauses",
-        "trigger_media_short" to "shows while playing",
-        "media_nothing" to "Nothing playing",
-        "media_playing" to "Playing",
-        "media_player_paused" to "%1\$s · Paused",
-        "media_app_playing" to "%1\$s is playing",
-        "media_app_paused" to "%1\$s is paused",
-        "media_bar_both" to "%1\$s · %2\$s",
-        "media_track_by" to "%1\$s by %2\$s",
-        "media_position" to "Position",
-        "media_position_state" to "%1\$s of %2\$s",
-        "media_other_players" to "Other players",
-        "media_other_pause" to "Pause %1\$s",
-        "media_other_play" to "Play %1\$s",
-        "media_open_player" to "Open %1\$s",
-        "media_access_lead" to "See what's playing",
-        "media_access_explain" to "Android shares the title, artist and artwork only with apps that have notification access. " +
-            "BentoBar tells Android to send it no notifications at all; it reads only what your media players say is playing, and keeps that on this device.",
-        "media_access_restricted" to "Switch grayed out? Tap it, tap OK, then turn on Allow restricted settings in App info.",
-        "media_access_allow" to "Allow notification access",
-        "media_show_title" to "Title",
-        "media_show_both" to "Title and artist",
-        "media_show_artist" to "Artist",
-        "media_show_needs_access" to "Shows once notification access is on",
-        "media_click" to "A click",
-        "media_click_menu" to "Opens the menu",
-        "media_click_toggle" to "Plays or pauses",
-        "media_desc_playing_by" to "Playing: %1\$s by %2\$s",
-        "media_desc_playing" to "Playing: %1\$s",
-        "media_desc_paused" to "Paused: %1\$s",
-        "media_desc_playing_unknown" to "Something is playing",
-        "media_desc_paused_unknown" to "Playback paused",
-    )
-
-    /** Not in the copy deck: how the album joins a spoken track ("… by Miles Davis, Kind of Blue"), which the deck leaves to "joined". */
-    private val added = mapOf("media_track_album" to "%1\$s, %2\$s")
+    /** The app's own text files, so the rules are run with the words the app shows, not a copy of them. */
+    private val texts = StringFiles.read(listOf("strings.xml", "strings_media.xml")).strings
 
     /** The two words that are older than this item and live in strings.xml. */
     private val shared = mapOf(Word.PAUSED to ("common_paused" to "Paused"), Word.STARTING to ("status_starting" to "Starting…"))
 
-    private val words = MediaText.Words { word -> shared[word]?.second ?: (deck + added).getValue("media_" + word.name.lowercase()) }
+    private val words = MediaText.Words { word -> texts.getValue(shared[word]?.first ?: ("media_" + word.name.lowercase())) }
 
     /** A text of the characters with these numbers. */
     private fun u(vararg codePoints: Int) = String(codePoints, 0, codePoints.size)
@@ -860,21 +820,10 @@ class MediaTextTest {
 
     // ---- the text file, and what the item's own code may not do
 
-    private fun strings(path: String): Map<String, String> {
-        val root = DocumentBuilderFactory.newInstance().newDocumentBuilder().parse(File(path)).documentElement
-        val list = root.getElementsByTagName("string")
-        return (0 until list.length).map { list.item(it) as Element }.associate { it.getAttribute("name") to unescaped(it.textContent) }
-    }
+    private fun strings(path: String): Map<String, String> = StringFiles.file(path)
 
-    /** A string as Android reads it from the file: an apostrophe and a quotation mark are written with a backslash there. */
-    private fun unescaped(text: String): String = text.replace("\\'", "'").replace("\\\"", "\"")
-
-    @Test fun theTextFileSaysWhatTheCopyDeckSays() {
-        val file = strings("src/main/res/values/strings_media.xml")
-        for ((name, text) in deck + added) assertEquals(name, text, file[name])
-        assertEquals("a string the copy deck does not know", (deck + added).keys, file.keys)
-        val all = strings("src/main/res/values/strings.xml")
-        for ((name, text) in shared.values) assertEquals(name, text, all[name])
+    @Test fun noStringInTheMediaFileIsLeftOverByTheCode() {
+        assertEquals("a string in strings_media.xml that no code shows", emptyList<String>(), StringFiles.unused("src/main/res/values/strings_media.xml"))
     }
 
     @Test fun britishEnglishSpellsGreyedWithAnE() {
@@ -925,8 +874,8 @@ class MediaTextTest {
         val kind = Regex.escape("\${e.javaClass.simpleName}")
         val fixed = Regex("Log\\.[a-z]\\(TAG, \"[^\"\$]*(" + kind + ")?\"\\)")
         val source = code("NowPlaying.kt")
-        assertEquals(3, fixed.findAll(source).count())
-        assertEquals("a log line that is not a fixed sentence", 3, Regex("""\bLog\.""").findAll(source).count())
+        // However many log lines there are, each is one of those.
+        assertEquals("a log line that is not a fixed sentence", Regex("""\bLog\.""").findAll(source).count(), fixed.findAll(source).count())
         assertFalse("Log." in code("MediaAccess.kt"))
         for (name in listOf("NowPlaying.kt", "MediaAccess.kt")) for (n in listOf("println(", "printStackTrace", "System.out", "System.err")) {
             assertFalse("items/$name has $n", n in code(name))

@@ -1,5 +1,7 @@
 package com.meridian11.books.bentobar.net
 
+import com.meridian11.books.bentobar.data.Online
+
 /**
  * A service that isn't there, for the tests of anything that asks one: it answers by host and path
  * with what a test put in, and remembers what it was asked. Nothing leaves the machine.
@@ -24,9 +26,14 @@ class FakeHttp : Transport {
 
     private fun answer(host: Host, path: String, reply: Reply) { replies.getOrPut(host.domain + path) { ArrayDeque() }.addLast(reply) }
 
-    /** A request nobody prepared an answer for is "not found", as from a service that doesn't know the path. */
+    /**
+     * A request nobody prepared an answer for is "not found", as from a service that doesn't know the path. One the
+     * real transport would refuse fails here for the same reason ([HttpTransport.address], the same code), so that a
+     * test can't pass on a request that could never leave the device.
+     */
     override fun get(request: Request): Reply {
         asked += request
+        if (HttpTransport.address(request) == null) return Reply.Failed(Why.REFUSED, sent = false)
         val queue = replies[request.host.domain + request.path] ?: return Reply.Failed(Why.STATUS, 404)
         return if (queue.size > 1) queue.removeFirst() else queue.first()
     }
@@ -44,7 +51,10 @@ class FakeHttp : Transport {
          */
         fun <T> use(test: (FakeHttp) -> T): T {
             val fake = FakeHttp()
+            Http.clock = { System.nanoTime() / 1_000_000 }
             Http.transport = fake
+            // As the app wires it: the switch and key are `Online`'s, and no item's code ever holds a key.
+            Http.key = { host -> Online.key(Online.serviceOf(host)).ifEmpty { null } }
             Http.allowed = { true }
             Http.connected = { true }
             Http.onMain = { false }
@@ -53,7 +63,9 @@ class FakeHttp : Transport {
             try {
                 return test(fake)
             } finally {
+                Http.clock = { System.nanoTime() / 1_000_000 }
                 Http.transport = HttpTransport()
+                Http.key = { null }
                 Http.allowed = { false }
                 Http.connected = { true }
                 Http.resetCounts()

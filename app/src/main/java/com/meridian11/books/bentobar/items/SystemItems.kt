@@ -27,6 +27,8 @@ import com.meridian11.books.bentobar.util.Sym
 import java.util.Locale
 
 object NetworkItem : ItemType("network", R.string.item_network_title, Sym.SWAP_VERT, R.string.item_network_desc) {
+    override val group = ItemGroup.SYSTEM
+    override val holds = true
     override val canBeActive = true
     private val above = Threshold("activeKBs", 500, 50..5000, step = 50) { Fmt.bytes(it * 1000.0) + "/s" }
     override val trigger = Trigger(R.string.trigger_network, R.string.trigger_network_short, above)
@@ -71,8 +73,10 @@ object NetworkItem : ItemType("network", R.string.item_network_title, Sym.SWAP_V
 }
 
 object MemoryItem : ItemType("memory", R.string.item_memory_title, Sym.MEMORY_ALT, R.string.item_memory_desc) {
+    override val group = ItemGroup.SYSTEM
+    override val holds = true
     override val canBeActive = true
-    private val above = Threshold("activePct", 85, 50..99) { "$it%" }
+    private val above = Threshold("activePct", 85, 50..99) { com.meridian11.books.bentobar.util.Fmt.percent(it) }
     override val trigger = Trigger(R.string.trigger_memory, R.string.trigger_memory_short, above)
 
     override fun state(item: ItemConfig): ItemState {
@@ -105,9 +109,10 @@ object MemoryItem : ItemType("memory", R.string.item_memory_title, Sym.MEMORY_AL
 }
 
 object BatteryItem : ItemType("battery", R.string.item_battery_title, Sym.BOLT, R.string.item_battery_desc) {
+    override val group = ItemGroup.SYSTEM
     override val canBeActive = true
     /** A newer key: 20 was the fixed cutoff before it, so configs without it behave as they did. */
-    private val below = Threshold("lowPct", 20, 5..50, step = 5) { "$it%" }
+    private val below = Threshold("lowPct", 20, 5..50, step = 5) { com.meridian11.books.bentobar.util.Fmt.percent(it) }
     override val trigger = Trigger(R.string.trigger_battery, R.string.trigger_battery_short, below)
 
     override fun state(item: ItemConfig): ItemState {
@@ -161,10 +166,11 @@ object BatteryItem : ItemType("battery", R.string.item_battery_title, Sym.BOLT, 
 }
 
 object StorageItem : ItemType("storage", R.string.item_storage_title, Sym.HARD_DRIVE, R.string.item_storage_desc) {
+    override val group = ItemGroup.SYSTEM
     override val refreshMs = 30_000L
     override val canBeActive = true
     /** A newer key: 10 was the fixed cutoff before it. */
-    private val below = Threshold("freePct", 10, 1..50) { "$it%" }
+    private val below = Threshold("freePct", 10, 1..50) { com.meridian11.books.bentobar.util.Fmt.percent(it) }
     override val trigger = Trigger(R.string.trigger_storage, R.string.trigger_storage_short, below)
 
     override fun state(item: ItemConfig): ItemState {

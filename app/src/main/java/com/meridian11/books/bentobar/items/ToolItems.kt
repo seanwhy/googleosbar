@@ -1,9 +1,12 @@
 package com.meridian11.books.bentobar.items
 
+import android.annotation.SuppressLint
 import android.accessibilityservice.AccessibilityService
+import android.content.BroadcastReceiver
 import android.content.ComponentName
 import android.content.Context
 import android.content.Intent
+import android.content.IntentFilter
 import android.graphics.Bitmap
 import android.graphics.Canvas
 import android.graphics.drawable.AdaptiveIconDrawable
@@ -23,6 +26,7 @@ import androidx.compose.material3.Checkbox
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -44,6 +48,9 @@ import androidx.compose.ui.res.pluralStringResource
 import androidx.compose.ui.res.stringResource
 import com.meridian11.books.bentobar.R
 import com.meridian11.books.bentobar.data.ItemConfig
+import com.meridian11.books.bentobar.data.SPACER_DP
+import com.meridian11.books.bentobar.data.Store
+import com.meridian11.books.bentobar.data.spacerWidthDp
 import com.meridian11.books.bentobar.ui.ActionTile
 import com.meridian11.books.bentobar.ui.ChoiceRow
 import com.meridian11.books.bentobar.ui.ChipRow
@@ -69,7 +76,7 @@ import java.util.Locale
 object Caffeine {
     const val FOREVER = Long.MAX_VALUE
     val until = MutableStateFlow(0L)
-    private var anchor = ClockAnchor(0, 0, -1)
+    internal var anchor = ClockAnchor(0, 0, -1)
 
     fun init(context: Context) {
         val p = context.getSharedPreferences("caffeine", Context.MODE_PRIVATE)
@@ -81,7 +88,12 @@ object Caffeine {
     fun on(minutes: Int?) = set(if (minutes == null) FOREVER else System.currentTimeMillis() + minutes * 60_000L)
     fun off() = set(0)
     fun toggle(minutes: Int?) = if (active()) off() else on(minutes)
-    fun active(now: Long = System.currentTimeMillis()) = until.value > now
+
+    /** On in real time, as [left] counts it: after a clock change [until] is out of date until the next [check], and while the bar is hidden no tick is there to do that. */
+    fun active(now: ClockAnchor = ClockAnchor.now(Env.app)) = until.value.let { it == FOREVER || (it != 0L && anchor.left(it, now) > 0) }
+
+    /** Real time until [deadline] (an [until]), so a clock change can't move when keep awake lets go. */
+    fun left(deadline: Long) = anchor.left(deadline, ClockAnchor.now(Env.app))
 
     /** Follows a clock change, and turns itself off when the time is up; called every tick. */
     fun check() {
@@ -101,6 +113,7 @@ object Caffeine {
 }
 
 object CaffeineItem : ItemType("caffeine", R.string.item_caffeine_title, Sym.COFFEE, R.string.item_caffeine_desc) {
+    override val group = ItemGroup.TOOLS
     override val canBeActive = true
     override val trigger = Trigger(R.string.trigger_caffeine, R.string.trigger_caffeine_short)
     private val durations = listOf(15, 30, 60, 120, 240)
@@ -119,16 +132,19 @@ object CaffeineItem : ItemType("caffeine", R.string.item_caffeine_title, Sym.COF
     }
 
     override fun onClick(item: ItemConfig): Boolean {
-        if (Env.service == null) return false // menu explains why it can't work
+        if (!Env.running) return false // menu explains why it can't work
         Caffeine.toggle(item.opt("minutes", "").toIntOrNull())
         return true
     }
 
+    // Caffeine.until is a StateFlow read as a plain value: rememberTick() below recomposes the menu every tick, which is
+    // what keeps the countdown current, so there is nothing for collectAsState to add.
+    @SuppressLint("StateFlowValueCalledInComposition")
     override val menu: @Composable (ItemConfig, MenuHost) -> Unit = { _, _ ->
         rememberTick()
         val on = Caffeine.active()
         MenuCard(Sym.COFFEE, stringResource(R.string.item_caffeine_title), when {
-            Env.service == null -> stringResource(R.string.caffeine_needs_service)
+            !Env.running -> stringResource(R.string.caffeine_needs_service)
             !on -> stringResource(R.string.caffeine_off_subtitle)
             Caffeine.until.value == Caffeine.FOREVER -> stringResource(R.string.caffeine_until_off_subtitle)
             else -> stringResource(R.string.caffeine_for_subtitle, Fmt.duration(Caffeine.until.value - System.currentTimeMillis()))
@@ -156,6 +172,7 @@ object CaffeineItem : ItemType("caffeine", R.string.item_caffeine_title, Sym.COF
 }
 
 object ToolsItem : ItemType("tools", R.string.item_tools_title, Sym.HANDYMAN, R.string.item_tools_desc) {
+    override val group = ItemGroup.TOOLS
     override val menuWidthDp = 392
     private data class Tool(val icon: String, @StringRes val label: Int, val run: () -> Unit)
 
@@ -188,11 +205,29 @@ object ToolsItem : ItemType("tools", R.string.item_tools_title, Sym.HANDYMAN, R.
     override val iconOnly = true
     override fun state(item: ItemConfig) = ItemState(icon = Sym.HANDYMAN, desc = Env.str(R.string.item_tools_title))
 
+    override fun menuOpening(item: ItemConfig) {
+        runCatching { ChargeOptimization.refreshFromSystem(Env.app) }
+    }
+
     override val menu: @Composable (ItemConfig, MenuHost) -> Unit = { item, host ->
+        rememberTick()
+        val chargeOptOn by ChargeOptimization.on.collectAsState()
+
         MenuCard(Sym.HANDYMAN, stringResource(R.string.item_tools_title)) {
             if (item.optBool("system", true)) {
                 SectionLabel(stringResource(R.string.tools_section_system))
-                TileGrid { system.forEach { t -> ActionTile(t.icon, stringResource(t.label)) { host.afterClose(t.run) } } }
+                TileGrid {
+                    system.forEach { t -> ActionTile(t.icon, stringResource(t.label)) { host.afterClose(t.run) } }
+                    ActionTile(
+                        icon = Sym.BATTERY_CHARGING_FULL,
+                        label = stringResource(R.string.tools_charge_optimization),
+                        selected = chargeOptOn == true,
+                    ) {
+                        if (!ChargeOptimization.tryFastToggle()) {
+                            host.afterClose { ChargeOptimization.startUiToggle() }
+                        }
+                    }
+                }
             }
             if (item.optBool("settings", true)) {
                 SectionLabel(stringResource(R.string.tools_settings))
@@ -213,13 +248,50 @@ object ToolsItem : ItemType("tools", R.string.item_tools_title, Sym.HANDYMAN, R.
 object Apps {
     data class App(val component: ComponentName, val label: String)
 
-    private const val MAX_ICONS = 128
-    private const val MAX_LABELS = 256
-    private val icons = object : LinkedHashMap<String, Bitmap>(64, 0.75f, true) {
-        override fun removeEldestEntry(eldest: MutableMap.MutableEntry<String, Bitmap>?) = size > MAX_ICONS
+    private val icons = SlowCache<String, Bitmap>(128)
+    private val labels = SlowCache<ComponentName, String>(256)
+
+    /** Which item types want to hear of an app changing: while one is live, and not otherwise. Main thread. */
+    private val watchers = Holders(0, { _, _ -> }, {}, ::startWatching, ::stopWatching)
+
+    /** [who] (an item type going live) shows apps: what was kept of one that changes is dropped from now on. */
+    fun watch(who: String) = watchers.hold(who)
+
+    fun unwatch(who: String) = watchers.release(who)
+
+    /** Installed, updated, turned off or removed. No permission asked: these broadcasts come to any app that can see the package, and this one sees the launchable apps. */
+    private val packages = object : BroadcastReceiver() {
+        override fun onReceive(context: Context, intent: Intent) {
+            changed(intent.data?.schemeSpecificPart ?: return)
+        }
     }
-    private val labels = object : LinkedHashMap<ComponentName, String>(64, 0.75f, true) {
-        override fun removeEldestEntry(eldest: MutableMap.MutableEntry<ComponentName, String>?) = size > MAX_LABELS
+
+    /** What changed with no receiver up (the bar away overnight, say): nothing else would tell the caches, which have no expiry. No permission. */
+    private val changes = PackageChanges { since ->
+        Env.app.packageManager.getChangedPackages(since)?.let { it.sequenceNumber to it.packageNames }
+    }
+
+    private fun changed(pkg: String) {
+        forget(pkg)
+        AppItem.packageChanged(pkg)
+    }
+
+    private fun startWatching() {
+        Env.app.registerReceiver(packages, IntentFilter().apply {
+            addAction(Intent.ACTION_PACKAGE_ADDED); addAction(Intent.ACTION_PACKAGE_REMOVED)
+            addAction(Intent.ACTION_PACKAGE_REPLACED); addAction(Intent.ACTION_PACKAGE_CHANGED)
+            addDataScheme("package")
+        }, Context.RECEIVER_NOT_EXPORTED)
+        // After registering: a change in between is then heard by one or both, never by neither.
+        changes.sinceLastAsked().forEach(::changed)
+    }
+
+    private fun stopWatching() = Env.app.unregisterReceiver(packages)
+
+    /** What was kept of [pkg] is out of date; [icon] and [label] read it again. */
+    fun forget(pkg: String) {
+        icons.forget { it.startsWith("$pkg/") }
+        labels.forget { it.packageName == pkg }
     }
 
     fun list(context: Context): List<App> {
@@ -228,7 +300,7 @@ object Apps {
             .map {
                 val cn = ComponentName(it.activityInfo.packageName, it.activityInfo.name)
                 val l = it.loadLabel(pm).toString()
-                synchronized(labels) { labels[cn] = l }
+                labels.put(cn, l)
                 App(cn, l)
             }
             .filter { it.component.packageName != context.packageName }
@@ -236,24 +308,22 @@ object Apps {
     }
 
     /** [label] if it's been read already: cheap enough to call while composing. */
-    fun cachedLabel(cn: ComponentName): String? = synchronized(labels) { labels[cn] }
+    fun cachedLabel(cn: ComponentName): String? = labels.peek(cn)
 
-    fun label(context: Context, cn: ComponentName): String {
-        synchronized(labels) { labels[cn]?.let { return it } }
-        val resolved = runCatching {
+    fun label(context: Context, cn: ComponentName): String = labels.get(cn) {
+        runCatching {
             context.packageManager.getActivityInfo(cn, 0).loadLabel(context.packageManager).toString()
         }.getOrDefault(cn.packageName)
-        synchronized(labels) { labels[cn] = resolved }
-        return resolved
-    }
+    } ?: cn.packageName
 
     /** [icon] if it's been drawn already: cheap enough to call while composing. */
-    fun cachedIcon(cn: ComponentName, px: Int, mono: Boolean): Bitmap? = synchronized(icons) { icons["${cn.flattenToShortString()}/$px/$mono"] }
+    fun cachedIcon(cn: ComponentName, px: Int, mono: Boolean): Bitmap? = icons.peek(iconKey(cn, px, mono))
 
-    /** The app's icon; [mono] uses the themed (monochrome) layer when the app has one. */
-    fun icon(context: Context, cn: ComponentName, px: Int, mono: Boolean): Bitmap? = synchronized(icons) {
-        val key = "${cn.flattenToShortString()}/$px/$mono"
-        icons[key] ?: runCatching {
+    private fun iconKey(cn: ComponentName, px: Int, mono: Boolean) = "${cn.flattenToShortString()}/$px/$mono"
+
+    /** The app's icon; [mono] uses the themed (monochrome) layer when the app has one. Read and drawn outside the cache's lock, which the main thread reads under. */
+    fun icon(context: Context, cn: ComponentName, px: Int, mono: Boolean): Bitmap? = icons.get(iconKey(cn, px, mono)) {
+        runCatching {
             val d: Drawable = context.packageManager.getActivityIcon(cn)
             val drawable = if (mono && d is AdaptiveIconDrawable && d.monochrome != null) d.monochrome!! else d
             val b = Bitmap.createBitmap(px, px, Bitmap.Config.ARGB_8888)
@@ -264,7 +334,7 @@ object Apps {
             } else drawable.setBounds(0, 0, px, px)
             drawable.draw(Canvas(b))
             b
-        }.getOrNull()?.also { icons[key] = it }
+        }.getOrNull()
     }
 
     fun launch(cn: ComponentName) = Env.launch(Intent(Intent.ACTION_MAIN).addCategory(Intent.CATEGORY_LAUNCHER).setComponent(cn))
@@ -301,26 +371,44 @@ fun AppPicker(selected: List<ComponentName>, multi: Boolean, onChange: (List<Com
 }
 
 object AppItem : ItemType("app", R.string.item_app_title, Sym.ROCKET_LAUNCH, R.string.item_app_desc) {
+    override val group = ItemGroup.TOOLS
     override val refreshMs = 60_000L
+    internal val mono = Opt.bool("mono", true)
 
     private data class Key(val cn: ComponentName, val mono: Boolean)
     private data class Resolved(val label: String, val icon: Bitmap?)
 
-    /** Label and icon are resolved off the main thread, so a cold cache never stalls a status-bar tick. */
-    private val resolved = Background.refresher<Key, Resolved>(type, every = { _, _ -> null }) { key, _ ->
+    /** How long what was read of an app stays fresh, for what changes with no change to its package (the device's language, say); [Apps] hears of those. */
+    private const val RELOAD_MS = 60 * 60_000L
+
+    /** Label and icon are resolved off the main thread, so a cold cache never stalls a status-bar tick. A reload reads the app again, not what is kept of it. */
+    private val resolved = Background.refresher<Key, Resolved>(type, every = { _, _ -> RELOAD_MS }) { key, last ->
+        if (last != null) Apps.forget(key.cn.packageName)
         Resolved(Apps.label(Env.app, key.cn), Apps.icon(Env.app, key.cn, 64, key.mono))
+    }
+
+    override fun onLive() = Apps.watch(type)
+    override fun onIdle() = Apps.unwatch(type)
+
+    /** [pkg] changed: an item of it reads it again, and shows what it had until that is done. */
+    fun packageChanged(pkg: String) {
+        Store.config.value.items.filter { it.type == type }.forEach { item ->
+            val cn = cn(item)?.takeIf { it.packageName == pkg } ?: return@forEach
+            val key = Key(cn, mono.of(item))
+            if (resolved.peek(key) != null) resolved.refresh(key)
+        }
     }
 
     private fun cn(item: ItemConfig) = item.options["app"]?.let { ComponentName.unflattenFromString(it) }
 
     override fun state(item: ItemConfig): ItemState {
         val cn = cn(item) ?: return ItemState(icon = Sym.ROCKET_LAUNCH, text = Env.str(R.string.app_pick), desc = Env.str(R.string.app_no_app_desc))
-        val mono = item.optBool("mono", true)
-        val key = Key(cn, mono)
+        val themed = mono.of(item)
+        val key = Key(cn, themed)
         resolved.want(key)
         val r = resolved.peek(key)
         val label = r?.label ?: Apps.cachedLabel(cn) ?: cn.packageName
-        val icon = r?.icon ?: Apps.cachedIcon(cn, 64, mono)
+        val icon = r?.icon ?: Apps.cachedIcon(cn, 64, themed)
         return ItemState(image = icon, icon = if (icon == null) Sym.ROCKET_LAUNCH else null, text = label, desc = Env.str(R.string.app_open_desc, label))
     }
 
@@ -331,20 +419,27 @@ object AppItem : ItemType("app", R.string.item_app_title, Sym.ROCKET_LAUNCH, R.s
     }
 
     override val options: @Composable (ItemConfig, (ItemConfig) -> Unit) -> Unit = { item, set ->
-        SwitchRow(stringResource(R.string.app_match_color), item.optBool("mono", true), help = stringResource(R.string.app_match_color_help)) {
-            set(item.with("mono", it.toString()))
+        SwitchRow(stringResource(R.string.app_match_color), mono.of(item), help = stringResource(R.string.app_match_color_help)) {
+            set(mono.set(item, it))
         }
         AppPicker(listOfNotNull(cn(item)), multi = false) { set(item.with("app", it.firstOrNull()?.flattenToString())) }
     }
 }
 
 object FolderItem : ItemType("folder", R.string.item_folder_title, Sym.GRID_VIEW, R.string.item_folder_desc) {
+    override val group = ItemGroup.TOOLS
     override val menuWidthDp = 340
-    override fun state(item: ItemConfig) = ItemState(icon = Sym.GRID_VIEW, text = item.opt("label", Env.str(R.string.common_apps)), desc = Env.str(R.string.item_folder_title))
+    private val label = Opt.text("label", 16)
+    // The menu draws what it finds at opening, so a folder's apps only need the caches to be told: by the receiver while
+    // this is live, and when it comes back by what Android says changed in between (Apps.startWatching).
+    override fun onLive() = Apps.watch(type)
+    override fun onIdle() = Apps.unwatch(type)
+    override fun state(item: ItemConfig) = ItemState(icon = Sym.GRID_VIEW, text = label.of(item).ifBlank { Env.str(R.string.common_apps) }, desc = Env.str(R.string.item_folder_title))
 
     override val menu: @Composable (ItemConfig, MenuHost) -> Unit = { item, host ->
         val apps = Apps.parse(item.opt("apps", ""))
-        MenuCard(Sym.GRID_VIEW, item.opt("label", stringResource(R.string.common_apps))) {
+        val fallback = stringResource(R.string.common_apps)
+        MenuCard(Sym.GRID_VIEW, label.of(item).ifBlank { fallback }) {
             if (apps.isEmpty()) Text(stringResource(R.string.folder_no_apps), style = MaterialTheme.typography.bodyMedium)
             TileGrid {
                 apps.forEach { cn ->
@@ -370,8 +465,8 @@ object FolderItem : ItemType("folder", R.string.item_folder_title, Sym.GRID_VIEW
 
     override val options: @Composable (ItemConfig, (ItemConfig) -> Unit) -> Unit = { item, set ->
         // The default name is the placeholder, not the text: emptied, the field stays empty while it is typed in.
-        TextRow(stringResource(R.string.folder_name), item.opt("label", ""), placeholder = stringResource(R.string.common_apps), maxLength = 16) {
-            set(item.with("label", it.take(16).ifBlank { null }))
+        TextRow(stringResource(R.string.folder_name), label.of(item), placeholder = stringResource(R.string.common_apps), maxLength = 16) {
+            set(label.set(item, it))
         }
         AppPicker(Apps.parse(item.opt("apps", "")), multi = true) { list ->
             set(item.with("apps", list.joinToString(",") { it.flattenToString() }.ifBlank { null }))
@@ -380,9 +475,13 @@ object FolderItem : ItemType("folder", R.string.item_folder_title, Sym.GRID_VIEW
 }
 
 object TextItem : ItemType("text", R.string.item_text_title, Sym.TEXT_FIELDS, R.string.item_text_desc) {
+    override val group = ItemGroup.TOOLS
+    /** The words, which a user may empty on purpose: then the item is just its icon. */
+    private val text = Opt.text("text", 40, clearedIsUnset = false)
+    private fun words(item: ItemConfig) = text.stored(item) ?: Env.str(R.string.text_default)
     override fun state(item: ItemConfig) = ItemState(
         icon = item.options["icon"]?.let { iconChoices.toMap()[it] },
-        text = item.opt("text", Env.str(R.string.text_default)), desc = item.opt("text", Env.str(R.string.text_default)),
+        text = words(item), desc = words(item),
     )
 
     val iconChoices = listOf("none" to "", "star" to Sym.STAR, "heart" to Sym.FAVORITE, "bookmark" to Sym.BOOKMARK,
@@ -400,8 +499,8 @@ object TextItem : ItemType("text", R.string.item_text_title, Sym.TEXT_FIELDS, R.
     }
 
     override val options: @Composable (ItemConfig, (ItemConfig) -> Unit) -> Unit = { item, set ->
-        TextRow(stringResource(R.string.text_text), item.opt("text", stringResource(R.string.text_default)), help = stringResource(R.string.text_text_help), maxLength = 40) {
-            set(item.with("text", it.take(40)))
+        TextRow(stringResource(R.string.text_text), text.stored(item) ?: stringResource(R.string.text_default), help = stringResource(R.string.text_text_help), maxLength = 40) {
+            set(text.set(item, it))
         }
         ChoiceRow(stringResource(R.string.text_icon), iconChoices.map { it.first to stringResource(iconNames.getValue(it.first)) },
             item.opt("icon", "none")) { set(item.with("icon", if (it == "none") null else it)) }
@@ -413,15 +512,21 @@ object TextItem : ItemType("text", R.string.item_text_title, Sym.TEXT_FIELDS, R.
     override fun defaultOptions() = mapOf("text" to Env.str(R.string.text_default))
 }
 
-object SpacerItem : ItemType("spacer", R.string.item_spacer_title, Sym.SPACE_BAR, R.string.item_spacer_desc) {
+object SpacerItem : ItemType(SpacerItem.TYPE, R.string.item_spacer_title, Sym.SPACE_BAR, R.string.item_spacer_desc) {
+    /** Its name in a layout, and what the strip tells a spacer by ([com.meridian11.books.bentobar.bar.StripContent]). */
+    const val TYPE = "spacer"
+    // Drawn as a gap whatever it is set to show as: neither the settings nor its right-click menu offer "Show as".
+    override val iconOnly = true
+    override val group = ItemGroup.TOOLS
     override val refreshMs = 60_000L
 
-    override fun state(item: ItemConfig) = ItemState(gapDp = item.optInt("width", 12), divider = item.optBool("line", false), desc = Env.str(R.string.spacer_desc))
+    override fun state(item: ItemConfig) = ItemState(gapDp = item.spacerWidthDp, divider = item.optBool("line", false), desc = Env.str(R.string.spacer_desc))
 
     override fun onClick(item: ItemConfig) = true
 
     override val options: @Composable (ItemConfig, (ItemConfig) -> Unit) -> Unit = { item, set ->
-        SliderRow(stringResource(R.string.spacer_width), item.optInt("width", 12), 4..64, { "$it dp" }) { set(item.with("width", it.toString())) }
+        val res = androidx.compose.ui.platform.LocalResources.current
+        SliderRow(stringResource(R.string.spacer_width), item.spacerWidthDp, SPACER_DP, { res.getString(R.string.common_dp, it) }) { set(item.with("width", it.toString())) }
         SwitchRow(stringResource(R.string.spacer_line), item.optBool("line", false)) { set(item.with("line", it.toString())) }
     }
 }

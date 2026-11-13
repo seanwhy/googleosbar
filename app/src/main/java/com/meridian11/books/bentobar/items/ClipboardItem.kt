@@ -1,8 +1,7 @@
 package com.meridian11.books.bentobar.items
 
+import android.content.ClipDescription
 import android.content.ClipboardManager
-import android.os.Bundle
-import android.view.accessibility.AccessibilityNodeInfo
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxWidth
@@ -36,7 +35,6 @@ import com.meridian11.books.bentobar.ui.MenuNote
 import com.meridian11.books.bentobar.ui.SearchField
 import com.meridian11.books.bentobar.ui.SectionLabel
 import com.meridian11.books.bentobar.ui.SmallIconButton
-import com.meridian11.books.bentobar.ui.SwitchRow
 import com.meridian11.books.bentobar.ui.rememberTick
 import com.meridian11.books.bentobar.util.Sym
 import com.meridian11.books.bentobar.util.SymIcon
@@ -45,12 +43,12 @@ import kotlinx.coroutines.flow.MutableStateFlow
 
 /**
  * Clipboard and scratchpad: pinned snippets kept with the item and recent plain-text copies captured
- * in memory while this menu or settings window is open. Clicking an entry copies it and, when
- * "Paste into active field on click" is on, pastes it into the focused input field after the menu closes.
+ * in memory while this menu or settings window is open. Clicking an entry copies it.
  *
  * What someone copies or pins is their own business ([discreet]): no snippet text is ever logged.
  */
 object ClipboardItem : ItemType("clipboard", R.string.item_clipboard_title, Sym.CONTENT_PASTE, R.string.item_clipboard_desc) {
+    override val group = ItemGroup.TOOLS
     override val menuWidthDp = 340
     override val canBeActive = true
     override val discreet = true
@@ -69,12 +67,13 @@ object ClipboardItem : ItemType("clipboard", R.string.item_clipboard_title, Sym.
     internal fun readPrimaryClip() {
         if (staged != null) return
         val cm = clipboard() ?: return
+        // The clip's own text only: nothing is opened on the main thread to read what a copied file or link holds.
         val text = runCatching {
-            val clip = cm.primaryClip
-            if (clip != null && clip.itemCount > 0) clip.getItemAt(0)?.coerceToText(Env.app)?.toString() else null
+            val clip = cm.primaryClip?.takeIf { it.itemCount > 0 } ?: return@runCatching null
+            val sensitive = clip.description.extras?.getBoolean(ClipDescription.EXTRA_IS_SENSITIVE) == true
+            ClipboardRules.recentText(clip.getItemAt(0)?.text, sensitive)
         }.getOrNull()
-        // Never record a BentoBar settings export blob as a snippet.
-        if (text != null && !text.trimStart().startsWith("""{"version":""")) {
+        if (text != null) {
             val next = ClipboardRules.recordRecent(recent.value, text)
             if (next != recent.value) {
                 recent.value = next
@@ -112,26 +111,12 @@ object ClipboardItem : ItemType("clipboard", R.string.item_clipboard_title, Sym.
             desc = bar.desc, tooltip = bar.tooltip, textLimit = ClipboardRules.BAR_CHARS)
     }
 
-    /** Copies [snippet] and, when [paste] is true, pastes into the focused input node after the popup closes. */
-    internal fun pick(snippet: String, paste: Boolean, host: MenuHost) {
+    /** Puts [snippet] on the clipboard and closes the popup. */
+    internal fun pick(snippet: String, host: MenuHost) {
         Env.copy(snippet)
         recent.value = ClipboardRules.recordRecent(recent.value, snippet)
         Ticker.refresh(type)
-        if (paste) {
-            host.afterClose {
-                runCatching {
-                    val node = Env.service?.findFocus(AccessibilityNodeInfo.FOCUS_INPUT)
-                    if (node != null) {
-                        if (!node.performAction(AccessibilityNodeInfo.ACTION_PASTE)) {
-                            val args = Bundle().apply { putCharSequence(AccessibilityNodeInfo.ACTION_ARGUMENT_SET_TEXT_CHARSEQUENCE, snippet) }
-                            node.performAction(AccessibilityNodeInfo.ACTION_SET_TEXT, args)
-                        }
-                    }
-                }
-            }
-        } else {
-            host.close()
-        }
+        host.close()
     }
 
     override val menu: @Composable (ItemConfig, MenuHost) -> Unit = { item, host ->
@@ -146,7 +131,6 @@ object ClipboardItem : ItemType("clipboard", R.string.item_clipboard_title, Sym.
         val pins = remember(item) { ClipboardRules.pins(item) }
         val unpinned = ClipboardRules.unpinnedRecent(staged ?: recents, pins)
         val total = pins.size + unpinned.size
-        val paste = item.optBool("pasteOnClick", false)
         MenuCard(
             Sym.CONTENT_PASTE,
             stringResource(R.string.item_clipboard_title),
@@ -164,7 +148,7 @@ object ClipboardItem : ItemType("clipboard", R.string.item_clipboard_title, Sym.
                                 Store.updateItem(item.id) { ClipboardRules.removePin(it, snippet) }
                             }
                         },
-                    ) { pick(snippet, paste, host) }
+                    ) { pick(snippet, host) }
                 }
             }
             if (unpinned.isNotEmpty()) {
@@ -174,14 +158,14 @@ object ClipboardItem : ItemType("clipboard", R.string.item_clipboard_title, Sym.
                     MenuEntry(
                         icon = Sym.CONTENT_COPY,
                         label = line,
-                        trailing = if (pins.size < ClipboardRules.MOST_PINS) {
+                        trailing = if (pins.size < ClipboardRules.MOST_PINS && ClipboardRules.pinsWhole(snippet)) {
                             {
                                 SmallIconButton(Sym.PUSH_PIN, stringResource(R.string.clipboard_pin)) {
                                     Store.updateItem(item.id) { ClipboardRules.addPin(it, snippet) }
                                 }
                             }
                         } else null,
-                    ) { pick(snippet, paste, host) }
+                    ) { pick(snippet, host) }
                 }
             }
             MenuNote(stringResource(R.string.clipboard_note))
@@ -202,11 +186,6 @@ object ClipboardItem : ItemType("clipboard", R.string.item_clipboard_title, Sym.
             listOf("preview" to stringResource(R.string.clipboard_bar_preview), "count" to stringResource(R.string.clipboard_bar_count)),
             item.opt("bar", "preview"),
         ) { set(item.with("bar", it.takeIf { v -> v != "preview" })) }
-        SwitchRow(
-            stringResource(R.string.clipboard_paste_on_click),
-            item.optBool("pasteOnClick", false),
-            help = stringResource(R.string.clipboard_paste_on_click_help),
-        ) { set(item.with("pasteOnClick", if (it) "true" else null)) }
 
         key(item.id) {
             Column(Modifier.fillMaxWidth().padding(vertical = 6.dp)) {
@@ -238,6 +217,8 @@ object ClipboardItem : ItemType("clipboard", R.string.item_clipboard_title, Sym.
         }
     }
 
+    override val stages = listOf("stage sample", "stage empty")
+
     override fun debug(args: List<String>): String? = when (args.firstOrNull()) {
         null -> "staged=${staged != null} recent=${recent.value.size}"
         "stage" -> when (args.getOrNull(1)) {
@@ -251,7 +232,7 @@ object ClipboardItem : ItemType("clipboard", R.string.item_clipboard_title, Sym.
                 Ticker.refresh(type)
                 "staged empty clipboard"
             }
-            else -> "clipboard stage sample|empty"
+            else -> null
         }
         "off" -> {
             staged = null

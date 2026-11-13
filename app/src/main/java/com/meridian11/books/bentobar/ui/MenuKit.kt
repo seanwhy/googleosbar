@@ -1,5 +1,6 @@
 package com.meridian11.books.bentobar.ui
 
+import android.text.format.DateFormat
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
@@ -30,6 +31,7 @@ import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material3.FilledTonalButton
 import androidx.compose.material3.FilledTonalIconButton
 import androidx.compose.material3.HorizontalDivider
+import androidx.compose.material3.IconButton
 import androidx.compose.material3.LocalContentColor
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedTextField
@@ -55,10 +57,15 @@ import androidx.compose.ui.input.key.KeyEventType
 import androidx.compose.ui.input.key.key
 import androidx.compose.ui.input.key.onPreviewKeyEvent
 import androidx.compose.ui.input.key.type
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.stringResource
 import androidx.compose.foundation.selection.selectable
+import androidx.compose.foundation.selection.toggleable
 import androidx.compose.ui.semantics.LiveRegionMode
+import androidx.compose.ui.layout.layout
 import androidx.compose.ui.semantics.Role
+import androidx.compose.ui.semantics.clearAndSetSemantics
+import androidx.compose.ui.semantics.heading
 import androidx.compose.ui.semantics.liveRegion
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.TextRange
@@ -75,15 +82,19 @@ import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.graphics.drawscope.clipRect
 import androidx.compose.ui.input.pointer.PointerIcon
 import androidx.compose.ui.input.pointer.pointerHoverIcon
+import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.meridian11.books.bentobar.R
 import com.meridian11.books.bentobar.items.Env
+import com.meridian11.books.bentobar.items.Failure
+import com.meridian11.books.bentobar.util.Dates
 import com.meridian11.books.bentobar.util.Sym
 import com.meridian11.books.bentobar.util.SymIcon
 import kotlinx.coroutines.delay
+import java.time.ZoneId
 
 /** The frame every drop-down menu shares: a header with icon and title, then content. */
 @Composable
@@ -113,7 +124,7 @@ fun MenuCard(
             Spacer(Modifier.width(10.dp))
             Column(Modifier.weight(1f)) {
                 Text(title, style = MaterialTheme.typography.titleMedium, maxLines = 1, overflow = TextOverflow.Ellipsis,
-                    modifier = Modifier.fadeIn(20f))
+                    modifier = Modifier.fadeIn(20f).semantics { heading() })
                 if (subtitle != null) Text(subtitle, style = MaterialTheme.typography.bodySmall,
                     color = subtitleColor, maxLines = 2, overflow = TextOverflow.Ellipsis, modifier = Modifier.fadeIn(36f))
             }
@@ -142,6 +153,17 @@ fun InfoRow(label: String, value: String, valueColor: Color = MaterialTheme.colo
 fun MenuNote(text: String) = Text(text, style = MaterialTheme.typography.bodySmall,
     color = MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.padding(vertical = 2.dp))
 
+/** "updated 2:40 PM", or what the last try came to beside that time: the end of an online item's menu. In the device's own time, as the system writes it. */
+@Composable
+fun updatedNote(fetchedAt: Long, failure: Failure?): String {
+    val clock = Dates.format(Dates.timeSkeleton(DateFormat.is24HourFormat(LocalContext.current)), fetchedAt, ZoneId.systemDefault())
+    return stringResource(when (failure) {
+        null -> R.string.common_updated
+        Failure.OFFLINE -> R.string.common_updated_offline
+        else -> R.string.common_updated_no_answer
+    }, clock)
+}
+
 /** The line under a search field ("Searching…", "Nothing found"): read out when it changes, without taking the focus. */
 @Composable
 fun SearchStatus(text: String) = Box(Modifier.semantics { liveRegion = LiveRegionMode.Polite }) { MenuNote(text) }
@@ -158,7 +180,7 @@ fun SectionLabel(text: String) = Text(text.uppercase(), style = MaterialTheme.ty
     // On glass halfway to the text's colour: the accent alone fell to 2:1 over a dark window behind (visual.md §5).
     color = if (LocalMenuGlass.current?.blur == true) androidx.compose.ui.graphics.lerp(MaterialTheme.colorScheme.primary,
         MaterialTheme.colorScheme.onSurface, 0.5f) else MaterialTheme.colorScheme.primary,
-    modifier = Modifier.padding(top = 4.dp, bottom = 6.dp))
+    modifier = Modifier.padding(top = 4.dp, bottom = 6.dp).semantics { heading() })
 
 /** A small line chart of recent values, filled underneath. Two series share one scale. */
 @Composable
@@ -209,11 +231,12 @@ fun Sparkline(
  * A full-width row button, like a desktop menu entry. [sub]: a second, quieter line under the label
  * (a place's region); the row is then at least 48 dp high. [image]: a picture, 20 dp, in the
  * symbol's place (an app's icon). [trailing]: one control of its own at the row's end (a × to remove
- * a city, a player's play button), which takes its own clicks.
+ * a city, a player's play button), which takes its own clicks. [checked]: the entry is an on/off rule, and says so to a screen
+ * reader ([detail], the mark that shows it to the eye, is then not read out as well). Null: a plain entry.
  */
 @Composable
 fun MenuEntry(icon: String, label: String, detail: String? = null, enabled: Boolean = true, modifier: Modifier = Modifier,
-              sub: String? = null, image: ImageBitmap? = null, trailing: (@Composable () -> Unit)? = null, onClick: () -> Unit) {
+              sub: String? = null, image: ImageBitmap? = null, trailing: (@Composable () -> Unit)? = null, checked: Boolean? = null, onClick: () -> Unit) {
     val source = remember { MutableInteractionSource() }
     val hovered by source.collectIsHoveredAsState()
     val focused by source.collectIsFocusedAsState()
@@ -225,7 +248,8 @@ fun MenuEntry(icon: String, label: String, detail: String? = null, enabled: Bool
             // An Enter that is being held when the focus arrives here (a search's results come in and the
             // first takes the focus) is not this entry's: its repeats are swallowed, so its release presses nothing.
             .onPreviewKeyEvent { e -> (e.key == Key.Enter || e.key == Key.NumPadEnter) && e.type == KeyEventType.KeyDown && e.nativeKeyEvent.repeatCount > 0 }
-            .clickable(enabled = enabled, interactionSource = source, indication = null, onClick = onClick)
+            .then(if (checked == null) Modifier.clickable(enabled = enabled, interactionSource = source, indication = null, onClick = onClick)
+                else Modifier.toggleable(value = checked, enabled = enabled, interactionSource = source, indication = null, role = Role.Checkbox, onValueChange = { onClick() }))
             .pointerHoverIcon(PointerIcon.Hand)
             .padding(horizontal = 8.dp, vertical = 6.dp),
         verticalAlignment = Alignment.CenterVertically,
@@ -241,8 +265,10 @@ fun MenuEntry(icon: String, label: String, detail: String? = null, enabled: Bool
             Text(sub, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant,
                 maxLines = 1, overflow = TextOverflow.Ellipsis)
         }
-        if (detail != null) Text(detail, style = MaterialTheme.typography.bodySmall,
-            color = MaterialTheme.colorScheme.onSurfaceVariant, maxLines = 1, modifier = Modifier.fadeIn(36f))
+        // At most half the row: a long detail would otherwise squeeze the label away; a short one takes only its own width.
+        if (detail != null) Text(detail, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant, maxLines = 1,
+            overflow = TextOverflow.Ellipsis, modifier = Modifier.layout { m, c -> val p = m.measure(c.copy(maxWidth = c.maxWidth / 2)); layout(p.width, p.height) { p.place(0, 0) } }
+                .fadeIn(36f).then(if (checked != null) Modifier.clearAndSetSemantics { } else Modifier))
         if (trailing != null) Box(Modifier.fadeIn(36f)) { trailing() }
     }
 }
@@ -253,10 +279,13 @@ fun MenuEntry(icon: String, label: String, detail: String? = null, enabled: Bool
  */
 @Composable
 fun SmallIconButton(sym: String, label: String, color: Color = LocalContentColor.current, enabled: Boolean = true, onClick: () -> Unit) {
-    Box(Modifier.minimumInteractiveComponentSize().clickable(enabled = enabled, role = Role.Button, onClick = onClick)
+    val source = remember { MutableInteractionSource() }
+    val focused by source.collectIsFocusedAsState()
+    Box(Modifier.minimumInteractiveComponentSize().clickable(interactionSource = source, indication = androidx.compose.foundation.LocalIndication.current,
+        enabled = enabled, role = Role.Button, onClick = onClick)
         .then(if (enabled) Modifier.pointerHoverIcon(PointerIcon.Hand) else Modifier),
         contentAlignment = Alignment.Center) {
-        Box(Modifier.size(28.dp).clip(CircleShape), contentAlignment = Alignment.Center) {
+        Box(Modifier.size(28.dp).focusRing(focused, CircleShape).clip(CircleShape), contentAlignment = Alignment.Center) {
             SymIcon(sym, size = 18.sp, contentDescription = label, color = if (enabled) color else color.copy(alpha = 0.38f))
         }
     }
@@ -342,6 +371,71 @@ fun SearchField(label: String, placeholder: String = "", initial: String = "", s
     }
 }
 
+/**
+ * The card of an online item whose service is switched off: what it is ([title]) and why ([subtitle]), the service's own
+ * words on what going online means ([consent]), and the way back on ([turnOn]). Each service's not-set-up card stays its own.
+ */
+@Composable
+fun OffGate(icon: String, title: String, subtitle: String, consent: String, turnOn: String, onTurnOn: () -> Unit) {
+    MenuCard(icon, title, subtitle) {
+        MenuNote(consent)
+        MenuEntry(Sym.TOGGLE_ON, turnOn, onClick = onTurnOn)
+    }
+}
+
+/** The two focus places of a search with results: the field, and the first result that can be taken. */
+class SearchFocus(val field: FocusRequester, val first: FocusRequester) {
+    fun toField() { runCatching { field.requestFocus() } }
+    fun toFirst() { runCatching { first.requestFocus() } }
+}
+
+/**
+ * A search field and what it found, with the keyboard's way between them, made once: when results arrive ([hasResults],
+ * looked at each time [arrival] changes) the focus moves to the first that can be taken, so Enter, Enter is search and take; Down
+ * from the field goes there and Up from there comes back. [field] draws the field with [SearchFocus.field]; [results] draws the
+ * rest, passing `firstResult` as the modifier of that first entry.
+ */
+@Composable
+fun SearchWithResults(hasResults: Boolean, arrival: Any?, field: @Composable SearchFocus.() -> Unit, results: @Composable SearchFocus.(firstResult: Modifier) -> Unit) {
+    val focus = remember { SearchFocus(FocusRequester(), FocusRequester()) }
+    LaunchedEffect(arrival) { if (hasResults) focus.toFirst() }
+    Box(Modifier.onPreviewKeyEvent { e ->
+        if (!hasResults || e.key != Key.DirectionDown) false
+        else { if (e.type == KeyEventType.KeyDown) focus.toFirst(); true }
+    }) { focus.field() }
+    focus.results(Modifier.focusRequester(focus.first).onPreviewKeyEvent { e ->
+        if (e.key != Key.DirectionUp) false else { if (e.type == KeyEventType.KeyDown) focus.toField(); true }
+    })
+}
+
+/**
+ * One row of a list the user orders: its title and, if any, a quieter line under it, then Up, Down and Remove. [first] and
+ * [last]: the ends of the list, where the arrow that leads nowhere is dimmed. The list itself, and what a press does, are the caller's.
+ */
+@Composable
+fun OrderedListRow(title: String, sub: String? = null, upLabel: String, downLabel: String, removeLabel: String, first: Boolean, last: Boolean, minHeight: androidx.compose.ui.unit.Dp = 48.dp,
+                   onUp: () -> Unit, onDown: () -> Unit, onRemove: () -> Unit) {
+    Row(Modifier.fillMaxWidth().heightIn(min = minHeight).padding(vertical = 2.dp), verticalAlignment = Alignment.CenterVertically) {
+        Column(Modifier.weight(1f)) {
+            Text(title, style = MaterialTheme.typography.bodyLarge, fontWeight = FontWeight.Medium, maxLines = 1)
+            if (sub != null) Text(sub, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant,
+                maxLines = 1, overflow = TextOverflow.Ellipsis)
+        }
+        IconButton(onClick = onUp, enabled = !first, modifier = Modifier.semantics { contentDescription = upLabel }) { SymIcon(Sym.ARROW_UPWARD) }
+        IconButton(onClick = onDown, enabled = !last, modifier = Modifier.semantics { contentDescription = downLabel }) { SymIcon(Sym.ARROW_DOWNWARD) }
+        IconButton(onClick = onRemove, modifier = Modifier.semantics { contentDescription = removeLabel }) { SymIcon(Sym.CLOSE) }
+    }
+}
+
+/** How long each of several values shows in the bar, as a row of choices of seconds ("3 s", "5 s") and, from a minute, minutes. */
+@Composable
+fun TurnChooser(label: String, help: String, choices: List<Int>, selected: Int, onChoose: (Int) -> Unit) {
+    val res = LocalContext.current.resources
+    ChoiceRow(label, choices.map { sec ->
+        sec to if (sec % 60 == 0) res.getQuantityString(R.plurals.common_minutes_short, sec / 60, sec / 60) else res.getQuantityString(R.plurals.common_seconds_short, sec, sec)
+    }, selected, help = help, onSelect = onChoose)
+}
+
 /** An entry that puts [text] on the clipboard and reads "Copied", with a check, for two seconds; no toast. */
 @Composable
 fun CopyEntry(label: String, icon: String = Sym.CONTENT_COPY, text: () -> String) {
@@ -412,16 +506,19 @@ fun ChipRow(labels: List<String>, selected: Int? = null, onClick: (Int) -> Unit)
             val hovered by source.collectIsHoveredAsState()
             val focused by source.collectIsFocusedAsState()
             val chosen = selected == i
-            Text(if (chosen) "✓ $l" else l, style = MaterialTheme.typography.labelLarge,
-                color = MaterialTheme.colorScheme.onSecondaryContainer,
-                modifier = popIn.heightIn(min = 32.dp).focusRing(focused, RoundedCornerShape(50)).clip(RoundedCornerShape(50))
+            Row(popIn.heightIn(min = 32.dp).focusRing(focused, RoundedCornerShape(50)).clip(RoundedCornerShape(50))
                     .background(if (hovered) MaterialTheme.colorScheme.secondaryContainer.copy(alpha = 0.8f)
                         else MaterialTheme.colorScheme.secondaryContainer)
                     .hoverable(source)
                     .then(if (selected == null) Modifier.clickable(interactionSource = source, indication = null) { onClick(i) }
                         else Modifier.selectable(selected = chosen, interactionSource = source, indication = null, role = Role.RadioButton) { onClick(i) })
                     .pointerHoverIcon(PointerIcon.Hand)
-                    .padding(horizontal = 12.dp, vertical = 6.dp))
+                    .padding(horizontal = 12.dp, vertical = 6.dp),
+                verticalAlignment = Alignment.CenterVertically) {
+                // The mark is for the eye: a screen reader hears "selected" from the role, and "check mark" on top of it was noise.
+                if (chosen) Text("✓ ", style = MaterialTheme.typography.labelLarge, color = MaterialTheme.colorScheme.onSecondaryContainer, modifier = Modifier.clearAndSetSemantics { })
+                Text(l, style = MaterialTheme.typography.labelLarge, color = MaterialTheme.colorScheme.onSecondaryContainer)
+            }
         }
     }
 }

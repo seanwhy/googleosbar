@@ -142,6 +142,10 @@ object FlightSamples {
         "few" to { t, _ -> t.copy(left = 12) },
     )
 
+    /** Each state `flight show` can stage: a flight on every look, one flight after each way its last ask can go, each failure, the ones to choose from. */
+    val stages: List<String> get() = flights.keys.map { "show $it" } + turns.keys.map { "show air $it" } + failures.keys.map { "show $it" } +
+        listOf("looking", "none", "no-key").map { "show $it" } + several.keys.map { "show $it" } + several.keys.map { "show $it 1" }
+
     /** Every name `flight show` takes, what may follow a flight's, and what may follow where several are to choose from. */
     val names: String get() = (flights.keys + failures.keys + listOf("looking", "none", "no-key") + several.keys).joinToString(" ") + " | after a flight: " + turns.keys.joinToString(" ") +
         " | after " + several.keys.joinToString(" or ") + ": 1 2 3"

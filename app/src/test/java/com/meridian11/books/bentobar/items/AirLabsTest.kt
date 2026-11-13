@@ -48,21 +48,21 @@ class AirLabsTest {
         }
     }
 
-    private fun lookup(n: FlightNumber, now: Instant, day: LocalDate? = null, get: (Request) -> Reply): AirLabs.Answer = AirLabs.lookup(n, day, "k", now, get = get)!!
+    private fun lookup(n: FlightNumber, now: Instant, day: LocalDate? = null, get: (Request) -> Reply): AirLabs.Answer = AirLabs.lookup(n, day, now, get = get)!!
     private fun ok(text: String): (Request) -> Reply = { Reply.Ok(text) }
 
     private val none = """{"response":[]}"""
 
     @Test fun theRequestsNameTheHostThePathAndTwoThingsToSend() {
         fun said(r: Request) = Triple(r.host, r.path, r.query)
-        assertEquals(Triple(Host.AIRLABS, "/api/v9/flight", listOf("flight_iata" to "LH455", "api_key" to "k")), said(AirLabs.request(AirLabs.FLIGHT, lh455, "k")))
+        assertEquals(Triple(Host.AIRLABS, "/api/v9/flight", listOf("flight_iata" to "LH455")), said(AirLabs.request(AirLabs.FLIGHT, lh455)))
         // A callsign is asked for as one, and a key loses the space or line end it was pasted with.
-        assertEquals(Triple(Host.AIRLABS, "/api/v9/flight", listOf("flight_icao" to "DLH455", "api_key" to "k")), said(AirLabs.request(AirLabs.FLIGHT, FlightNumber("DLH", 455), " k\n")))
-        assertEquals(Triple(Host.AIRLABS, "/api/v9/schedules", listOf("flight_iata" to "LH455", "api_key" to "k")), said(AirLabs.request(AirLabs.SCHEDULES, lh455, "k")))
+        assertEquals(Triple(Host.AIRLABS, "/api/v9/flight", listOf("flight_icao" to "DLH455")), said(AirLabs.request(AirLabs.FLIGHT, FlightNumber("DLH", 455))))
+        assertEquals(Triple(Host.AIRLABS, "/api/v9/schedules", listOf("flight_iata" to "LH455")), said(AirLabs.request(AirLabs.SCHEDULES, lh455)))
         // The key goes as it is: the transport encodes what it sends.
-        assertEquals(Triple(Host.AIRLABS, "/api/v9/routes", listOf("flight_iata" to "LH455", "api_key" to "a&b")), said(AirLabs.request(AirLabs.ROUTES, lh455, "a&b")))
+        assertEquals(Triple(Host.AIRLABS, "/api/v9/routes", listOf("flight_iata" to "LH455")), said(AirLabs.request(AirLabs.ROUTES, lh455)))
         // And a request says nothing of either when it is printed.
-        assertEquals("airlabs.co/api/v9/flight", AirLabs.request(AirLabs.FLIGHT, lh455, "test-key").toString())
+        assertEquals("airlabs.co/api/v9/flight", AirLabs.request(AirLabs.FLIGHT, lh455).toString())
     }
 
     @Test fun aFlightInTheAir() {
@@ -388,18 +388,18 @@ class AirLabsTest {
         val lh454 = FlightNumber("LH", 454)
         val today = LocalDate.of(2026, 10, 1)
         val s = Service(mapOf("flight" to reply("flight-LH454-planned"), "routes" to none))
-        val a = AirLabs.lookup(lh454, today, "k", now, honolulu, s::get)!!
+        val a = AirLabs.lookup(lh454, today, now, honolulu, s::get)!!
         // "Today" there is that flight, not the one that left Frankfurt 23 hours ago.
         assertEquals(listOf("flight"), s.asked)
         assertEquals(time("2026-10-02T10:25"), a.flight!!.from.planned)
         assertFalse(a.flight.timetable)
         // A day that is the airport's own (what is kept of a followed flight) is read as that: no device's zone, no match.
         val kept = Service(mapOf("flight" to reply("flight-LH454-planned"), "routes" to none))
-        assertEquals(Failure.NOT_THAT_DAY, AirLabs.lookup(lh454, today, "k", now, null, kept::get)!!.failure)
+        assertEquals(Failure.NOT_THAT_DAY, AirLabs.lookup(lh454, today, now, null, kept::get)!!.failure)
         // "Tomorrow" in Honolulu is not that flight, though the 2nd is its date on the departure board: the timetable is asked
         // for the one that leaves on the 2nd by Honolulu's clock (and is not to be had here).
         val there = Service(mapOf("flight" to reply("flight-LH454-planned")))
-        assertEquals(Failure.OFFLINE, AirLabs.lookup(lh454, LocalDate.of(2026, 10, 2), "k", now, honolulu, there::get)!!.failure)
+        assertEquals(Failure.OFFLINE, AirLabs.lookup(lh454, LocalDate.of(2026, 10, 2), now, honolulu, there::get)!!.failure)
         assertEquals(listOf("flight", "routes"), there.asked)
     }
 
@@ -416,14 +416,14 @@ class AirLabsTest {
         fun service() = Service(mapOf("flight" to live, "routes" to table))
         // "Today" is that flight: one request.
         val today = service()
-        val a = AirLabs.lookup(jl2, LocalDate.of(2026, 10, 5), "k", now, la, today::get)!!.flight!!
+        val a = AirLabs.lookup(jl2, LocalDate.of(2026, 10, 5), now, la, today::get)!!.flight!!
         assertEquals(listOf("flight"), today.asked)
         assertEquals(time("2026-10-06T13:00"), a.from.planned)
         assertFalse(a.timetable)
         // "Tomorrow" is not that flight, though the 6th is its date in Tokyo. It is the one that leaves on the 6th by this
         // device's clock: 1 PM on the 7th in Tokyo, from the timetable.
         val tomorrow = service()
-        val b = AirLabs.lookup(jl2, LocalDate.of(2026, 10, 6), "k", now, la, tomorrow::get)!!.flight!!
+        val b = AirLabs.lookup(jl2, LocalDate.of(2026, 10, 6), now, la, tomorrow::get)!!.flight!!
         assertEquals(listOf("flight", "routes"), tomorrow.asked)
         assertTrue(b.timetable)
         assertEquals(time("2026-10-07T13:00"), b.from.planned)
@@ -431,13 +431,13 @@ class AirLabsTest {
         assertEquals("Tokyo", b.from.city)
         // The same when the service does not know the number and only the timetable does.
         val unknown = Service(mapOf("flight" to reply("error-not-found"), "routes" to table))
-        assertEquals(time("2026-10-07T13:00"), AirLabs.lookup(jl2, LocalDate.of(2026, 10, 6), "k", now, la, unknown::get)!!.flight!!.from.planned)
+        assertEquals(time("2026-10-07T13:00"), AirLabs.lookup(jl2, LocalDate.of(2026, 10, 6), now, la, unknown::get)!!.flight!!.from.planned)
         // A day that comes with no zone is the airport's own date (what is kept of a followed flight): the 6th is the live flight then,
         // and the timetable's 6th is Tokyo's.
         val kept = service()
-        assertFalse(AirLabs.lookup(jl2, LocalDate.of(2026, 10, 6), "k", now, null, kept::get)!!.flight!!.timetable)
+        assertFalse(AirLabs.lookup(jl2, LocalDate.of(2026, 10, 6), now, null, kept::get)!!.flight!!.timetable)
         assertEquals(listOf("flight"), kept.asked)
-        assertEquals(time("2026-10-07T13:00"), AirLabs.lookup(jl2, LocalDate.of(2026, 10, 7), "k", now, null, service()::get)!!.flight!!.from.planned)
+        assertEquals(time("2026-10-07T13:00"), AirLabs.lookup(jl2, LocalDate.of(2026, 10, 7), now, null, service()::get)!!.flight!!.from.planned)
 
         // Frankfurt, half past midnight on the 6th. A flight that left San Francisco twenty minutes ago, on the 5th there, left today here.
         val frankfurt = ZoneId.of("Europe/Berlin")
@@ -445,7 +445,7 @@ class AirLabsTest {
             "dep_time":"2026-10-05 15:10","dep_time_utc":"2026-10-05 22:10","dep_actual":"2026-10-05 15:10","dep_actual_utc":"2026-10-05 22:10",
             "arr_time":"2026-10-06 11:00","arr_time_utc":"2026-10-06 09:00"}}"""
         val s = Service(mapOf("flight" to gone))
-        val c = AirLabs.lookup(FlightNumber("UA", 926), LocalDate.of(2026, 10, 6), "k", at("2026-10-05T22:30:00Z"), frankfurt, s::get)!!.flight!!
+        val c = AirLabs.lookup(FlightNumber("UA", 926), LocalDate.of(2026, 10, 6), at("2026-10-05T22:30:00Z"), frankfurt, s::get)!!.flight!!
         assertEquals(FlightState.IN_AIR, c.state)
         assertEquals(listOf("flight"), s.asked)
     }
@@ -505,7 +505,7 @@ class AirLabsTest {
         assertEquals(FlightState.LANDED, a.flight!!.state)
         assertEquals(listOf(AirLabs.FLIGHT to ("flight_icao" to "JAL101"), AirLabs.SCHEDULES to ("flight_iata" to "JL101"), AirLabs.ROUTES to ("flight_iata" to "JL101")),
             asked.map { it.path to it.query.first() })
-        for (r in asked) assertEquals(listOf(r.query.first().first, "api_key"), r.query.map { it.first })
+        for (r in asked) assertEquals(listOf(r.query.first().first), r.query.map { it.first })
         // A number the service does not know has no ticket form to go by: its timetable is asked for as it was entered.
         asked.clear()
         lookup(FlightNumber("JAL", 9999), at("2026-10-02T07:28:00Z")) { r -> asked += r; Reply.Ok(if (r.path == AirLabs.FLIGHT) reply("error-not-found") else none) }
@@ -515,12 +515,12 @@ class AirLabsTest {
     @Test fun aRequestThatWasNotSentIsNoAnswerOfAnyKind() {
         // The switch went off or the bar hid under the lookup: nothing was asked, so there is nothing to say, not "no answer".
         val now = at("2026-10-02T07:29:00Z")
-        assertNull(AirLabs.lookup(lh455, null, "k", now) { Reply.Failed(Why.OFF) })
+        assertNull(AirLabs.lookup(lh455, null, now) { Reply.Failed(Why.OFF) })
         // Also when it happens at the second step: what the first one brought does not count either.
         var asked = 0
-        assertNull(AirLabs.lookup(FlightNumber("JL", 101), null, "k", now) { if (asked++ == 0) Reply.Ok(reply("flight-JL101-landed-nine-hours-ago")) else Reply.Failed(Why.OFF) })
+        assertNull(AirLabs.lookup(FlightNumber("JL", 101), null, now) { if (asked++ == 0) Reply.Ok(reply("flight-JL101-landed-nine-hours-ago")) else Reply.Failed(Why.OFF) })
         assertEquals(2, asked)
-        assertNull(AirLabs.again(lh455, "k", flight("flight-LH455-in-the-air"), now) { Reply.Failed(Why.OFF) })
+        assertNull(AirLabs.again(lh455, flight("flight-LH455-in-the-air"), now) { Reply.Failed(Why.OFF) })
         // Anything else that is no reply is "no answer", and no connection is itself.
         assertEquals(Failure.NO_ANSWER, lookup(lh455, now) { Reply.Failed(Why.STATUS, 502) }.failure)
         assertEquals(Failure.NO_ANSWER, lookup(lh455, now) { Reply.Failed(Why.TIMEOUT) }.failure)

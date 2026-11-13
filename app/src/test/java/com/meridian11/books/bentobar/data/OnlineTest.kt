@@ -129,6 +129,34 @@ class OnlineTest {
         assertFalse(Online.on(AIRLABS))
     }
 
+    @Test fun aFailedSaveAfterTurningOnKeepsEverySwitchAndKeyThatWereThere() {
+        Online.saveKey(AIRLABS, key)
+        File(dir, "online.json.part").mkdirs()
+        // The disk refuses the write of turning Weather on: the file as it was stays, and nothing else is lost.
+        assertTrue(Online.turnOn(OPEN_METEO))
+        assertTrue(Online.on(OPEN_METEO))
+        assertTrue(File(dir, "online.json").readText().contains(key))
+        assertFalse(File(dir, "online.json.part").exists())
+        restart()
+        assertEquals(key, Online.key(AIRLABS))
+        assertTrue(Online.hasKey(AIRLABS))
+    }
+
+    @Test fun aFailedSaveAfterSavingAKeyKeepsTheOtherKeys() {
+        Online.saveKey(AIRLABS, key)
+        File(dir, "online.json.part").mkdirs()
+        Online.saveKey(com.meridian11.books.bentobar.data.Online.Service.FINNHUB, "another-key-98765")
+        assertTrue(File(dir, "online.json").readText().contains(key))
+    }
+
+    @Test fun aFailedSaveAfterTurningOffStillForgetsTheFile() {
+        Online.saveKey(AIRLABS, key)
+        Online.turnOn(OPEN_METEO)
+        File(dir, "online.json.part").mkdirs()
+        Online.turnOff(AIRLABS)
+        assertFalse(File(dir, "online.json").exists())
+    }
+
     @Test fun aFileNobodyCanReadCountsAsNothingSetUp() {
         File(dir, "online.json").writeText("not json {")
         restart()

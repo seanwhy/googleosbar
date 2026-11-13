@@ -83,10 +83,4 @@
     <string name="stocks_desc_none">US stocks: none added</string>
     <string name="stocks_desc_loading">US stocks: loading</string>
     <string name="stocks_desc_no_prices">US stocks: no prices</string>
-
-    <!-- A choice of how long each stock shows: "3 s", "10 s". -->
-    <plurals name="stocks_seconds_short">
-        <item quantity="one">%1$d s</item>
-        <item quantity="other">%1$d s</item>
-    </plurals>
 </resources>

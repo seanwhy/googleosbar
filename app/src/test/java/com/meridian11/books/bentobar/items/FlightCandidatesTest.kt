@@ -60,7 +60,7 @@ class FlightCandidatesTest {
 
     /** What a press of Track comes to: for a day chip, a day of the device's in [zone]; with no day, the next flight. */
     private fun press(s: Service, day: LocalDate? = null, zone: ZoneId = la, now: Instant = evening, n: FlightNumber = ua1227): AirLabs.Candidates =
-        AirLabs.candidates(n, day, "k", now, zone.takeIf { day != null }, s::get)!!
+        AirLabs.candidates(n, day, now, zone.takeIf { day != null }, s::get)!!
 
     /** Each flight as its two airports and the time it leaves, at its own airport. */
     private fun legs(c: AirLabs.Candidates) = c.flights.map { "${it.from.code}-${it.to.code} ${it.from.time}" }
@@ -119,7 +119,7 @@ class FlightCandidatesTest {
         // San Francisco on the 6th. The service answers with the morning's flight from Orlando: not that one, so the
         // timetable's line from San Francisco, and no other.
         val s = thatEvening()
-        val third = AirLabs.lookup(ua1227, tuesday, "SFO", "k", evening, s::get)!!.flight!!
+        val third = AirLabs.lookup(ua1227, tuesday, "SFO", evening, s::get)!!.flight!!
         assertEquals(listOf("flight", "routes"), s.asked)
         assertEquals("SFO" to "PDX", third.from.code to third.to.code)
         assertEquals(time("2026-10-06T19:05"), third.from.planned)
@@ -127,64 +127,64 @@ class FlightCandidatesTest {
         assertTrue(third.timetable)
         assertEquals("United Airlines", third.airline)                 // the names are the ones the service gave for the number
         // Newark: the second, whose airport the service named as the first one's arrival.
-        val second = AirLabs.lookup(ua1227, tuesday, "EWR", "k", evening, thatEvening()::get)!!.flight!!
+        val second = AirLabs.lookup(ua1227, tuesday, "EWR", evening, thatEvening()::get)!!.flight!!
         assertEquals("EWR" to "SFO", second.from.code to second.to.code)
         assertEquals(time("2026-10-06T13:20"), second.from.planned)
         assertEquals(time("2026-10-06T16:19"), second.to.planned)      // 359 minutes later, on San Francisco's clock
         assertEquals("Newark" to "SFO", second.from.place to second.to.place)
         // Orlando: the service's own flight, with its gate, and one request.
         val o = thatEvening()
-        val first = AirLabs.lookup(ua1227, tuesday, "MCO", "k", evening, o::get)!!.flight!!
+        val first = AirLabs.lookup(ua1227, tuesday, "MCO", evening, o::get)!!.flight!!
         assertEquals(listOf("flight"), o.asked)
         assertFalse(first.timetable)
         assertEquals("48", first.from.gate)
         // With no airport named it is as it was before there was a choice: the service's flight, if that is its day.
-        assertEquals("MCO", AirLabs.lookup(ua1227, tuesday, null, "k", evening, thatEvening()::get)!!.flight!!.from.code)
-        assertEquals("MCO", AirLabs.lookup(ua1227, tuesday, "k", evening, get = thatEvening()::get)!!.flight!!.from.code)
+        assertEquals("MCO", AirLabs.lookup(ua1227, tuesday, null, evening, thatEvening()::get)!!.flight!!.from.code)
+        assertEquals("MCO", AirLabs.lookup(ua1227, tuesday, evening, get = thatEvening()::get)!!.flight!!.from.code)
     }
 
     @Test fun anAirportTheNumberDoesNotLeaveOnThatDayIsNoFlight() {
         // Raleigh on a Tuesday: its line flies on Mondays. And an airport the number never leaves.
-        assertEquals(Failure.NOT_THAT_DAY, AirLabs.lookup(ua1227, tuesday, "RDU", "k", evening, thatEvening()::get)!!.failure)
-        assertEquals(Failure.NOT_THAT_DAY, AirLabs.lookup(ua1227, tuesday, "LAX", "k", evening, thatEvening()::get)!!.failure)
-        val raleigh = AirLabs.lookup(ua1227, monday, "RDU", "k", evening, thatEvening()::get)!!.flight!!
+        assertEquals(Failure.NOT_THAT_DAY, AirLabs.lookup(ua1227, tuesday, "RDU", evening, thatEvening()::get)!!.failure)
+        assertEquals(Failure.NOT_THAT_DAY, AirLabs.lookup(ua1227, tuesday, "LAX", evening, thatEvening()::get)!!.failure)
+        val raleigh = AirLabs.lookup(ua1227, monday, "RDU", evening, thatEvening()::get)!!.flight!!
         assertEquals(time("2026-10-05T09:10"), raleigh.from.planned)
         assertEquals("RDU" to "Newark", raleigh.from.place to raleigh.to.place)
         // The timetable is not to be had: that is what went wrong, and the service's flight from another airport is no answer.
         val cut = service("flight" to flight)
-        val a = AirLabs.lookup(ua1227, tuesday, "SFO", "k", evening, cut::get)!!
+        val a = AirLabs.lookup(ua1227, tuesday, "SFO", evening, cut::get)!!
         assertNull(a.flight)
         assertEquals(Failure.OFFLINE, a.failure)
         assertEquals(listOf("flight", "routes"), cut.asked)
         // A number the service's one-flight question does not know: the timetable's line from that airport, with no names.
-        val bare = AirLabs.lookup(ua1227, tuesday, "SFO", "k", evening, service("flight" to unknown, "routes" to table)::get)!!.flight!!
+        val bare = AirLabs.lookup(ua1227, tuesday, "SFO", evening, service("flight" to unknown, "routes" to table)::get)!!.flight!!
         assertEquals("SFO" to "PDX", bare.from.place to bare.to.place)
         assertEquals("", bare.airline)
-        assertEquals(Failure.NOT_FOUND, AirLabs.lookup(ua1227, tuesday, "LAX", "k", evening, service("flight" to unknown, "routes" to table)::get)!!.failure)
+        assertEquals(Failure.NOT_FOUND, AirLabs.lookup(ua1227, tuesday, "LAX", evening, service("flight" to unknown, "routes" to table)::get)!!.failure)
     }
 
     @Test fun withAnAirportAndNoDayItIsThatAirportsNextFlight() {
         // (What is kept of a flight always has its day, unless the service named no time for it to leave.)
         // From Orlando: the service's flight, which has not left. One request.
         val o = thatEvening()
-        assertEquals("48", AirLabs.lookup(ua1227, null, "MCO", "k", evening, o::get)!!.flight!!.from.gate)
+        assertEquals("48", AirLabs.lookup(ua1227, null, "MCO", evening, o::get)!!.flight!!.from.gate)
         assertEquals(listOf("flight"), o.asked)
         // From San Francisco: not that flight. The coming hours have the one that landed there two hours ago, which is still "the next".
         val s = thatEvening()
-        val down = AirLabs.lookup(ua1227, null, "SFO", "k", evening, s::get)!!.flight!!
+        val down = AirLabs.lookup(ua1227, null, "SFO", evening, s::get)!!.flight!!
         assertEquals(listOf("flight", "schedules"), s.asked)
         assertEquals(FlightState.LANDED, down.state)
         assertEquals("SFO" to "PDX", down.from.code to down.to.code)
         // An hour later that one is over: the timetable's next from San Francisco, this evening's.
         val later = thatEvening()
-        val next = AirLabs.lookup(ua1227, null, "SFO", "k", at("2026-10-06T07:00:00Z"), later::get)!!.flight!!
+        val next = AirLabs.lookup(ua1227, null, "SFO", at("2026-10-06T07:00:00Z"), later::get)!!.flight!!
         assertEquals(listOf("flight", "schedules", "routes"), later.asked)
         assertTrue(next.timetable)
         assertEquals(time("2026-10-06T19:05"), next.from.planned)
         // From Newark, where nothing of the coming hours leaves: the timetable's too.
-        assertEquals(time("2026-10-06T13:20"), AirLabs.lookup(ua1227, null, "EWR", "k", evening, thatEvening()::get)!!.flight!!.from.planned)
+        assertEquals(time("2026-10-06T13:20"), AirLabs.lookup(ua1227, null, "EWR", evening, thatEvening()::get)!!.flight!!.from.planned)
         // An airport it never leaves: nothing, and not the flight from Orlando "as it was".
-        val nowhere = AirLabs.lookup(ua1227, null, "LAX", "k", evening, thatEvening()::get)!!
+        val nowhere = AirLabs.lookup(ua1227, null, "LAX", evening, thatEvening()::get)!!
         assertNull(nowhere.flight)
         assertEquals(Failure.NOT_FOUND, nowhere.failure)
     }
@@ -201,7 +201,7 @@ class FlightCandidatesTest {
         val flights = press(thatEvening(), tuesday).flights
         val third = flights[2]
         // (Asked on Monday evening, more than ten hours before either leaves: the one-flight question's turn.)
-        fun again(text: String, was: Flight = third) = AirLabs.again(ua1227, "k", was, evening) { Reply.Ok(text) }!!.again
+        fun again(text: String, was: Flight = third) = AirLabs.again(ua1227, was, evening) { Reply.Ok(text) }!!.again
         // The service answers with the morning's flight from Orlando (the saved reply), then with the one from Newark: each leaves
         // before the one that is followed. Not yet: the plan stands, and it is asked about again when it is due.
         assertEquals(AirLabs.Again.NotYet, again(flight))
@@ -214,7 +214,7 @@ class FlightCandidatesTest {
         // time to land has passed (04:00 UTC on Wednesday), nobody will say more of it: the asking ends.
         val wednesday = Regex("\\d{4}-\\d{2}-\\d{2}").replace(flight) { LocalDate.parse(it.value).plusDays(1).toString() }
         assertEquals(AirLabs.Again.NotYet, again(wednesday))
-        assertEquals(AirLabs.Again.Gone, AirLabs.again(ua1227, "k", third, at("2026-10-07T08:00:00Z")) { Reply.Ok(wednesday) }!!.again)
+        assertEquals(AirLabs.Again.Gone, AirLabs.again(ua1227, third, at("2026-10-07T08:00:00Z")) { Reply.Ok(wednesday) }!!.again)
         // The second is followed the same way: not yet while the first is the answer, itself when it is. And not over when the
         // third is: another airport's flight of the same day says nothing of this one (1.0 took it for the end and stopped asking).
         assertEquals(AirLabs.Again.NotYet, again(flight, flights[1]))
@@ -247,7 +247,7 @@ class FlightCandidatesTest {
 
     @Test fun aFollowedFlightIsHeardOfInTheComingHoursListWhateverTheOneFlightQuestionSays() {
         val s = service("flight" to mixedUp, "schedules" to secondLate)
-        val f = (AirLabs.again(ua1227, "k", fromNewarkPlan(), inTheAir, s::get)!!.again as AirLabs.Again.Is).flight
+        val f = (AirLabs.again(ua1227, fromNewarkPlan(), inTheAir, s::get)!!.again as AirLabs.Again.Is).flight
         // One request, as before: the list of the coming hours, which has each flight of the number as it is.
         assertEquals(listOf("schedules"), s.asked)
         assertEquals("EWR-SFO", "${f.from.code}-${f.to.code}")
@@ -267,7 +267,7 @@ class FlightCandidatesTest {
         // 17:34 UTC: the coming hours' list has nothing to say (here: nothing at all), and the one-flight question answers with
         // San Francisco's flight. The plan for Newark's stands; whether it is over is the clock's to say, not that answer's.
         val s = service("flight" to thirdPlanned, "schedules" to none)
-        val asked = AirLabs.again(ua1227, "k", fromNewarkPlan(), dueToLeave, s::get)!!
+        val asked = AirLabs.again(ua1227, fromNewarkPlan(), dueToLeave, s::get)!!
         assertEquals(AirLabs.Again.NotYet, asked.again)
         assertNull(asked.failure)
         assertEquals(listOf("schedules", "flight"), s.asked)
@@ -277,30 +277,30 @@ class FlightCandidatesTest {
         val was = fromNewarkPlan()
         // No connection, or a slow-down: no answer this time, and no second request to spend.
         val offline = service("flight" to mixedUp)
-        val a = AirLabs.again(ua1227, "k", was, inTheAir, offline::get)!!
+        val a = AirLabs.again(ua1227, was, inTheAir, offline::get)!!
         assertEquals(AirLabs.Again.Failed, a.again)
         assertEquals(Failure.OFFLINE, a.failure)
         assertEquals(listOf("schedules"), offline.asked)
-        val slow = AirLabs.again(ua1227, "k", was, inTheAir) { Reply.Failed(Why.STATUS, 429, retryAfterSec = 600) }!!
+        val slow = AirLabs.again(ua1227, was, inTheAir) { Reply.Failed(Why.STATUS, 429, retryAfterSec = 600) }!!
         assertEquals(AirLabs.Again.Failed, slow.again)
         assertEquals(600L, slow.retryAfterSec)
         // A key that is refused: the end of asking until it is put right, as for the one-flight question.
         val refused = service("schedules" to reply("error-unknown-key"), "flight" to mixedUp)
-        val r = AirLabs.again(ua1227, "k", was, inTheAir, refused::get)!!
+        val r = AirLabs.again(ua1227, was, inTheAir, refused::get)!!
         assertEquals(AirLabs.Again.Gone, r.again)
         assertEquals(Failure.REFUSED, r.failure)
         assertEquals(listOf("schedules"), refused.asked)
         // Switched off on the way: nothing to say.
-        assertNull(AirLabs.again(ua1227, "k", was, inTheAir) { Reply.Failed(Why.OFF) })
+        assertNull(AirLabs.again(ua1227, was, inTheAir) { Reply.Failed(Why.OFF) })
     }
 
     @Test fun theListIsAskedForTheNumberAsItWasEnteredAndNothingElse() {
         val sent = ArrayList<Request>()
         fun keep(text: String): (Request) -> Reply = { r -> sent += r; Reply.Ok(text) }
-        AirLabs.again(ua1227, "k", fromNewarkPlan(), inTheAir, keep(secondLate))
+        AirLabs.again(ua1227, fromNewarkPlan(), inTheAir, keep(secondLate))
         // A callsign is asked for in the ticket's form the followed flight has: the list was not seen to take a callsign.
-        AirLabs.again(FlightNumber("UAL", 1227), "k", fromNewarkPlan(), inTheAir, keep(secondLate))
-        assertEquals(List(2) { AirLabs.SCHEDULES to listOf("flight_iata" to "UA1227", "api_key" to "k") }, sent.map { it.path to it.query })
+        AirLabs.again(FlightNumber("UAL", 1227), fromNewarkPlan(), inTheAir, keep(secondLate))
+        assertEquals(List(2) { AirLabs.SCHEDULES to listOf("flight_iata" to "UA1227") }, sent.map { it.path to it.query })
     }
 
     @Test fun theListIsAskedFromTenHoursBeforeItLeavesUntilAnHourAfterItLanded() {
@@ -325,7 +325,7 @@ class FlightCandidatesTest {
         // San Francisco's flight. Newark's is over by the clock and nobody will say more of it: the end, which shows it landed.
         val heard = AirLabs.schedules(secondLate).value!![0]
         val s = service("flight" to thirdPlanned, "schedules" to secondLate)
-        val asked = AirLabs.again(ua1227, "k", heard, at("2026-10-07T01:30:00Z"), s::get)!!
+        val asked = AirLabs.again(ua1227, heard, at("2026-10-07T01:30:00Z"), s::get)!!
         assertEquals(listOf("flight"), s.asked)
         assertEquals(AirLabs.Again.Gone, asked.again)
         assertNull(asked.failure)
@@ -506,7 +506,7 @@ class FlightCandidatesTest {
         for (day in listOf(null, LocalDate.of(2026, 10, 1), LocalDate.of(2026, 10, 3))) {
             val s = both()
             val c = press(s, day, la, asked, lh455)
-            val one = AirLabs.lookup(lh455, day, "k", asked, la.takeIf { day != null }, both()::get)!!.flight
+            val one = AirLabs.lookup(lh455, day, asked, la.takeIf { day != null }, both()::get)!!.flight
             assertEquals("$day", listOf(one), c.flights)
             assertNull(c.failure)
             // The timetable is asked for in every case: it is what says that there is nothing to choose.
@@ -597,7 +597,7 @@ class FlightCandidatesTest {
             { r -> Reply.Ok(if (r.path == AirLabs.FLIGHT) flight else none) },
         )
         for ((i, get) in tries.withIndex()) for (day in listOf(null, tuesday)) {
-            val c = AirLabs.candidates(ua1227, day, "k", evening, la.takeIf { day != null }, get)!!
+            val c = AirLabs.candidates(ua1227, day, evening, la.takeIf { day != null }, get)!!
             assertEquals("$i $day", listOf(found), c.flights)
             assertNull("$i $day", c.failure)
         }
@@ -608,8 +608,8 @@ class FlightCandidatesTest {
         assertEquals(Failure.OFFLINE, c.failure)
         assertEquals(listOf("flight", "routes"), cut.asked)
         // A request that was not sent at all is nothing to say: also when the flight was found before it.
-        assertNull(AirLabs.candidates(ua1227, null, "k", evening) { r -> if (r.path == AirLabs.FLIGHT) Reply.Ok(flight) else Reply.Failed(Why.OFF) })
-        assertNull(AirLabs.candidates(ua1227, null, "k", evening) { Reply.Failed(Why.OFF) })
+        assertNull(AirLabs.candidates(ua1227, null, evening) { r -> if (r.path == AirLabs.FLIGHT) Reply.Ok(flight) else Reply.Failed(Why.OFF) })
+        assertNull(AirLabs.candidates(ua1227, null, evening) { Reply.Failed(Why.OFF) })
     }
 
     @Test fun aNumberOnlyTheTimetableKnowsIsAQuestionToo() {
@@ -665,10 +665,10 @@ class FlightCandidatesTest {
 
     @Test fun aCallsignIsAskedForAsOneAndTheTimetableByTheTicketsNumber() {
         val asked = ArrayList<Request>()
-        val c = AirLabs.candidates(FlightNumber("UAL", 1227), tuesday, "k", evening, la) { r -> asked += r; Reply.Ok(if (r.path == AirLabs.FLIGHT) flight else table) }!!
+        val c = AirLabs.candidates(FlightNumber("UAL", 1227), tuesday, evening, la) { r -> asked += r; Reply.Ok(if (r.path == AirLabs.FLIGHT) flight else table) }!!
         assertEquals(3, c.flights.size)
         assertEquals(listOf(AirLabs.FLIGHT to ("flight_icao" to "UAL1227"), AirLabs.ROUTES to ("flight_iata" to "UA1227")), asked.map { it.path to it.query.first() })
-        for (r in asked) assertEquals(listOf(r.query.first().first, "api_key"), r.query.map { it.first })
+        for (r in asked) assertEquals(listOf(r.query.first().first), r.query.map { it.first })
     }
 
     // ---- what the menu says of them

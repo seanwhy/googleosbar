@@ -1,12 +1,9 @@
 package com.meridian11.books.bentobar.items
 
-import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxWidth
-import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
-import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
@@ -18,14 +15,8 @@ import androidx.compose.runtime.key
 import androidx.compose.runtime.remember
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.focus.FocusRequester
-import androidx.compose.ui.focus.focusRequester
-import androidx.compose.ui.input.key.Key
-import androidx.compose.ui.input.key.KeyEventType
 import androidx.compose.ui.input.key.key
-import androidx.compose.ui.input.key.onPreviewKeyEvent
 import androidx.compose.ui.input.key.type
-import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.semantics.clearAndSetSemantics
 import androidx.compose.ui.semantics.contentDescription
@@ -37,19 +28,21 @@ import com.meridian11.books.bentobar.R
 import com.meridian11.books.bentobar.data.ItemConfig
 import com.meridian11.books.bentobar.data.Online
 import com.meridian11.books.bentobar.data.Section
-import com.meridian11.books.bentobar.ui.ChoiceRow
 import com.meridian11.books.bentobar.ui.KeyWords
 import com.meridian11.books.bentobar.ui.MenuCard
 import com.meridian11.books.bentobar.ui.MenuDivider
 import com.meridian11.books.bentobar.ui.MenuEntry
 import com.meridian11.books.bentobar.ui.MenuNote
+import com.meridian11.books.bentobar.ui.OffGate
+import com.meridian11.books.bentobar.ui.OrderedListRow
 import com.meridian11.books.bentobar.ui.SearchField
 import com.meridian11.books.bentobar.ui.SearchStatus
+import com.meridian11.books.bentobar.ui.SearchWithResults
 import com.meridian11.books.bentobar.ui.ServiceKey
+import com.meridian11.books.bentobar.ui.TurnChooser
 import com.meridian11.books.bentobar.ui.rememberTick
 import com.meridian11.books.bentobar.util.Now
 import com.meridian11.books.bentobar.util.Sym
-import com.meridian11.books.bentobar.util.SymIcon
 
 // The Stocks item's menu and settings, drawn from what StocksRules works out. Nothing here asks the
 // service: a click that could goes through StocksItem, where the rules for that are.
@@ -69,10 +62,8 @@ internal fun StocksMenu(item: ItemConfig, host: MenuHost) {
             MenuNote(stringResource(R.string.stocks_consent))
             MenuEntry(Sym.KEY, stringResource(R.string.stocks_add_key)) { host.openItemSettings(item.id) }
         }
-        StocksStatus.Off -> MenuCard(Sym.SHOW_CHART, title, stringResource(R.string.common_off_in_setup)) {
-            MenuNote(stringResource(R.string.stocks_consent))
-            MenuEntry(Sym.TOGGLE_ON, stringResource(R.string.stocks_turn_on)) { Online.turnOn(Online.Service.FINNHUB); Ticker.refresh(StocksItem.type) }
-        }
+        StocksStatus.Off -> OffGate(Sym.SHOW_CHART, title, stringResource(R.string.common_off_in_setup), stringResource(R.string.stocks_consent),
+            stringResource(R.string.stocks_turn_on)) { Online.turnOn(Online.Service.FINNHUB); Ticker.refresh(StocksItem.type) }
         StocksStatus.NoStocks -> MenuCard(Sym.SHOW_CHART, title, stringResource(R.string.stocks_none_yet)) {
             MenuEntry(Sym.ADD, stringResource(R.string.stocks_add_stocks)) { host.openItemSettings(item.id) }
         }
@@ -138,10 +129,9 @@ internal fun StocksOptions(item: ItemConfig, set: (ItemConfig) -> Unit) {
             else stocks.forEachIndexed { i, s -> FollowedRow(item, s, first = i == 0, last = i == stocks.lastIndex, set) }
         }
     }
-    val res = LocalContext.current.resources
-    ChoiceRow(stringResource(R.string.stocks_turn_label), StocksRules.TURNS.map { sec ->
-        sec to if (sec % 60 == 0) res.getQuantityString(R.plurals.common_minutes_short, sec / 60, sec / 60) else res.getQuantityString(R.plurals.stocks_seconds_short, sec, sec)
-    }, StocksRules.turnSec(item), help = stringResource(R.string.stocks_turn_help)) { set(item.with("turnSec", it.takeIf { s -> s != StocksRules.TURN_SEC }?.toString())) }
+    TurnChooser(stringResource(R.string.stocks_turn_label), stringResource(R.string.stocks_turn_help), StocksRules.TURNS, StocksRules.turnSec(item)) {
+        set(item.with("turnSec", it.takeIf { s -> s != StocksRules.TURN_SEC }?.toString()))
+    }
 }
 
 private val STOCKS_KEY = KeyWords(R.string.stocks_key_section, R.string.stocks_consent, R.string.stocks_get_key, R.string.stocks_save_key,
@@ -158,65 +148,44 @@ private fun StockSearch(item: ItemConfig, stocks: List<Stock>, set: (ItemConfig)
     val by = "settings:" + item.id
     val asked by StocksItem.search.state.collectAsState()
     val state = asked.shownTo { it.by == by }
-    val field = remember { FocusRequester() }
-    val first = remember { FocusRequester() }
     val found = ((state as? Ask.State.Done)?.answer as? StockFound.Listings)?.list.orEmpty()
     val firstFree = found.indexOfFirst { l -> stocks.none { it.symbol == l.symbol } }
     // What was found belongs to this field while it is drawn: gone with it.
     DisposableEffect(by) { onDispose { StocksItem.search.clearIf { it.by == by } } }
-    LaunchedEffect(found) { if (firstFree >= 0) runCatching { first.requestFocus() } }
-    Box(Modifier.onPreviewKeyEvent { e ->
-        if (firstFree < 0 || e.key != Key.DirectionDown) false
-        else { if (e.type == KeyEventType.KeyDown) runCatching { first.requestFocus() }; true }
-    }) {
-        SearchField(label = stringResource(R.string.stocks_search_label), submit = stringResource(R.string.common_search),
-            canSubmit = item.section != Section.OFF, focus = field,
-            onChange = { StocksItem.search.clearIf { it.by == by } },
-            onEnter = { text -> StocksLoad.query(text)?.let { StocksItem.search.ask(StockQuery(it, by)) } })
-    }
-    when (state) {
-        Ask.State.Idle -> {}
-        is Ask.State.Busy -> SearchStatus(stringResource(R.string.stocks_searching))
-        is Ask.State.Done -> when (val answer = state.answer) {
-            StockFound.Unasked -> {}
-            is StockFound.Failed -> SearchStatus(stringResource(stocksRes(StocksRules.searchProblem(answer.failure))))
-            is StockFound.Listings -> if (found.isEmpty()) SearchStatus(stringResource(R.string.stocks_nothing_found)) else found.forEachIndexed { i, l ->
-                val following = stocks.any { it.symbol == l.symbol }
-                MenuEntry(if (following) Sym.CHECK else Sym.ADD, l.symbol, sub = l.name, enabled = !following,
-                    detail = if (following) stringResource(R.string.stocks_following) else null,
-                    modifier = if (i != firstFree) Modifier else Modifier.focusRequester(first).onPreviewKeyEvent { e ->
-                        if (e.key != Key.DirectionUp) false else { if (e.type == KeyEventType.KeyDown) runCatching { field.requestFocus() }; true }
-                    }) {
-                    set(StocksRules.add(item, l))
-                    StocksItem.search.clear()
-                    // The stock found goes, and the focus with it: back to the field, for the next search.
-                    runCatching { field.requestFocus() }
+    SearchWithResults(hasResults = firstFree >= 0, arrival = found,
+        field = {
+            SearchField(label = stringResource(R.string.stocks_search_label), submit = stringResource(R.string.common_search),
+                canSubmit = item.section != Section.OFF, focus = field,
+                onChange = { StocksItem.search.clearIf { it.by == by } },
+                onEnter = { text -> StocksLoad.query(text)?.let { StocksItem.search.ask(StockQuery(it, by)) } })
+        },
+        results = { firstResult ->
+            when (state) {
+                Ask.State.Idle -> {}
+                is Ask.State.Busy -> SearchStatus(stringResource(R.string.stocks_searching))
+                is Ask.State.Done -> when (val answer = state.answer) {
+                    StockFound.Unasked -> {}
+                    is StockFound.Failed -> SearchStatus(stringResource(stocksRes(StocksRules.searchProblem(answer.failure))))
+                    is StockFound.Listings -> if (found.isEmpty()) SearchStatus(stringResource(R.string.stocks_nothing_found)) else found.forEachIndexed { i, l ->
+                        val following = stocks.any { it.symbol == l.symbol }
+                        MenuEntry(if (following) Sym.CHECK else Sym.ADD, l.symbol, sub = l.name, enabled = !following,
+                            detail = if (following) stringResource(R.string.stocks_following) else null,
+                            modifier = if (i != firstFree) Modifier else firstResult) {
+                            set(StocksRules.add(item, l))
+                            StocksItem.search.clear()
+                            // The stock found goes, and the focus with it: back to the field, for the next search.
+                            toField()
+                        }
+                    }
                 }
             }
-        }
-    }
+        })
 }
 
 /** One followed stock: its symbol and name, and moving or removing it. */
 @Composable
 private fun FollowedRow(item: ItemConfig, s: Stock, first: Boolean, last: Boolean, set: (ItemConfig) -> Unit) {
-    Row(Modifier.fillMaxWidth().heightIn(min = 56.dp).padding(vertical = 2.dp), verticalAlignment = Alignment.CenterVertically) {
-        Column(Modifier.weight(1f)) {
-            Text(s.symbol, style = MaterialTheme.typography.bodyLarge, fontWeight = FontWeight.Medium, maxLines = 1)
-            if (s.name != s.symbol) Text(s.name, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant,
-                maxLines = 1, overflow = TextOverflow.Ellipsis)
-        }
-        val up = stringResource(R.string.stocks_move_up, s.symbol)
-        val down = stringResource(R.string.stocks_move_down, s.symbol)
-        val remove = stringResource(R.string.stocks_remove, s.symbol)
-        IconButton(onClick = { set(StocksRules.move(item, s.symbol, -1)) }, enabled = !first, modifier = Modifier.semantics { contentDescription = up }) {
-            SymIcon(Sym.ARROW_UPWARD)
-        }
-        IconButton(onClick = { set(StocksRules.move(item, s.symbol, 1)) }, enabled = !last, modifier = Modifier.semantics { contentDescription = down }) {
-            SymIcon(Sym.ARROW_DOWNWARD)
-        }
-        IconButton(onClick = { set(StocksRules.remove(item, s.symbol)) }, modifier = Modifier.semantics { contentDescription = remove }) {
-            SymIcon(Sym.CLOSE)
-        }
-    }
+    OrderedListRow(s.symbol, sub = s.name.takeIf { it != s.symbol }, upLabel = stringResource(R.string.stocks_move_up, s.symbol), downLabel = stringResource(R.string.stocks_move_down, s.symbol),
+        removeLabel = stringResource(R.string.stocks_remove, s.symbol), first = first, last = last, minHeight = 56.dp,
+        onUp = { set(StocksRules.move(item, s.symbol, -1)) }, onDown = { set(StocksRules.move(item, s.symbol, 1)) }, onRemove = { set(StocksRules.remove(item, s.symbol)) })
 }

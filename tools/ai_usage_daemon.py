@@ -40,6 +40,7 @@ _cached_access_token = None
 _token_expires_at = 0.0
 
 _latest_snapshot_bytes = b'{"status": "waiting"}\n'
+_last_snapshot = None
 
 
 def ensure_proxy():
@@ -97,6 +98,29 @@ def start_server(port=SERVER_PORT):
 def sanitize_error(msg: str) -> str:
     """Removes sensitive authorization tokens from error messages."""
     return re.sub(r'(Bearer\s+|ya29\.)[a-zA-Z0-9_\-\.]+', '[REDACTED]', msg)
+
+
+def is_timeout_error(err: Exception) -> bool:
+    """Detects socket/HTTP/network timeout exceptions cleanly."""
+    if isinstance(err, (TimeoutError, socket.timeout)):
+        return True
+    reason = getattr(err, "reason", None)
+    if isinstance(reason, (TimeoutError, socket.timeout)):
+        return True
+    if reason and "timed out" in str(reason).lower():
+        return True
+    msg = str(err).lower()
+    return "timed out" in msg or "timeout" in msg
+
+
+def error_payload(err: Exception, extra: dict | None = None) -> dict:
+    payload = {
+        "status": "timeout" if is_timeout_error(err) else "error",
+        "error": sanitize_error(str(err)),
+    }
+    if extra:
+        payload.update(extra)
+    return payload
 
 
 def invalidate_antigravity_access_token():
@@ -192,32 +216,39 @@ def fetch_antigravity_quota():
             except Exception as e:
                 last_err = e
 
+        if not res or "groups" not in res:
+            if last_err is not None:
+                return error_payload(last_err)
+            return {"status": "error", "error": "Empty quota summary response"}
+
         claude_5h = None
         claude_weekly = None
         gemini_5h = None
         gemini_weekly = None
 
-        if res and "groups" in res:
-            for g in res.get("groups", []):
-                g_name = (g.get("displayName", "") + " " + g.get("description", "")).lower()
-                is_gemini_group = "gemini" in g_name
-                for b in g.get("buckets", []):
-                    bid = b.get("bucketId", "").lower()
-                    w = b.get("window", "").lower()
-                    info = parse_bucket(b)
-                    is_5h = w in ["5h", "five_hour", "five-hour"] or "5h" in bid
-                    is_weekly = w in ["weekly", "week", "7d"] or "weekly" in bid
+        for g in res.get("groups", []):
+            g_name = (g.get("displayName", "") + " " + g.get("description", "")).lower()
+            is_gemini_group = "gemini" in g_name
+            for b in g.get("buckets", []):
+                bid = b.get("bucketId", "").lower()
+                w = b.get("window", "").lower()
+                info = parse_bucket(b)
+                is_5h = w in ["5h", "five_hour", "five-hour"] or "5h" in bid
+                is_weekly = w in ["weekly", "week", "7d"] or "weekly" in bid
 
-                    if "gemini" in bid or is_gemini_group:
-                        if is_5h:
-                            gemini_5h = info
-                        elif is_weekly:
-                            gemini_weekly = info
-                    else:
-                        if is_5h:
-                            claude_5h = info
-                        elif is_weekly:
-                            claude_weekly = info
+                if "gemini" in bid or is_gemini_group:
+                    if is_5h:
+                        gemini_5h = info
+                    elif is_weekly:
+                        gemini_weekly = info
+                else:
+                    if is_5h:
+                        claude_5h = info
+                    elif is_weekly:
+                        claude_weekly = info
+
+        if gemini_weekly is None and gemini_5h is None and claude_weekly is None and claude_5h is None:
+            return {"status": "error", "error": "No quota buckets returned"}
 
         return {
             "status": "ok",
@@ -228,7 +259,7 @@ def fetch_antigravity_quota():
             "gemini_weekly": gemini_weekly,
         }
     except Exception as e:
-        return {"status": "error", "error": sanitize_error(str(e))}
+        return error_payload(e)
 
 
 def fetch_codex_quota():
@@ -239,7 +270,7 @@ def fetch_codex_quota():
     try:
         with open(auth_path) as f:
             d = json.load(f)
-        tokens = d.get("tokens", {})
+        tokens = d.get("tokens") or {}
         access_token = tokens.get("access_token")
         account_id = tokens.get("account_id")
         if not access_token:
@@ -254,31 +285,34 @@ def fetch_codex_quota():
         with urllib.request.urlopen(req, timeout=10) as r:
             data = json.loads(r.read().decode("utf-8"))
 
-        rl = data.get("rate_limit", {})
-        pw = rl.get("primary_window", {})
-        sw = rl.get("secondary_window", {})
+        rl = data.get("rate_limit") or {}
+        pw = rl.get("primary_window") or {}
+        sw = rl.get("secondary_window") or {}
 
-        pw_used = max(0.0, min(100.0, float(pw.get("used_percent", 0))))
-        sw_used = max(0.0, min(100.0, float(sw.get("used_percent", 0))))
+        def build_window(w: dict):
+            if not w or "used_percent" not in w:
+                return None
+            used = max(0.0, min(100.0, float(w.get("used_percent") or 0.0)))
+            return {
+                "remaining_percent": round(100.0 - used, 1),
+                "used_percent": round(used, 1),
+                "reset_in_sec": max(0, int(w.get("reset_after_seconds") or 0)),
+                "reset_at": w.get("reset_at") or 0,
+            }
+
+        win_5h = build_window(pw)
+        win_weekly = build_window(sw)
+        if win_5h is None and win_weekly is None:
+            return {"status": "error", "error": "Missing rate_limit windows"}
 
         return {
             "status": "ok",
-            "plan_type": data.get("plan_type", "plus"),
-            "window_5h": {
-                "remaining_percent": round(100.0 - pw_used, 1),
-                "used_percent": round(pw_used, 1),
-                "reset_in_sec": max(0, pw.get("reset_after_seconds", 0)),
-                "reset_at": pw.get("reset_at", 0),
-            },
-            "window_weekly": {
-                "remaining_percent": round(100.0 - sw_used, 1),
-                "used_percent": round(sw_used, 1),
-                "reset_in_sec": max(0, sw.get("reset_after_seconds", 0)),
-                "reset_at": sw.get("reset_at", 0),
-            },
+            "plan_type": data.get("plan_type") or "plus",
+            "window_5h": win_5h,
+            "window_weekly": win_weekly,
         }
     except Exception as e:
-        return {"status": "error", "error": sanitize_error(str(e))}
+        return error_payload(e)
 
 
 def get_grok_access_token(auth_path):
@@ -346,41 +380,58 @@ def fetch_grok_bot_usage_ws(token):
             except Exception:
                 pass
 
-    if proxy_host and proxy_port:
-        raw_sock = socket.create_connection((proxy_host, proxy_port), timeout=8)
-        raw_sock.sendall(b"CONNECT grok.com:443 HTTP/1.1\r\nHost: grok.com:443\r\n\r\n")
-        resp = b""
-        while b"\r\n\r\n" not in resp:
-            chunk = raw_sock.recv(1024)
+    tls_sock = None
+    raw_sock = None
+    try:
+        if proxy_host and proxy_port:
+            raw_sock = socket.create_connection((proxy_host, proxy_port), timeout=8)
+            raw_sock.sendall(b"CONNECT grok.com:443 HTTP/1.1\r\nHost: grok.com:443\r\n\r\n")
+            resp = b""
+            while b"\r\n\r\n" not in resp:
+                chunk = raw_sock.recv(1024)
+                if not chunk:
+                    break
+                resp += chunk
+            first_line = resp.split(b"\r\n", 1)[0].decode("ascii", errors="ignore")
+            if " 200 " not in first_line:
+                raise ConnectionError(f"Proxy CONNECT failed: {first_line or 'empty'}")
+        else:
+            raw_sock = socket.create_connection(("grok.com", 443), timeout=8)
+
+        ctx = ssl.create_default_context()
+        tls_sock = ctx.wrap_socket(raw_sock, server_hostname="grok.com")
+        tls_sock.settimeout(8)
+
+        ws_key = base64.b64encode(os.urandom(16)).decode()
+        req = (
+            f"GET /ws/bot/ HTTP/1.1\r\n"
+            f"Host: grok.com\r\n"
+            f"Upgrade: websocket\r\n"
+            f"Connection: Upgrade\r\n"
+            f"Sec-WebSocket-Key: {ws_key}\r\n"
+            f"Sec-WebSocket-Version: 13\r\n"
+            f"Authorization: Bearer {token}\r\n"
+            f"Origin: https://grok.com\r\n"
+            f"User-Agent: Mozilla/5.0\r\n\r\n"
+        )
+        tls_sock.sendall(req.encode())
+        ws_resp = b""
+        while b"\r\n\r\n" not in ws_resp:
+            chunk = tls_sock.recv(4096)
             if not chunk:
                 break
-            resp += chunk
-    else:
-        raw_sock = socket.create_connection(("grok.com", 443), timeout=8)
-
-    ctx = ssl.create_default_context()
-    tls_sock = ctx.wrap_socket(raw_sock, server_hostname="grok.com")
-    tls_sock.settimeout(8)
-
-    ws_key = base64.b64encode(os.urandom(16)).decode()
-    req = (
-        f"GET /ws/bot/ HTTP/1.1\r\n"
-        f"Host: grok.com\r\n"
-        f"Upgrade: websocket\r\n"
-        f"Connection: Upgrade\r\n"
-        f"Sec-WebSocket-Key: {ws_key}\r\n"
-        f"Sec-WebSocket-Version: 13\r\n"
-        f"Authorization: Bearer {token}\r\n"
-        f"Origin: https://grok.com\r\n"
-        f"User-Agent: Mozilla/5.0\r\n\r\n"
-    )
-    tls_sock.sendall(req.encode())
-    ws_resp = b""
-    while b"\r\n\r\n" not in ws_resp:
-        chunk = tls_sock.recv(4096)
-        if not chunk:
-            break
-        ws_resp += chunk
+            ws_resp += chunk
+        ws_line = ws_resp.split(b"\r\n", 1)[0].decode("ascii", errors="ignore")
+        if " 101 " not in ws_line:
+            raise ConnectionError(f"WebSocket handshake failed: {ws_line or 'empty'}")
+    except Exception:
+        for sock in (tls_sock, raw_sock):
+            if sock is not None:
+                try:
+                    sock.close()
+                except Exception:
+                    pass
+        raise
 
     def ws_send(sock, text):
         payload = text.encode("utf-8")
@@ -500,19 +551,32 @@ def fetch_grok_quota():
                 chat_used = upct
 
         # Fetch separate Weekly Grok Bot Limit via wss://grok.com/ws/bot/ bot.usage
-        bot_used = 80.0
-        bot_reset_sec = reset_in_sec
+        grok_build = None
+        grok_build_status = "error"
+        grok_build_error = None
         try:
             bot_res = fetch_grok_bot_usage_ws(token)
             if bot_res and "usagePercent" in bot_res:
                 bot_used = float(round(float(bot_res["usagePercent"])))
+                bot_reset_sec = reset_in_sec
                 next_reset_ms = bot_res.get("nextResetAtMs")
                 if next_reset_ms:
                     bot_reset_sec = max(0, int((float(next_reset_ms) / 1000.0) - time.time()))
-        except Exception:
-            pass
+                bot_rem = round(max(0.0, 100.0 - bot_used), 1)
+                grok_build = {
+                    "used_percent": bot_used,
+                    "remaining_percent": bot_rem,
+                    "reset_in_sec": bot_reset_sec,
+                }
+                grok_build_status = "ok"
+            else:
+                grok_build_status = "error"
+                grok_build_error = "No bot.usage result"
+        except Exception as be:
+            err_info = error_payload(be)
+            grok_build_status = err_info["status"]
+            grok_build_error = err_info["error"]
 
-        bot_rem = round(max(0.0, 100.0 - bot_used), 1)
         chat_rem = round(max(0.0, 100.0 - chat_used), 1)
 
         return {
@@ -526,11 +590,9 @@ def fetch_grok_quota():
                 "remaining_percent": rem_pct,
                 "reset_in_sec": reset_in_sec,
             },
-            "grok_build": {
-                "used_percent": bot_used,
-                "remaining_percent": bot_rem,
-                "reset_in_sec": bot_reset_sec,
-            },
+            "grok_build": grok_build,
+            "grok_build_status": grok_build_status,
+            "grok_build_error": grok_build_error,
             "grok_chat": {
                 "used_percent": chat_used,
                 "remaining_percent": chat_rem,
@@ -538,43 +600,106 @@ def fetch_grok_quota():
             },
         }
     except Exception as e:
-        return {"status": "error", "model": "grok-4.7", "error": sanitize_error(str(e))}
+        return error_payload(e, {"model": "grok-4.7"})
+
+
+def _clean_last_ok(entry: dict) -> dict:
+    return {k: v for k, v in entry.items() if k not in ("last_ok", "last_ok_grok_build")}
+
+
+def _merge_provider_history(current: dict, prev_entry: dict | None, prev_snapshot_ts: int | None, now_sec: int, require_key: str | None = None) -> dict:
+    is_ok = current.get("status") == "ok" and (require_key is None or bool(current.get(require_key)))
+    if is_ok:
+        out = dict(current)
+        out["fetched_at"] = now_sec
+        out["last_ok_at"] = now_sec
+        return out
+
+    out = dict(current)
+    if out.get("status") == "ok":
+        out["status"] = "error"
+        out.setdefault("error", "Incomplete quota payload")
+    out["fetched_at"] = now_sec
+
+    prev_ok = None
+    prev_ok_at = None
+    if isinstance(prev_entry, dict):
+        if prev_entry.get("status") == "ok" and (require_key is None or bool(prev_entry.get(require_key))):
+            prev_ok = _clean_last_ok(prev_entry)
+            prev_ok_at = prev_entry.get("last_ok_at") or prev_entry.get("fetched_at") or prev_snapshot_ts
+        elif isinstance(prev_entry.get("last_ok"), dict):
+            prev_ok = prev_entry["last_ok"]
+            prev_ok_at = prev_entry.get("last_ok_at")
+
+    if prev_ok is not None:
+        out["last_ok"] = prev_ok
+    if prev_ok_at is not None:
+        out["last_ok_at"] = prev_ok_at
+    return out
+
+
+def _merge_grok_build_history(gk: dict, prev_gk: dict | None, prev_snapshot_ts: int | None, now_sec: int) -> dict:
+    out = dict(gk)
+    if out.get("status") != "ok":
+        return out
+    if out.get("grok_build_status") == "ok" and out.get("grok_build"):
+        out["grok_build_ok_at"] = now_sec
+        return out
+
+    prev_build = None
+    prev_build_at = None
+    if isinstance(prev_gk, dict):
+        if prev_gk.get("grok_build") and prev_gk.get("grok_build_status", prev_gk.get("status")) == "ok":
+            prev_build = prev_gk["grok_build"]
+            prev_build_at = prev_gk.get("grok_build_ok_at") or prev_gk.get("last_ok_at") or prev_gk.get("fetched_at") or prev_snapshot_ts
+        elif isinstance(prev_gk.get("last_ok_grok_build"), dict):
+            prev_build = prev_gk["last_ok_grok_build"]
+            prev_build_at = prev_gk.get("grok_build_ok_at")
+        elif isinstance(prev_gk.get("last_ok"), dict):
+            nested = prev_gk["last_ok"]
+            if nested.get("grok_build"):
+                prev_build = nested["grok_build"]
+                prev_build_at = nested.get("grok_build_ok_at") or prev_gk.get("last_ok_at")
+
+    if prev_build is not None:
+        out["last_ok_grok_build"] = prev_build
+    if prev_build_at is not None:
+        out["grok_build_ok_at"] = prev_build_at
+    return out
 
 
 def update_snapshot():
-    global _latest_snapshot_bytes
-    prev = {}
-    for target in SNAPSHOT_TARGETS:
-        if os.path.exists(target):
-            try:
-                with open(target, "r", encoding="utf-8") as f:
-                    prev = json.load(f)
-                break
-            except Exception:
-                pass
+    global _latest_snapshot_bytes, _last_snapshot
+    prev = _last_snapshot or {}
+    if not prev:
+        for target in SNAPSHOT_TARGETS:
+            if os.path.exists(target):
+                try:
+                    with open(target, "r", encoding="utf-8") as f:
+                        prev = json.load(f)
+                    break
+                except Exception:
+                    pass
 
-    ag = fetch_antigravity_quota()
-    if ag.get("status") != "ok" or not ag.get("gemini_weekly"):
-        if prev.get("antigravity", {}).get("gemini_weekly"):
-            ag = prev["antigravity"]
+    now_sec = int(time.time())
+    prev_ts = prev.get("updated_at") if isinstance(prev, dict) else None
+    prev_ag = prev.get("antigravity") if isinstance(prev, dict) else None
+    prev_cx = prev.get("codex") if isinstance(prev, dict) else None
+    prev_gk = prev.get("grok") if isinstance(prev, dict) else None
 
-    cx = fetch_codex_quota()
-    if cx.get("status") != "ok":
-        if prev.get("codex", {}).get("status") == "ok":
-            cx = prev["codex"]
-
-    gk = fetch_grok_quota()
-    if gk.get("status") != "ok":
-        if prev.get("grok", {}).get("status") == "ok":
-            gk = prev["grok"]
+    ag = _merge_provider_history(fetch_antigravity_quota(), prev_ag, prev_ts, now_sec, require_key="gemini_weekly")
+    cx = _merge_provider_history(fetch_codex_quota(), prev_cx, prev_ts, now_sec)
+    gk = _merge_provider_history(fetch_grok_quota(), prev_gk, prev_ts, now_sec, require_key="cycle")
+    gk = _merge_grok_build_history(gk, prev_gk, prev_ts, now_sec)
 
     snapshot = {
-        "updated_at": int(time.time()),
+        "updated_at": now_sec,
         "antigravity": ag,
         "codex": cx,
         "grok": gk,
     }
 
+    _last_snapshot = snapshot
     content = json.dumps(snapshot, indent=2)
     _latest_snapshot_bytes = content.encode("utf-8")
 
@@ -612,14 +737,18 @@ def main():
     while True:
         try:
             snapshot, written = update_snapshot()
-            ag = snapshot.get("antigravity", {})
+            ag = snapshot.get("antigravity") or {}
             c5 = ag.get("claude_5h")
             cw = ag.get("claude_weekly")
-            c5_str = f"{c5['used_percent']}%" if c5 and "used_percent" in c5 else "N/A"
-            cw_str = f"{cw['used_percent']}%" if cw and "used_percent" in cw else "N/A"
-            cx = snapshot.get("codex", {}).get("window_5h", {}).get("used_percent", 0)
+            c5_str = f"{c5['used_percent']}%" if c5 and "used_percent" in c5 else ag.get("status", "N/A")
+            cw_str = f"{cw['used_percent']}%" if cw and "used_percent" in cw else ag.get("status", "N/A")
+            cx = snapshot.get("codex") or {}
+            cx5 = cx.get("window_5h") or {}
+            cx_str = f"{cx5['used_percent']}%" if "used_percent" in cx5 else cx.get("status", "N/A")
+            gk = snapshot.get("grok") or {}
+            gk_str = f"{gk['cycle']['used_percent']}%" if gk.get("cycle") and "used_percent" in gk["cycle"] else gk.get("status", "N/A")
             print(f"[{datetime.datetime.now().strftime('%H:%M:%S')}] Snapshot updated ({written} targets): "
-                  f"AG Claude 5h={c5_str}, W={cw_str}, Codex 5h={cx}%")
+                  f"AG={c5_str}/{cw_str}, Codex={cx_str}, Grok={gk_str}")
         except Exception as e:
             print(f"Error updating snapshot: {e}", file=sys.stderr)
 

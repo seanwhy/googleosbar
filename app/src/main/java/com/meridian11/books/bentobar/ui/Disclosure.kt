@@ -41,6 +41,7 @@ internal fun Bullet(text: String) = Row(Modifier.padding(start = 4.dp, top = 4.d
 internal fun AccessibilityUses() {
     Bullet(stringResource(R.string.setup_turn_on_draws))
     Bullet(stringResource(R.string.setup_turn_on_reads))
+    Bullet(stringResource(R.string.setup_turn_on_windows))
     Bullet(stringResource(R.string.setup_turn_on_copies))
     Bullet(stringResource(R.string.setup_turn_on_runs))
     Spacer(Modifier.height(6.dp))

@@ -1,8 +1,13 @@
 package com.meridian11.books.bentobar.data
 
+import com.meridian11.books.bentobar.items.ItemType
+import com.meridian11.books.bentobar.items.Items
 import kotlinx.serialization.Serializable
+import kotlinx.serialization.json.Json
+import kotlinx.serialization.json.JsonObject
+import kotlinx.serialization.json.jsonObject
 
-/** Where an item lives, like Bartender's sections. */
+/** Where an item lives: in the bar, hidden behind ‹, or off. */
 @Serializable
 enum class Section { SHOWN, HIDDEN, OFF }
 
@@ -75,9 +80,15 @@ fun List<ItemConfig>.moved(id: String, section: Section, index: Int): List<ItemC
 @androidx.compose.runtime.Immutable
 data class WorldCity(val zone: String, val name: String = "")
 
+/**
+ * The newest layout version this build understands, and the one it writes. A layout that says more is refused
+ * ([readLayout]), never clamped.
+ */
+const val LAYOUT_VERSION = 3
+
 @Serializable
 data class BarConfig(
-    val version: Int = 3,
+    val version: Int = LAYOUT_VERSION,
     /** Master switch (the Quick Settings tile flips it, e.g. for presenting). */
     val enabled: Boolean = true,
     val items: List<ItemConfig> = emptyList(),
@@ -120,9 +131,39 @@ data class BarConfig(
     val cities: List<WorldCity> = emptyList(),
 )
 
-/** This config with the settings that belong to one install taken from [local] (see [Store.import]). */
-fun BarConfig.keepingLocal(local: BarConfig): BarConfig = copy(enabled = local.enabled, turnedOff = local.turnedOff,
-    presenting = local.presenting, pinnedOpen = local.pinnedOpen, onboarded = local.onboarded)
+/** The settings' limits for the two numbers from a layout that the strip measures. */
+val SPACING_DP = 0..24
+val SPACER_DP = 4..64
+
+/**
+ * Space between items, within the slider's limits. A layout can be pasted in and can say anything, and Compose throws
+ * during measure for a width over 262,142 px: with the layout already saved, that is the service crashing at every start.
+ */
+val BarConfig.spacingDp: Int get() = spacing.coerceIn(SPACING_DP)
+
+/** A spacer's width, within the slider's limits, for the same reason as [spacingDp]. */
+val ItemConfig.spacerWidthDp: Int get() = optInt("width", 12).coerceIn(SPACER_DP)
+
+/**
+ * The settings that belong to one install and never travel: the master switch, presenting, hidden items pinned open, the
+ * permissions switched off in Setup and the first-run state. The one list: Copy settings leaves them out ([withoutLocal])
+ * and a pasted layout takes them from this install ([keepingLocal]), so a new per-install field is listed here or it
+ * travels (`ImportTest` fails until each field is placed on one side).
+ */
+val LOCAL_SETTINGS = setOf("enabled", "presenting", "pinnedOpen", "turnedOff", "onboarded")
+
+internal val layoutJson = Json { ignoreUnknownKeys = true; encodeDefaults = true; coerceInputValues = true }
+
+/** This config with the [LOCAL_SETTINGS] taken from [local] (see [Store.import]). */
+fun BarConfig.keepingLocal(local: BarConfig): BarConfig {
+    val mine = layoutJson.encodeToJsonElement(BarConfig.serializer(), this).jsonObject
+    val here = layoutJson.encodeToJsonElement(BarConfig.serializer(), local).jsonObject
+    val merged = JsonObject(mine.filterKeys { it !in LOCAL_SETTINGS } + here.filterKeys { it in LOCAL_SETTINGS })
+    return layoutJson.decodeFromJsonElement(BarConfig.serializer(), merged)
+}
+
+/** This config as a layout to hand on: with the [LOCAL_SETTINGS] at their defaults. */
+fun BarConfig.withoutLocal(): BarConfig = keepingLocal(BarConfig())
 
 /**
  * What BentoBar uses, as switched in Setup: a permission counts only if Android granted it and the
@@ -155,8 +196,20 @@ fun BarConfig.migrateToV3(): BarConfig = if (version >= 3) this else copy(
     items = if (chevron) items else items.map { if (it.section == Section.HIDDEN && !it.whenActive) it.copy(section = Section.OFF) else it },
 )
 
-/** Whether an item in the bar config is drawn right now (outside presenting), for the strip and the preview. */
-fun BarConfig.shows(item: ItemConfig, active: Boolean): Boolean = when (item.section) {
+/**
+ * Whether an item is drawn right now: the one rule for the strip and, through [couldShow], for the ticker, so what is drawn
+ * is what is sampled. While presenting, only a type that [presents][ItemType.presents] and has something to say, whatever
+ * its section but Off. A type this version doesn't know (a pasted layout, a restore from a newer install) isn't drawn: it
+ * stays in the layout, marked in settings, so an update brings it back.
+ */
+fun BarConfig.shows(item: ItemConfig, active: Boolean, type: ItemType? = Items.of(item.type)): Boolean = when {
+    type == null -> false
+    presenting -> item.section != Section.OFF && type.presents && active
+    else -> sectionShows(item, active)
+}
+
+/** What [item]'s section says, presenting aside: the layout as it is edited, which the ‹ lists go by. */
+fun BarConfig.sectionShows(item: ItemConfig, active: Boolean): Boolean = when (item.section) {
     Section.SHOWN -> true
     Section.HIDDEN -> if (hiddenMode == HiddenMode.SHOW_ALL) !item.whenActive || active else item.whenActive && active
     Section.OFF -> false
@@ -167,14 +220,51 @@ fun BarConfig.shows(item: ItemConfig, active: Boolean): Boolean = when (item.sec
  * ones that aren't out on their own. The strip, the settings preview and the controller all ask here.
  */
 fun BarConfig.behindChevron(active: (ItemConfig) -> Boolean): List<ItemConfig> =
-    if (hiddenMode == HiddenMode.SHOW_ALL) emptyList() else items.filter { it.section == Section.HIDDEN && !shows(it, active(it)) }
+    if (hiddenMode == HiddenMode.SHOW_ALL) emptyList() else items.filter { it.section == Section.HIDDEN && Items.of(it.type) != null && !sectionShows(it, active(it)) }
 
 /**
  * The items the ‹ menu lists as hidden: in the layout but not drawn right now. Under Show everything
  * that's a rule item waiting for its rule, never a hidden item that is drawn.
  */
 fun BarConfig.notDrawn(active: (ItemConfig) -> Boolean): List<ItemConfig> =
-    items.filter { it.section != Section.OFF && !shows(it, active(it)) }
+    items.filter { it.section != Section.OFF && Items.of(it.type) != null && !sectionShows(it, active(it)) }
 
-/** Whether [shows] can be true for [item] once its "Show when" rule applies: the items worth sampling. */
-fun BarConfig.couldShow(item: ItemConfig): Boolean = shows(item, active = true)
+/** Whether [shows] can be true for [item] once it has something to say: the items worth sampling. */
+fun BarConfig.couldShow(item: ItemConfig, type: ItemType? = Items.of(item.type)): Boolean = shows(item, active = true, type)
+
+/**
+ * What the strip shows of a layout right now: what the bar draws and the settings preview draws, from one place, so a new
+ * strip rule is made once ([stripPlan]).
+ */
+data class StripPlan(
+    /** The items drawn, in the strip's order. */
+    val visible: List<ItemConfig>,
+    /** The items waiting behind ‹. */
+    val hidden: List<ItemConfig>,
+    /** ‹ is open and [hidden] are out. */
+    val open: Boolean,
+    /** ‹ is drawn. */
+    val chevron: Boolean,
+    /** ‹ is drawn whatever fits, so its room is always kept. */
+    val chevronAlways: Boolean,
+) {
+    /** What [open] puts next to [visible]. */
+    val revealed: List<ItemConfig> get() = if (open) hidden else emptyList()
+}
+
+/**
+ * The strip's one choice of what to show, for the bar and the settings preview alike. [active]: whether an item has something
+ * to say. [expanded]: ‹ was opened. [overflow]: items didn't fit, and are offered behind ‹ (a preview, narrower than a bar,
+ * has its own). Next meeting stays at the far left: its text changes width most, and there it moves nothing else.
+ */
+fun BarConfig.stripPlan(active: (ItemConfig) -> Boolean, expanded: Boolean, overflow: Boolean): StripPlan {
+    val visible = items.filter { shows(it, active(it)) }.sortedBy { if (it.type == Store.PINNED_LEFT) 0 else 1 }
+    val hidden = if (presenting) emptyList() else behindChevron(active)
+    return StripPlan(
+        visible, hidden,
+        // Show everything has no ‹ to fold them back with, and presenting's ‹ only opens the menu.
+        open = expanded && hiddenMode != HiddenMode.SHOW_ALL && !presenting,
+        chevron = presenting || overflow || hidden.isNotEmpty(),
+        chevronAlways = presenting || hidden.isNotEmpty(),
+    )
+}

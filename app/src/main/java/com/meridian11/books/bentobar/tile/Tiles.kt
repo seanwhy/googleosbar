@@ -23,14 +23,14 @@ class BarTile : TileService() {
 
     override fun onClick() {
         Env.init(this)
-        if (Env.service == null) { openApp(); return }
+        if (!Env.running) { openApp(); return }
         Store.update { it.copy(enabled = !it.enabled) }
         refresh()
     }
 
     private fun refresh() {
         val t = qsTile ?: return
-        val running = Env.service != null
+        val running = Env.running
         val on = Store.config.value.enabled
         t.state = if (running && on) Tile.STATE_ACTIVE else Tile.STATE_INACTIVE
         t.subtitle = getString(when { !running -> R.string.tile_set_up; on -> R.string.tile_shown; else -> R.string.tile_hidden })
@@ -44,7 +44,7 @@ class AwakeTile : TileService() {
 
     override fun onClick() {
         Env.init(this)
-        if (Env.service == null) { openApp(); return }
+        if (!Env.running) { openApp(); return }
         Caffeine.toggle(null)
         refresh()
     }
@@ -54,10 +54,10 @@ class AwakeTile : TileService() {
         val on = Caffeine.active()
         t.state = if (on) Tile.STATE_ACTIVE else Tile.STATE_INACTIVE
         t.subtitle = when {
-            Env.service == null -> getString(R.string.tile_set_up_bentobar)
+            !Env.running -> getString(R.string.tile_set_up_bentobar)
             !on -> getString(R.string.common_off)
             Caffeine.until.value == Caffeine.FOREVER -> getString(R.string.common_on)
-            else -> Fmt.duration(Caffeine.until.value - System.currentTimeMillis())
+            else -> Fmt.duration(Caffeine.left(Caffeine.until.value))
         }
         t.updateTile()
     }

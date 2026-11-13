@@ -14,7 +14,7 @@ class BarMenuActivity : Activity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         Env.init(this)
-        val opened = (Env.service as? BarService)?.controller()?.openBarMenu() == true
+        val opened = BarService.current?.controller()?.openBarMenu() == true
         if (!opened) MainActivity.open(this, null)
         finish()
     }

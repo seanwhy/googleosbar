@@ -25,6 +25,15 @@ object SliderMath {
         return if (steps <= 0) l else Math.round(l * steps).toFloat() / steps
     }
 
+    /**
+     * The whole number a settings slider stands on: the nearest, since a stop can come in a hair under its number
+     * (6.9999995 for 7), where turning it into an Int would give one less.
+     */
+    fun stop(value: Float): Int = Math.round(value)
+
+    /** How many steps a settings slider over [range] needs for every whole number in it to be a stop. */
+    fun stops(range: IntRange): Int = (range.last - range.first - 1).coerceAtLeast(0)
+
     /** Which step [level] stands for, 0 to [steps]: what an item hands to the system (a volume index). */
     fun step(level: Float, steps: Int): Int = if (steps <= 0) 0 else Math.round(snap(level, steps) * steps)
 
@@ -84,7 +93,7 @@ object SliderMath {
  *
  * A mouse, a touchpad or a stylus follows from the press on. A finger first has to say what it is
  * about: a tap sets the level when it lifts, a move past the touch slop makes the level follow, a
- * long hold asks for the item's menu. A click or a tap never sets nothing at all (its lowest level
+ * long hold asks for the item's menu when it is that long ([held]). A click or a tap never sets nothing at all (its lowest level
  * is one step): only a pointer that has really moved to another level can, so a click that
  * trembles at the track's start is still a click.
  */
@@ -103,7 +112,11 @@ class SliderGesture(private val steps: Int) {
     var down = false; private set
     /** The level follows the pointer. */
     var following = false; private set
+    /** A finger is down that has not said yet what it is about: a hold is being waited for. */
+    val holding: Boolean get() = down && !following && !strayed
     private var moved = false
+    /** The finger went off the slider or across it, past the slop or out of its zone: it is no hold any more, and it may still lift as a tap. */
+    private var strayed = false
     /** The level under the pointer when it was last looked at, on its step; NaN: not looked at yet. */
     private var under = Float.NaN
     /** The last level reported; NaN: none yet. */
@@ -114,17 +127,20 @@ class SliderGesture(private val steps: Int) {
      * Returns the level to report, or null (a finger: nothing yet).
      */
     fun press(level: Float, follows: Boolean): Float? {
-        down = true; moved = false; following = follows; said = Float.NaN
+        down = true; moved = false; following = follows; strayed = false; said = Float.NaN
         under = if (follows) SliderMath.snap(level, steps) else Float.NaN
         return if (follows) say(SliderMath.atLeastOneStep(level, steps)) else null
     }
 
     /**
-     * The pointer moved and is over [level] now. [pastSlop]: it is far enough from where it went down
-     * for a finger to mean it. Returns a level to report, or null: only a new level is news.
+     * The pointer moved and is over [level] now. [pastSlop]: it is far enough along the track from where
+     * it went down for a finger to mean it. [strayed]: it has gone off the track past the slop, or out of
+     * the slider's zone, so a finger is no longer held still. Returns a level to report, or null: only a
+     * new level is news.
      */
-    fun move(level: Float, pastSlop: Boolean): Float? {
+    fun move(level: Float, pastSlop: Boolean, strayed: Boolean = false): Float? {
         if (!down) return null
+        if (strayed) this.strayed = true
         if (!following && pastSlop) following = true
         if (!following) return null
         val l = SliderMath.snap(level, steps)
@@ -135,10 +151,9 @@ class SliderGesture(private val steps: Int) {
     }
 
     /**
-     * The pointer let go over [level]. [inside]: it is still on the slider; [longHold]: it was down
-     * for as long as a long press takes. Both only matter for a finger that never followed.
+     * The pointer let go over [level]. [inside]: it is still on the slider; it only matters for a finger that never followed.
      */
-    fun release(level: Float, inside: Boolean, longHold: Boolean): End {
+    fun release(level: Float, inside: Boolean): End {
         if (!down) return End.None
         val followed = following
         down = false; following = false
@@ -146,9 +161,15 @@ class SliderGesture(private val steps: Int) {
             // A drag ends where it is let go; a click ends on the level it set when the button went down.
             followed -> if (moved || said.isNaN()) End.Level(SliderMath.snap(level, steps)) else End.Level(said)
             !inside -> End.None
-            longHold -> End.Menu
             else -> End.Level(SliderMath.atLeastOneStep(level, steps))
         }
+    }
+
+    /** A finger stayed down for the system's long-press time without saying more: the item's menu, now, and the press is over. Nothing is set. */
+    fun held(): End {
+        if (!holding) return End.None
+        down = false
+        return End.Menu
     }
 
     /**

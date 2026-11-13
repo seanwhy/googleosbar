@@ -303,12 +303,16 @@ class WeatherLoadTest {
         val plain = load()!!
         assertEquals(Failure.SLOW_DOWN, plain.failure)
         assertEquals(60 * min, WeatherRules.every(plain))
+        Http.resetCounts() // Each answer here is the service's own: the wait Http holds for the service is another matter (HttpTest).
         assertEquals(120 * min, WeatherRules.every(load()!!))
+        Http.resetCounts()
         assertEquals(60 * min, WeatherRules.every(load()!!))
+        Http.resetCounts()
         // Any answer that asks for more patience than a quarter of an hour is "slow down", so the words and the wait agree.
         val busy = load()!!
         assertEquals(Failure.SLOW_DOWN, busy.failure)
         assertEquals(60 * min, WeatherRules.every(busy))
+        Http.resetCounts()
         assertEquals(Failure.NO_ANSWER, load()!!.failure)
     }
 

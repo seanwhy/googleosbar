@@ -17,6 +17,22 @@ import org.junit.Test
  * of the line stand.
  */
 class SliderMathTest {
+    @Test fun aStopThatComesInAHairUnderItsNumberIsThatNumber() {
+        assertEquals(7, SliderMath.stop(6.9999995f))
+        assertEquals(10, SliderMath.stop(10.00001f))
+        assertEquals(4, SliderMath.stop(4f))
+        for (n in 4..64) assertEquals(n, SliderMath.stop(n - 0.00001f))
+    }
+
+    @Test fun everyWholeNumberInARangeIsAStopHoweverLongTheRange() {
+        // Spacer's 4..64 used to be capped at 40 steps, which snapped 1.46 apart: 7, 10, 13 and so on could not be set.
+        assertEquals(59, SliderMath.stops(4..64))
+        assertEquals(23, SliderMath.stops(0..24))
+        assertEquals(31, SliderMath.stops(8..40))
+        assertEquals(0, SliderMath.stops(4..4))
+        assertEquals(0, SliderMath.stops(4..5))
+    }
+
     // A track 64 px wide that starts 10 px in.
     private fun at(x: Float, steps: Int = 0, rtl: Boolean = false) = SliderMath.level(x, left = 10f, width = 64f, steps = steps, rtl = rtl)
 

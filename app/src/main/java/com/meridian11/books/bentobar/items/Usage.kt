@@ -1,6 +1,7 @@
 package com.meridian11.books.bentobar.items
 
 import android.Manifest
+import android.annotation.SuppressLint
 import android.app.AppOpsManager
 import android.app.usage.NetworkStats
 import android.app.usage.NetworkStatsManager
@@ -103,9 +104,12 @@ object Usage {
     @Immutable
     data class AppUse(val label: String, val bytes: Long, val icon: ImageBitmap?, val sym: String = Sym.APPS)
 
-    /** A loaded list. [noEthernet]: on Ethernet, but Android wouldn't report Ethernet use per app. */
+    /**
+     * A loaded list. [noEthernet]: on Ethernet, but Android wouldn't report Ethernet use per app. [launcherAppsOnly]: the list
+     * counts only the apps that have a launcher entry (the manifest's package visibility), which the menu says under it.
+     */
     @Immutable
-    data class Top(val apps: List<AppUse>, val noEthernet: Boolean = false)
+    data class Top(val apps: List<AppUse>, val noEthernet: Boolean = false, val launcherAppsOnly: Boolean = false)
 
     private val worker by lazy {
         Executors.newSingleThreadExecutor { r -> Thread(r, "BentoBar-usage").apply { isDaemon = true; priority = Thread.MIN_PRIORITY } }
@@ -196,6 +200,9 @@ object Usage {
         return Top(top, noEthernet = ethernetFailed && onEthernet)
     }
 
+    // QueryPermissionsNeeded: BentoBar asks for no QUERY_ALL_PACKAGES, on purpose. Package visibility shows the apps with a launcher entry
+    // (see the manifest's <queries>), so a package without one is not listed; the menu says so under the list (launcherAppsOnly).
+    @SuppressLint("QueryPermissionsNeeded")
     private fun loadStorage(context: Context): Top {
         val ssm = context.getSystemService(StorageStatsManager::class.java) ?: return Top(emptyList())
         val pm = context.packageManager
@@ -209,7 +216,7 @@ object Usage {
             } catch (e: Exception) { null }
         }
         return Top(sizes.sortedByDescending { it.second }.take(TOP)
-            .map { (pkg, bytes) -> AppUse(label(pm, pkg), bytes, icon(pm, pkg)) })
+            .map { (pkg, bytes) -> AppUse(label(pm, pkg), bytes, icon(pm, pkg)) }, launcherAppsOnly = true)
     }
 
     private fun label(pm: PackageManager, pkg: String): String = runCatching {
@@ -262,6 +269,7 @@ fun TopAppsSection(list: Usage.TopList, refreshMs: Long, title: String, optIn: S
         else -> t.apps.forEach { AppUseRow(it) }
     }
     if (t?.noEthernet == true) MenuNote(stringResource(R.string.usage_no_ethernet))
+    if (t?.launcherAppsOnly == true && t.apps.isNotEmpty()) MenuNote(stringResource(R.string.usage_storage_launcher_only))
 }
 
 @Composable

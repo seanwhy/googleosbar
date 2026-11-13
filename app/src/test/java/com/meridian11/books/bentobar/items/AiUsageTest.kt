@@ -155,4 +155,289 @@ class AiUsageTest {
             tmpDir.deleteRecursively()
         }
     }
+
+    @Test
+    fun decodesTimeoutAndLastOkHistory() {
+        val tmpDir = File(System.getProperty("java.io.tmpdir"), "bentobar_ai_hist_${System.nanoTime()}")
+        tmpDir.mkdirs()
+        try {
+            val file = File(tmpDir, "snapshot.json")
+            file.writeText(
+                """
+                {
+                  "updated_at": 2000,
+                  "antigravity": {
+                    "status": "timeout",
+                    "error": "Read timed out after 15s",
+                    "fetched_at": 2000,
+                    "last_ok_at": 1850,
+                    "last_ok": {
+                      "status": "ok",
+                      "model": "Gemini 4 Argon",
+                      "gemini_weekly": { "remaining_percent": 84.0, "used_percent": 16.0, "reset_in_sec": 3600 }
+                    }
+                  },
+                  "codex": {
+                    "status": "error",
+                    "error": "HTTP 502 Bad Gateway",
+                    "fetched_at": 2000,
+                    "last_ok_at": 1800,
+                    "last_ok": {
+                      "status": "ok",
+                      "plan_type": "plus",
+                      "window_5h": { "used_percent": 22.0, "remaining_percent": 78.0, "reset_in_sec": 18000 },
+                      "window_weekly": { "used_percent": 40.0, "remaining_percent": 60.0, "reset_in_sec": 604800 }
+                    }
+                  },
+                  "grok": {
+                    "status": "ok",
+                    "fetched_at": 2000,
+                    "last_ok_at": 2000,
+                    "cycle": { "used_percent": 12.5, "remaining_percent": 87.5, "reset_in_sec": 7200 },
+                    "grok_build": null,
+                    "grok_build_status": "timeout",
+                    "grok_build_error": "ws handshake timed out",
+                    "grok_build_ok_at": 1700,
+                    "last_ok_grok_build": { "used_percent": 42.5, "remaining_percent": 57.5, "reset_in_sec": 7200 }
+                  }
+                }
+                """.trimIndent()
+            )
+            AiUsageReader.clearCacheForTesting()
+            val snap = AiUsageReader.read(2010_000L, file.absolutePath)
+            assertNotNull(snap)
+            snap!!
+            assertEquals(2000L, snap.antigravity?.fetchedAt)
+            assertEquals("timeout", snap.antigravity?.status)
+            assertEquals(1850L, snap.antigravity?.lastOkAt)
+            assertEquals(84.0f, snap.antigravity?.lastOk?.geminiWeekly?.remainingPercent ?: -1f, 0.01f)
+            assertEquals("error", snap.codex?.status)
+            assertEquals(1800L, snap.codex?.lastOkAt)
+            assertEquals(22.0f, snap.codex?.lastOk?.window5h?.usedPercent ?: -1f, 0.01f)
+            assertEquals("ok", snap.grok?.status)
+            assertEquals("timeout", snap.grok?.grokBuildStatus)
+            assertEquals("ws handshake timed out", snap.grok?.grokBuildError)
+            assertEquals(1700L, snap.grok?.grokBuildOkAt)
+            assertEquals(42.5f, snap.grok?.lastOkGrokBuild?.usedPercent ?: -1f, 0.01f)
+        } finally {
+            AiUsageReader.clearCacheForTesting()
+            tmpDir.deleteRecursively()
+        }
+    }
+
+    @Test
+    fun resolverImmediateTimeoutAndPreservesLastOk() {
+        val tmpDir = File(System.getProperty("java.io.tmpdir"), "bentobar_ai_resolve_${System.nanoTime()}")
+        tmpDir.mkdirs()
+        try {
+            val file = File(tmpDir, "snapshot.json")
+            file.writeText(
+                """
+                {
+                  "updated_at": 2000,
+                  "antigravity": {
+                    "status": "timeout",
+                    "error": "Read timed out after 15s",
+                    "fetched_at": 2000,
+                    "last_ok_at": 1850,
+                    "last_ok": {
+                      "status": "ok",
+                      "gemini_weekly": { "remaining_percent": 84.0, "used_percent": 16.0 }
+                    }
+                  },
+                  "codex": {
+                    "status": "error",
+                    "error": "HTTP 502",
+                    "fetched_at": 2000,
+                    "last_ok_at": 1800,
+                    "last_ok": {
+                      "status": "ok",
+                      "window_5h": { "used_percent": 18.0, "remaining_percent": 82.0 }
+                    }
+                  },
+                  "grok": {
+                    "status": "ok",
+                    "fetched_at": 2000,
+                    "last_ok_at": 2000,
+                    "cycle": { "used_percent": 20.0, "remaining_percent": 80.0, "reset_in_sec": 7200 },
+                    "grok_build": null,
+                    "grok_build_status": "timeout",
+                    "grok_build_error": "ws timeout",
+                    "grok_build_ok_at": 1700,
+                    "last_ok_grok_build": { "used_percent": 42.5, "remaining_percent": 57.5 }
+                  }
+                }
+                """.trimIndent()
+            )
+            AiUsageReader.clearCacheForTesting()
+            val nowMs = 2010_000L
+
+            val ag = AiUsageReader.resolveAntigravity(nowMs, file.absolutePath)
+            assertNull(ag.live)
+            assertEquals(QuotaProblem.TIMEOUT, ag.problem)
+            assertTrue(ag.isTimedOut)
+            assertEquals("Read timed out after 15s", ag.errorMessage)
+            assertEquals(1850L, ag.lastOkAtSec)
+            assertEquals(84.0f, ag.lastOk?.geminiWeekly?.remainingPercent ?: -1f, 0.01f)
+
+            val cx = AiUsageReader.resolveCodex(nowMs, file.absolutePath)
+            assertNull(cx.live)
+            assertEquals(QuotaProblem.ERROR, cx.problem)
+            assertTrue(cx.isTimedOut)
+            assertEquals("HTTP 502", cx.errorMessage)
+            assertEquals(1800L, cx.lastOkAtSec)
+            assertNotNull(cx.lastOk?.window5h)
+
+            val gk = AiUsageReader.resolveGrok(nowMs, file.absolutePath)
+            assertNotNull(gk.live)
+            assertNull(gk.problem)
+            assertFalse(gk.isTimedOut)
+
+            val gb = AiUsageReader.resolveGrokBot(nowMs, file.absolutePath)
+            assertNull(gb.live)
+            assertEquals(QuotaProblem.TIMEOUT, gb.problem)
+            assertTrue(gb.isTimedOut)
+            assertEquals("ws timeout", gb.errorMessage)
+            assertEquals(1700L, gb.lastOkAtSec)
+            assertEquals(42.5f, gb.lastOk?.usedPercent ?: -1f, 0.01f)
+        } finally {
+            AiUsageReader.clearCacheForTesting()
+            tmpDir.deleteRecursively()
+        }
+    }
+
+    @Test
+    fun resolverStaleAfter300SecondsPreservesLiveAsLastOk() {
+        val tmpDir = File(System.getProperty("java.io.tmpdir"), "bentobar_ai_stale_${System.nanoTime()}")
+        tmpDir.mkdirs()
+        try {
+            val file = File(tmpDir, "snapshot.json")
+            file.writeText(
+                """
+                {
+                  "updated_at": 1000,
+                  "antigravity": {
+                    "status": "ok",
+                    "fetched_at": 1000,
+                    "last_ok_at": 1000,
+                    "gemini_weekly": { "remaining_percent": 90.0, "used_percent": 10.0 }
+                  },
+                  "codex": {
+                    "status": "ok",
+                    "fetched_at": 1000,
+                    "last_ok_at": 1000,
+                    "window_5h": { "used_percent": 12.0, "remaining_percent": 88.0 }
+                  },
+                  "grok": {
+                    "status": "ok",
+                    "fetched_at": 1000,
+                    "last_ok_at": 1000,
+                    "cycle": { "used_percent": 10.0, "remaining_percent": 90.0, "reset_in_sec": 7200 },
+                    "grok_build_status": "ok",
+                    "grok_build": { "used_percent": 33.0, "remaining_percent": 67.0 }
+                  }
+                }
+                """.trimIndent()
+            )
+            AiUsageReader.clearCacheForTesting()
+            val freshMs = 1299_000L // 299s <= 300s
+            assertFalse(AiUsageReader.resolveAntigravity(freshMs, file.absolutePath).isTimedOut)
+            assertFalse(AiUsageReader.resolveCodex(freshMs, file.absolutePath).isTimedOut)
+            assertFalse(AiUsageReader.resolveGrok(freshMs, file.absolutePath).isTimedOut)
+            assertFalse(AiUsageReader.resolveGrokBot(freshMs, file.absolutePath).isTimedOut)
+
+            val staleMs = 1301_000L // 301s > 300s
+            AiUsageReader.clearCacheForTesting()
+            val agStale = AiUsageReader.resolveAntigravity(staleMs, file.absolutePath)
+            assertNull(agStale.live)
+            assertEquals(QuotaProblem.STALE, agStale.problem)
+            assertTrue(agStale.isTimedOut)
+            assertEquals(1000L, agStale.lastOkAtSec)
+            assertNotNull(agStale.lastOk)
+
+            val gbStale = AiUsageReader.resolveGrokBot(staleMs, file.absolutePath)
+            assertNull(gbStale.live)
+            assertEquals(QuotaProblem.STALE, gbStale.problem)
+            assertTrue(gbStale.isTimedOut)
+            assertEquals(33.0f, gbStale.lastOk?.usedPercent ?: -1f, 0.01f)
+            assertEquals(1000L, gbStale.lastOkAtSec)
+        } finally {
+            AiUsageReader.clearCacheForTesting()
+            tmpDir.deleteRecursively()
+        }
+    }
+
+    @Test
+    fun resolverUnreachableUnconfiguredAndNestedGrokHistory() {
+        val tmpDir = File(System.getProperty("java.io.tmpdir"), "bentobar_ai_mem_${System.nanoTime()}")
+        tmpDir.mkdirs()
+        try {
+            val file = File(tmpDir, "snapshot.json")
+            file.writeText(
+                """
+                {
+                  "updated_at": 1000,
+                  "antigravity": {
+                    "status": "ok",
+                    "fetched_at": 1000,
+                    "last_ok_at": 1000,
+                    "gemini_weekly": { "remaining_percent": 76.0, "used_percent": 24.0 }
+                  },
+                  "codex": { "status": "unconfigured" },
+                  "grok": {
+                    "status": "timeout",
+                    "error": "DNS fail",
+                    "fetched_at": 1000,
+                    "last_ok_at": 900,
+                    "last_ok": {
+                      "status": "ok",
+                      "cycle": { "used_percent": 10.0, "remaining_percent": 90.0 },
+                      "grok_build": { "used_percent": 12.0, "remaining_percent": 88.0 }
+                    },
+                    "grok_build_ok_at": 910,
+                    "last_ok_grok_build": { "used_percent": 15.0, "remaining_percent": 85.0 }
+                  }
+                }
+                """.trimIndent()
+            )
+            AiUsageReader.clearCacheForTesting()
+
+            val okAg = AiUsageReader.resolveAntigravity(1001_000L, file.absolutePath)
+            assertNotNull(okAg.live)
+
+            val unconfCx = AiUsageReader.resolveCodex(1001_000L, file.absolutePath)
+            assertNull(unconfCx.live)
+            assertEquals(QuotaProblem.UNCONFIGURED, unconfCx.problem)
+            assertFalse(unconfCx.isTimedOut)
+
+            val timedOutBot = AiUsageReader.resolveGrokBot(1001_000L, file.absolutePath)
+            assertNull(timedOutBot.live)
+            assertEquals(QuotaProblem.TIMEOUT, timedOutBot.problem)
+            assertTrue(timedOutBot.isTimedOut)
+            assertNotNull(timedOutBot.lastOk)
+
+            // Delete snapshot: missing customPath resolves to UNREACHABLE
+            file.delete()
+            val missingFileAg = AiUsageReader.resolveAntigravity(1006_000L, file.absolutePath)
+            assertNull(missingFileAg.live)
+            assertEquals(QuotaProblem.UNREACHABLE, missingFileAg.problem)
+            assertTrue(missingFileAg.isTimedOut)
+
+            // Pure resolver preserves in-memory lastOk when snapshot becomes unreachable
+            val unreachableMemAg = AiUsageResolver.resolveAntigravity(
+                snapshot = null,
+                nowSec = 1006L,
+                memLastOk = okAg.live,
+                memLastOkAtSec = 1000L,
+            )
+            assertNull(unreachableMemAg.live)
+            assertEquals(QuotaProblem.UNREACHABLE, unreachableMemAg.problem)
+            assertTrue(unreachableMemAg.isTimedOut)
+            assertEquals(1000L, unreachableMemAg.lastOkAtSec)
+            assertEquals(76.0f, unreachableMemAg.lastOk?.geminiWeekly?.remainingPercent ?: -1f, 0.01f)
+        } finally {
+            AiUsageReader.clearCacheForTesting()
+            tmpDir.deleteRecursively()
+        }
+    }
 }

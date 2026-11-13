@@ -13,7 +13,6 @@ import android.provider.OpenableColumns
 import android.view.DragEvent
 import android.view.KeyEvent
 import android.view.View
-import android.view.accessibility.AccessibilityNodeInfo
 import android.widget.Toast
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
@@ -102,6 +101,7 @@ object CloudClipboardItem : ItemType(
     "brand:cloud_clipboard",
     R.string.item_cloud_clipboard_desc,
 ) {
+    override val group = ItemGroup.TOOLS
     override val menuWidthDp = 360
     override val iconOnly = true
     override val canBeActive = true
@@ -271,9 +271,9 @@ object CloudClipboardItem : ItemType(
             if (!rawText.isNullOrEmpty() && !rawText.startsWith("""{"version":""")) {
                 textParts.add(rawText)
             } else if (item.uri == null && intent?.data == null) {
-                val coerced = runCatching { item.coerceToText(Env.app)?.toString()?.trim() }.getOrNull()
-                if (!coerced.isNullOrEmpty() && !coerced.startsWith("""{"version":""")) {
-                    textParts.add(coerced)
+                val html = runCatching { item.htmlText?.toString()?.trim() }.getOrNull()
+                if (!html.isNullOrEmpty() && !html.startsWith("""{"version":""")) {
+                    textParts.add(html)
                 }
             }
         }
@@ -1264,15 +1264,7 @@ object CloudClipboardItem : ItemType(
         if (paste) {
             host.afterClose {
                 runCatching {
-                    val node = Env.service?.findFocus(AccessibilityNodeInfo.FOCUS_INPUT)
-                    if (node != null) {
-                        if (!node.performAction(AccessibilityNodeInfo.ACTION_PASTE)) {
-                            val args = Bundle().apply {
-                                putCharSequence(AccessibilityNodeInfo.ACTION_ARGUMENT_SET_TEXT_CHARSEQUENCE, contentToCopy)
-                            }
-                            node.performAction(AccessibilityNodeInfo.ACTION_SET_TEXT, args)
-                        }
-                    }
+                    com.meridian11.books.bentobar.bar.BarService.pasteIntoFocus(contentToCopy)
                 }
             }
         } else {
@@ -1901,9 +1893,9 @@ object CloudClipboardItem : ItemType(
         }
 
         SwitchRow(
-            label = stringResource(R.string.clipboard_paste_on_click),
+            label = "点击条目直接粘贴到当前输入框",
             checked = item.optBool("pasteOnClick", false),
-            help = stringResource(R.string.clipboard_paste_on_click_help),
+            help = "同时复制内容至本机剪切板",
         ) { paste ->
             set(item.with("pasteOnClick", if (paste) "true" else null))
         }

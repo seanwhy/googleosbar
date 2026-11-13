@@ -1,6 +1,5 @@
 package com.meridian11.books.bentobar.items
 
-import android.accessibilityservice.AccessibilityService
 import android.annotation.SuppressLint
 import android.app.ActivityManager
 import android.content.ActivityNotFoundException
@@ -23,10 +22,12 @@ import androidx.annotation.PluralsRes
 import androidx.annotation.StringRes
 import com.meridian11.books.bentobar.BuildConfig
 import com.meridian11.books.bentobar.R
+import com.meridian11.books.bentobar.bar.BarService
 import com.meridian11.books.bentobar.data.Online
 import com.meridian11.books.bentobar.data.Section
 import com.meridian11.books.bentobar.data.Store
 import com.meridian11.books.bentobar.net.Http
+import com.meridian11.books.bentobar.util.Now
 
 /**
  * Process-wide context for items: the app context, the accessibility service while it runs,
@@ -37,8 +38,8 @@ object Env {
     const val TAG = "BentoBar"
     lateinit var app: Context private set
 
-    /** The running accessibility service (global actions, overlay windows), or null. */
-    @Volatile var service: AccessibilityService? = null
+    /** Whether the accessibility service is connected. The service itself stays inside bar/: items never hold it. */
+    val running: Boolean get() = BarService.current != null
 
     val net = NetSampler()
     val cpu = CpuSampler()
@@ -50,6 +51,24 @@ object Env {
     fun init(context: Context) {
         if (::app.isInitialized) return
         app = context.applicationContext
+        // The words of Fmt's formats, from the app's text: read each time, so a change of language is followed.
+        com.meridian11.books.bentobar.util.Fmt.words = com.meridian11.books.bentobar.util.Fmt.Words(
+            percent = { str(R.string.common_percent, it) },
+            byteUnit = { app.resources.getStringArray(R.array.fmt_units_bytes)[it] },
+            rateUnit = { app.resources.getStringArray(R.array.fmt_units_rate)[it] },
+            daysHours = { d, h -> str(R.string.fmt_days_hours, d, h) },
+            hoursMinutes = { h, m -> str(R.string.fmt_hours_minutes, h, m) },
+            minutes = { str(R.string.fmt_minutes, it) },
+            seconds = { str(R.string.fmt_seconds, it) },
+            aloud = { d, h, m, s ->
+                val parts = listOfNotNull(
+                    (d.takeIf { it > 0 })?.let { plural(R.plurals.common_days, it.toInt()) },
+                    (h.takeIf { it > 0 })?.let { plural(R.plurals.common_hours, it.toInt()) },
+                    (m.takeIf { it > 0 })?.let { plural(R.plurals.common_minutes, it.toInt()) },
+                    (s.takeIf { it > 0 || (d == 0L && h == 0L && m == 0L) })?.let { plural(R.plurals.common_seconds, it.toInt()) })
+                parts.reduce { a, b -> str(R.string.fmt_spoken_pair, a, b) }
+            },
+        )
         Store.init(app)
         // The switches for the three online services and the user's keys: in the no-backup directory, which
         // Android leaves out of backups and device transfers. Then the rules for going online at all.
@@ -59,10 +78,11 @@ object Env {
         NowPlaying.init(app)
         // Before Timers: a timer that finished while BentoBar wasn't running ends in init, and its
         // chip update asks the calendar.
-        Calendar.init(app)
+        Calendar.init(app) { Ticker.refresh(EventItem.type) }
         com.meridian11.books.bentobar.util.Fonts.init(app)
         Timers.init(app)
         Caffeine.init(app)
+        ChargeOptimization.init(app)
     }
 
     /**
@@ -77,7 +97,16 @@ object Env {
             Online.on(service) && Ticker.running &&
                 Store.config.value.items.any { it.section != Section.OFF && Items.of(it.type)?.online == service }
         }
-        Http.connected = { runCatching { app.getSystemService(ConnectivityManager::class.java)?.activeNetwork != null }.getOrDefault(true) }
+        Http.clock = Now::elapsed
+        // The one read of a key for a request: the transport adds it, so no item's code ever holds one.
+        Http.key = { host -> Online.key(Online.serviceOf(host)).ifEmpty { null } }
+        Http.connected = {
+            runCatching {
+                val cm = app.getSystemService(ConnectivityManager::class.java)
+                val network = cm?.activeNetwork
+                Http.usable(network != null, network?.let { cm.getNetworkCapabilities(it)?.hasCapability(NetworkCapabilities.NET_CAPABILITY_CAPTIVE_PORTAL) } == true)
+            }.getOrDefault(true)
+        }
         Http.onMain = { android.os.Looper.myLooper() == android.os.Looper.getMainLooper() }
         // The host, the path and what came of it, in debug builds only; never a query (a key, a city) and never a reply.
         if (BuildConfig.DEBUG) Http.log = { Log.i(TAG, it) }
@@ -127,7 +156,9 @@ object Env {
     fun plural(@PluralsRes id: Int, count: Int, vararg args: Any): String =
         if (args.isEmpty()) app.resources.getQuantityString(id, count, count) else app.resources.getQuantityString(id, count, *args)
 
-    fun global(action: Int): Boolean = service?.performGlobalAction(action) ?: false
+    fun global(action: Int): Boolean = BarService.global(action)
+
+    fun toggleChargeOptimization(): Boolean = BarService.toggleChargeOptimization()
 
     /** Puts [text] on the clipboard (a flight's status, the times of a planned moment). */
     fun copy(text: String) {
@@ -191,8 +222,17 @@ class NetSampler {
         val rx = TrafficStats.getTotalRxBytes()
         val tx = TrafficStats.getTotalTxBytes()
         if (rx == TrafficStats.UNSUPPORTED.toLong() || tx == TrafficStats.UNSUPPORTED.toLong()) return
+        reading(rx, tx, now)
+    }
+
+    /**
+     * The device's byte counters at [now]. Too soon after the last reading ([MIN_GAP_MS]) a counter step says nothing: 5 KB in
+     * 10 ms would read as the 500 KB/s that makes the Network item pop out. It is left for the next reading to measure.
+     */
+    internal fun reading(rx: Long, tx: Long, now: Long) {
         rxTotal = rx; txTotal = tx
-        if (lastRx >= 0 && now > lastAt) {
+        if (lastRx >= 0 && now - lastAt < MIN_GAP_MS) return
+        if (lastRx >= 0) {
             val dt = (now - lastAt) / 1000.0
             // Counters can reset (interface restarts): treat drops as zero.
             down = ((rx - lastRx).coerceAtLeast(0)) / dt
@@ -203,6 +243,8 @@ class NetSampler {
         }
         lastRx = rx; lastTx = tx; lastAt = now
     }
+
+    private companion object { const val MIN_GAP_MS = 500L }
 
     /** "Wi-Fi", "Ethernet", … plus metered state, from the default network. */
     fun describe(context: Context): String = runCatching { describeOrThrow(context) }.getOrDefault(context.getString(R.string.network_menu_title))

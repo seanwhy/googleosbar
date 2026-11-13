@@ -76,6 +76,7 @@ object RemoteKeyboardItem : ItemType(
     "brand:remote_keyboard",
     R.string.item_remote_keyboard_desc,
 ) {
+    override val group = ItemGroup.TOOLS
     override val menuWidthDp = 370
     override val canBeActive = true
     override val discreet = true

@@ -6,7 +6,7 @@
     <string name="trigger_fx">Show when a currency pair moves %1$s or more in a day</string>
     <string name="trigger_fx_short">shows on a %1$s move</string>
 
-    <string name="fx_consent">Exchange rates come from Frankfurter (api.frankfurter.dev), which publishes reference rates from the European Central Bank. No key is needed. BentoBar asks for the table of rates at most once an hour while the bar is on screen; Frankfurter sees your IP address, as any website does.</string>
+    <string name="fx_consent">Exchange rates come from Frankfurter (api.frankfurter.dev), which publishes reference rates from the European Central Bank. No key is needed. BentoBar asks for the table of rates about once an hour while the bar is on screen (a failed try is repeated sooner); Frankfurter sees your IP address, as any website does.</string>
     <string name="fx_turn_on">Turn on Exchange rates</string>
     <string name="fx_section">Currency pairs</string>
     <string name="fx_add_label">Add pair (such as EUR/USD or USD/JPY)</string>
@@ -33,4 +33,9 @@
     <string name="fx_desc_loading">Exchange rates: loading</string>
     <string name="fx_desc_no_rates">Exchange rates: unavailable</string>
     <string name="fx_desc_live">Exchange rates: %1$s</string>
+    <string name="fx_desc_dated">Exchange rates from %2$s: %1$s</string>
+    <string name="fx_desc_missing">Exchange rates: no rate for %1$s</string>
+    <string name="fx_no_rate_for">No rate for %1$s.</string>
+    <string name="fx_no_rate">No rate published</string>
+    <string name="fx_rates_from">Rates from %1$s</string>
 </resources>

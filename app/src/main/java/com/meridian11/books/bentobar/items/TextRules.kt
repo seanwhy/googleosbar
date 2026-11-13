@@ -40,6 +40,9 @@ object TextRules {
         return text.substring(0, end)
     }
 
+    /** [text] as a bar or a menu has room for it: whole, or cut to [max] characters as a reader counts them, the last of them "…". */
+    fun short(text: String, max: Int): String = if (fits(text, max)) text else first(text, (max - 1).coerceAtLeast(0)).trimEnd() + "…"
+
     /** How many characters [text] has, as a reader counts them. */
     fun count(text: String): Int {
         val breaks = BreakIterator.getCharacterInstance(Locale.ROOT)

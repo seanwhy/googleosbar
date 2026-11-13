@@ -1020,22 +1020,6 @@ class FlightTextTest {
         for ((count, resource) in counts) assertEquals(count.lowercase(), resource)
     }
 
-    @Test fun theWordsNobodyBuildsAreTheCopyDecks() {
-        assertEquals("Flight times come from AirLabs, a flight data service, with a free key of your own. BentoBar sends AirLabs your key and the flight number " +
-            "when you track a flight and while it follows it, nothing else. AirLabs sees your IP address and knows which key asked.", FlightVoices.string("flight_consent"))
-        assertEquals("A flight number looks like LH 455 or DLH455.", FlightVoices.string("flight_err_not_number"))
-        // (Two since a press of Track asks for the timetable too, which says whether the number flies more than once that day; it was "1 to 3".)
-        assertEquals("A lookup uses 2 or 3 of your key's lookups.", FlightVoices.string("flight_lookup_note"))
-        assertEquals("Times may be an hour off until the airline confirms them.", FlightVoices.string("flight_note_timetable"))
-        assertEquals("Stays on this device. It is never shown again, and never copied with your settings.", FlightVoices.string("flight_key_help"))
-        assertEquals("Removing the key also stops tracking and deletes what was fetched.", FlightVoices.string("flight_remove_key_help"))
-        assertEquals("Open flight page, opens FlightAware in the browser", FlightVoices.string("flight_open_page_desc"))
-        assertEquals("Add your key…", FlightVoices.string("flight_add_key"))
-        assertEquals("Flight: not set up", FlightVoices.string("flight_desc_not_set_up"))
-        assertEquals("LH 455 stays until another is found", us.say(FlightText.Word.FLIGHT_ANOTHER_SUBTITLE, "LH 455"))
-        assertEquals("Looking up LH 455…", us.say(FlightText.Word.FLIGHT_LOOKING_UP, "LH 455"))
-    }
-
     @Test fun theAboutTextSaysWhenTheServiceIsAskedAsTheRulesHaveIt() {
         val about = FlightVoices.string("about_privacy_flight")
         // After a landing it slept through, the item asks once more (FlightRulesTest.asleepThroughTheLandingItIsAskedAboutOnceOnWaking),

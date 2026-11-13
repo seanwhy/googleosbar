@@ -13,9 +13,9 @@ import android.os.Looper
 import android.provider.CalendarContract
 import android.util.Log
 import com.meridian11.books.bentobar.R
+import com.meridian11.books.bentobar.util.Now
 import java.time.ZoneId
 import java.util.Locale
-import java.util.concurrent.Executors
 
 /** Upcoming calendar events from the Calendar provider (needs READ_CALENDAR). Tasks synced in by task apps are left out. */
 object Calendar {
@@ -42,61 +42,80 @@ object Calendar {
     }
 
     private const val TAG = "BentoBar"
+    /** How long what was read stays fresh. The provider changing reloads it at once, so this is only for a change it didn't tell of. */
+    const val RELOAD_MS = 15 * 60_000L
+    /**
+     * How long the calendar stays observed and loaded after its last user left. The strip hides for every panel and every
+     * full-screen flip, and it comes back in seconds: without this each of those would read 41 days again and the next
+     * meeting would be gone from the bar until that was done.
+     */
+    const val KEPT_AFTER_LAST_USER_MS = 60_000L
     private lateinit var app: Context
-    private val io = Executors.newSingleThreadExecutor()
-    private val main = Handler(Looper.getMainLooper())
-    @Volatile var events: List<Event> = emptyList(); private set
-    @Volatile private var loadedAt = 0L
-    private var observing = false
-    /** A load is running; [again]: the provider changed meanwhile, so one more follows it. Main thread only. */
-    private var loading = false
-    private var again = false
-    /** Bumped by [forget]: a load started before then must not publish. */
-    private var generation = 0
+    private var loaded: () -> Unit = {}
+    private val main by lazy { Handler(Looper.getMainLooper()) }
+    /** Who needs the calendar: the two item types while they are sampled, and the Live Update chip, which needs meetings while the service is off. Nobody: no observer, nothing loaded, nothing kept. */
+    private val users = Holders(KEPT_AFTER_LAST_USER_MS, { ms, r -> main.postDelayed(r, ms) }, { main.removeCallbacks(it) }, start = { refresh() }, stop = ::letGo)
+    /** How long [whenLoaded] waits at most: time for a read of 41 days, and well inside what Android gives a broadcast receiver. */
+    private const val LOAD_WAIT_MS = 5_000L
+    private val waiting = Waiters(LOAD_WAIT_MS, { ms, r -> main.postDelayed(r, ms) }, { main.removeCallbacks(it) })
+    /**
+     * Calendar's loading is [Refresher]'s, one load at a time and one snapshot, but on a wiring of its own: `Background`'s
+     * stops loading while nothing shows items, and the Live Update chip needs meetings while the service is off.
+     */
+    private val loader = calendarLoader(
+        Refresher.Wiring(Background.executor("calendar"), { Background.onMain(it::run) }, Now::elapsed,
+            changed = { Chips.update(app); loaded(); waiting.arrived() }, minGapMs = 0, mayLoad = { users.active && allowed() }),
+    ) { load(System.currentTimeMillis()).takeIf { allowed() } }
+    val events: List<Event> get() = loader.peek(Unit).orEmpty()
+    private var observer: ContentObserver? = null
 
-    fun init(context: Context) { app = context.applicationContext }
+    /** [loaded]: told on the main thread when what was read has changed (the items that show it are computed again). */
+    fun init(context: Context, loaded: () -> Unit = {}) { app = context.applicationContext; this.loaded = loaded }
+
+    /** [who] needs the calendar from now on: a type going live, the chip. Main thread. */
+    fun hold(who: String) = users.hold(who)
+
+    /** [who] doesn't any more. Main thread. */
+    fun release(who: String) = users.release(who)
+
+    /** Nothing has been read yet and the first load is on its way. Main thread. */
+    val loadingFirst: Boolean get() = loader.loadingFirst()
+
+    /** [done] runs when what is being loaded has come back, or after a few seconds if it doesn't say so. Main thread. */
+    fun whenLoaded(done: () -> Unit) = waiting.add(done)
 
     fun allowed() = ::app.isInitialized && app.checkSelfPermission(Manifest.permission.READ_CALENDAR) == PackageManager.PERMISSION_GRANTED &&
         Uses.on(Uses.CALENDAR)
 
     /**
-     * Reloads at most once a minute, or right away after the provider changes. One load at a time:
-     * a sync that changes hundreds of events queues one more load, not hundreds. Main thread.
+     * Reloads at most every [RELOAD_MS], or right away after the provider changes, and only while someone [hold]s the
+     * calendar. One load at a time: a sync that changes hundreds of events queues one more load, not hundreds. Main thread.
      */
     fun refresh(force: Boolean = false) {
-        val now = System.currentTimeMillis()
         if (!allowed()) { forget(); return }
-        if (!force && now - loadedAt < 60_000) return
-        loadedAt = now
         observe()
-        if (loading) { again = true; return }
-        loading = true
-        val gen = generation
-        io.execute {
-            val loaded = load(now)
-            main.post {
-                loading = false
-                if (gen == generation && allowed()) { events = loaded; Chips.update(app) }
-                if (again) { again = false; refresh(force = true) }
-            }
-        }
+        if (force) loader.refresh(Unit, afterRunning = true) else loader.want(Unit)
     }
 
     /** Calendar switched off in Setup: drop what was read, and whatever a running load returns. */
     fun forget() {
-        generation++
-        again = false
-        loadedAt = 0 // allowed again: load at once, not up to a minute later
-        if (events.isNotEmpty()) { events = emptyList(); if (::app.isInitialized) Chips.update(app) }
+        val had = events.isNotEmpty()
+        loader.forget()
+        if (had && ::app.isInitialized) Chips.update(app)
     }
 
     private fun observe() {
-        if (observing) return
-        observing = true
-        app.contentResolver.registerContentObserver(CalendarContract.Instances.CONTENT_URI, true,
-            object : ContentObserver(main) {
-                override fun onChange(selfChange: Boolean) { refresh(force = true) }
-            })
+        if (observer != null || !users.active) return
+        observer = object : ContentObserver(main) {
+            override fun onChange(selfChange: Boolean) { refresh(force = true) }
+        }.also { app.contentResolver.registerContentObserver(CalendarContract.Instances.CONTENT_URI, true, it) }
+    }
+
+    /** The last user has gone: nothing listens to the provider and nothing it said is kept. */
+    private fun letGo() {
+        observer?.let { app.contentResolver.unregisterContentObserver(it) }
+        observer = null
+        forget()
     }
 
     /**
@@ -126,6 +145,8 @@ object Calendar {
             CalendarContract.Instances.CALENDAR_ACCESS_LEVEL, CalendarContract.Instances.OWNER_ACCOUNT,
         )
         val out = ArrayList<Event>()
+        // Events whose notes link a task in a task app: a task if nothing says it is a meeting ([Meetings.isTask]).
+        val taskLinked = HashSet<Long>()
         // The calendar owner of each event, for telling the user apart from other attendees.
         val owners = HashMap<Long, String>()
         // An occurrence that crosses from one span into the next comes back from both.
@@ -134,19 +155,18 @@ object Calendar {
             while (c.moveToNext()) {
                 if (c.getInt(9) == 0) continue // calendar hidden by the user
                 if (c.getInt(8) == CalendarContract.Attendees.ATTENDEE_STATUS_DECLINED) continue
-                val location = c.getString(6).orEmpty()
-                val text = location + "\n" + c.getString(7).orEmpty()
-                // Tasks synced in from a task app (Todoist links each one, open or done) aren't events:
-                // they show nowhere, not in the agenda, the month view, Next meeting or the chip.
-                if (CallLinks.isTask(text)) continue
+                val rawLocation = c.getString(6).orEmpty()
+                // A call link is looked for in the text as it came: a place cut short could lose it.
+                val text = rawLocation + "\n" + c.getString(7).orEmpty()
                 val allDay = c.getInt(4) != 0
                 val id = c.getLong(0)
                 if (!seen.add(id to c.getLong(2))) continue
+                if (CallLinks.isTask(text)) taskLinked += id
                 c.getString(11)?.let { owners[id] = it }
                 out += Event(
-                    eventId = id, title = c.getString(1).orEmpty().ifBlank { app.getString(R.string.calendar_no_title) },
+                    eventId = id, title = Meetings.title(c.getString(1), app.getString(R.string.calendar_no_title)),
                     begin = c.getLong(2), end = c.getLong(3), allDay = allDay,
-                    color = c.getInt(5), location = location,
+                    color = c.getInt(5), location = Meetings.location(rawLocation),
                     editable = c.getInt(10) >= CalendarContract.Calendars.CAL_ACCESS_CONTRIBUTOR,
                     meeting = false, link = CallLinks.find(text),
                 )
@@ -155,10 +175,12 @@ object Calendar {
         // Without a call link, a meeting needs someone else invited. Attendees are read for every
         // loaded candidate, once per load (not per tick): Next meeting needs today's, and the calendar
         // leaves meetings out of its agenda on any day the month view can show.
-        val candidates = out.filter { it.link == null && !it.allDay && it.editable }.mapTo(HashSet()) { it.eventId }
+        val candidates = out.filter { Meetings.asksAttendees(it.link != null, it.eventId in taskLinked, it.allDay, it.editable) }.mapTo(HashSet()) { it.eventId }
         val withOthers = runCatching { withOthers(candidates, owners) }
             .onFailure { Log.w(TAG, "attendee query failed", it) }.getOrDefault(emptySet())
-        out.map { e ->
+        // Tasks synced in from a task app (Todoist links each one, open or done) aren't events:
+        // they show nowhere, not in the agenda, the month view, Next meeting or the chip.
+        out.filterNot { Meetings.isTask(it.eventId in taskLinked, it.link != null, it.eventId in withOthers) }.map { e ->
             val meeting = Meetings.isMeeting(e.allDay, e.editable, e.link != null, e.eventId in withOthers)
             if (meeting) e.copy(meeting = true) else e
         }.sortedBy { it.begin }
@@ -239,3 +261,13 @@ object Calendar {
             Env.launch(Intent(Intent.ACTION_VIEW, Uri.parse("https://www.google.com/maps/search/?api=1&query=$q")))
     }
 }
+
+/**
+ * How the calendar loads: [Refresher]'s rules, on the calendar's numbers. Pure, so the rules run in a test; [Calendar] gives
+ * it the app's wiring and the query.
+ */
+internal fun calendarLoader(wiring: Refresher.Wiring, load: () -> List<Calendar.Event>?): Refresher<Unit, List<Calendar.Event>> =
+    Refresher(wiring, every = { _, _ -> Calendar.RELOAD_MS }, load = { _, _ -> load() })
+
+/** The load under way is the first: nothing has been read yet, so finding no meeting would only mean not knowing. */
+internal fun Refresher<Unit, List<Calendar.Event>>.loadingFirst(): Boolean = loading(Unit) && peek(Unit) == null

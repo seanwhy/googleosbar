@@ -7,7 +7,6 @@ import com.meridian11.books.bentobar.net.Host
 import com.meridian11.books.bentobar.net.Http
 import com.meridian11.books.bentobar.net.Reply
 import com.meridian11.books.bentobar.net.Request
-import com.meridian11.books.bentobar.net.Why
 
 // Requests and loading for the Air quality and UV item (Open-Meteo). No Android, and no logging.
 
@@ -19,27 +18,27 @@ object AirLoad {
         "hourly" to "uv_index",
         "timezone" to "auto",
         "timeformat" to "unixtime",
-        "forecast_hours" to "24",
+        // Today, in the place's own time (timezone=auto), since the menu says "Peak UV today": 24 hours from now would be tomorrow's midday by evening.
+        "forecast_days" to "1",
     ))
 
-    fun place(item: ItemConfig, here: Fix?): Place? =
-        if (WeatherRules.here(item)) here?.let { WeatherRules.nearby(it.lat, it.lon) } else WeatherRules.place(item)
+    /** The place [item] asks about: its city, or where the device is ([here], already rounded by [WeatherHere.place]). */
+    fun place(item: ItemConfig, here: Place?): Place? = if (WeatherRules.here(item)) here else WeatherRules.place(item)
 
-    fun places(items: List<ItemConfig>, here: Fix? = null): Set<Place> =
+    fun places(items: List<ItemConfig>, here: Place? = null): Set<Place> =
         items.filter { it.type == "air" && it.section != Section.OFF }.mapNotNullTo(HashSet()) { place(it, here) }
 
-    fun load(place: Place, last: AirReading?, now: Long): AirReading? {
+    /**
+     * Asks the service about [place]; blocks, so only a background load calls it. A good answer is a new reading; a failure is a
+     * reading too, with what went wrong and the numbers there were. Null: it was not asked after all (the switch went off or
+     * the bar hid under the load). [now] is the wall clock and [up] the time since boot, both of this moment. No default for [up]: a caller that left it out would give the reading no second clock (Pace.old counts it only above 0).
+     */
+    fun load(place: Place, last: AirReading?, now: Long, up: Long): AirReading? {
         val reply = Http.get(request(place))
-        val good = (reply as? Reply.Ok)?.let { AirRules.read(it.text, place, now) }
+        val good = (reply as? Reply.Ok)?.let { AirRules.read(it.text, place, now, up) }
         if (good != null) return good
-        val failed = reply as? Reply.Failed
-        if (failed?.why == Why.OFF) return null
-        val failure = when {
-            failed?.why == Why.OFFLINE -> Failure.OFFLINE
-            failed?.status == 429 -> Failure.SLOW_DOWN
-            else -> Failure.NO_ANSWER
-        }
+        val missed = Failures.missed(reply, slowAfterMs = AirRules.RETRY_MS) ?: return null
         val known = last?.takeIf { it.place == place.key } ?: AirReading(place.key)
-        return known.copy(failure = failure)
+        return known.copy(failure = missed.failure, misses = known.misses + if (missed.went) 1 else 0, retryAfterSec = missed.waitSec)
     }
 }

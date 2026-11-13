@@ -10,7 +10,7 @@ import androidx.compose.animation.core.spring
 import androidx.compose.animation.core.tween
 import androidx.compose.foundation.gestures.awaitEachGesture
 import androidx.compose.foundation.gestures.awaitFirstDown
-import androidx.compose.foundation.layout.offset
+import androidx.compose.foundation.layout.absoluteOffset
 import androidx.compose.runtime.Stable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableFloatStateOf
@@ -256,9 +256,11 @@ private class PlacementHolder {
     var anim: Animatable<IntOffset, AnimationVector2D>? = null
 }
 
+// absoluteOffset: positionInParent is physical, and the delta below is too. `offset` would mirror it in right-to-left, and an
+// item that moves right there would start on the far side and slide back.
 private fun Modifier.layoutOffset(holder: PlacementHolder, scope: CoroutineScope): Modifier =
-    offset {
-        val a = holder.anim ?: return@offset IntOffset.Zero
+    absoluteOffset {
+        val a = holder.anim ?: return@absoluteOffset IntOffset.Zero
         if (a.targetValue != holder.target) {
             val t = holder.target
             scope.launch { a.animateTo(t, Motion.spec(spring(stiffness = Spring.StiffnessMediumLow, visibilityThreshold = IntOffset.VisibilityThreshold))) }

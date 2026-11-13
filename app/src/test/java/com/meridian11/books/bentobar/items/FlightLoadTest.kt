@@ -148,7 +148,7 @@ class FlightLoadTest {
             // The same way does send for a number, with the service there to answer: the zero above is not zero by construction.
             assertTrue(entered("lh455") is Outcome.Found)
             // (Two requests: the one flight, and the timetable, which says whether the number flies more than once that day.)
-            assertEquals(List(2) { listOf("flight_iata" to "LH455", "api_key" to key) }, net.asked.map { it.query })
+            assertEquals(List(2) { listOf("flight_iata" to "LH455") }, net.asked.map { it.query })
             assertEquals(2, sent())
         }
     }
@@ -163,7 +163,7 @@ class FlightLoadTest {
             assertEquals(listOf("/api/v9/flight", "/api/v9/routes"), net.paths)
             for (r in net.asked) {
                 assertEquals(Host.AIRLABS, r.host)
-                assertEquals(listOf("flight_iata" to "LH455", "api_key" to key), r.query)
+                assertEquals(listOf("flight_iata" to "LH455"), r.query)
             }
             assertEquals(2, sent())
             assertEquals(0, Http.sent(Host.OPEN_METEO) + Http.sent(Host.OPEN_METEO_GEOCODING))
@@ -183,8 +183,8 @@ class FlightLoadTest {
             val t = found(FlightLoad.track(question("dlh455", LocalDate.of(2026, 10, 3)), asked))
             assertEquals(listOf("/api/v9/flight", "/api/v9/routes"), net.paths)
             // The callsign for the one flight; for the timetable the ticket's number, which the first reply named.
-            assertEquals(listOf("flight_icao" to "DLH455", "api_key" to key), net.asked[0].query)
-            assertEquals(listOf("flight_iata" to "LH455", "api_key" to key), net.asked[1].query)
+            assertEquals(listOf("flight_icao" to "DLH455"), net.asked[0].query)
+            assertEquals(listOf("flight_iata" to "LH455"), net.asked[1].query)
             assertEquals("DLH455", t.number)
             assertEquals("2026-10-03", t.day)
             assertTrue(t.flight!!.timetable)
@@ -399,7 +399,7 @@ class FlightLoadTest {
             assertEquals("LH455", again.number); assertEquals("2026-10-01", again.day)
             assertEquals(FlightState.IN_AIR, again.flight!!.state)
             assertEquals(3, sent())
-            assertEquals(listOf("flight_iata" to "LH455", "api_key" to key), net.asked.last().query)
+            assertEquals(listOf("flight_iata" to "LH455"), net.asked.last().query)
             assertEquals(setOf(item), Kept.fetched(AIRLABS).names())
         }
     }
@@ -496,7 +496,7 @@ class FlightLoadTest {
             val next = FlightLoad.load(item, t, asked + 30 * min, ids)!!
             // (The first two are the press of Track's.) In the air, it is the coming hours' list that is asked.
             assertEquals(listOf("/api/v9/flight", "/api/v9/routes", "/api/v9/schedules"), net.paths)
-            assertEquals(listOf("flight_iata" to "LH455", "api_key" to key), net.asked.last().query)
+            assertEquals(listOf("flight_iata" to "LH455"), net.asked.last().query)
             assertEquals(FlightState.LANDED, next.flight!!.state)
             assertNull(next.failure); assertEquals(0, next.failures); assertFalse(next.ended)
             assertEquals(asked + 30 * min, next.askedAt); assertEquals(asked + 30 * min, next.heardAt)
@@ -529,6 +529,7 @@ class FlightLoadTest {
             assertEquals(Failure.NO_ANSWER, second.failure); assertEquals(2, second.failures)
             assertEquals(900L, second.waitSec)
             assertEquals(15 * min, FlightRules.every(second, at("2026-10-02T08:01:00Z")))
+            Http.resetCounts() // the service's wait has passed by the time of the next answer
             // The next answer puts all of it right.
             net.says(AirLabs.FLIGHT to reply("flight-LH455-in-the-air"))
             val third = FlightLoad.load(item, second, asked + 47 * min, ids)!!
@@ -741,6 +742,7 @@ class FlightLoadTest {
             for (why in listOf(Why.OFFLINE, Why.STATUS, Why.TIMEOUT)) {
                 net.answer = { r -> if (r.path == AirLabs.FLIGHT) Reply.Ok(reply(morning)) else Reply.Failed(why, if (why == Why.STATUS) 429 else 0) }
                 assertEquals("$why", "MCO", found(FlightLoad.track(tomorrow(), evening)).from)
+                Http.resetCounts() // the service's wait after that 429 (a later test's question)
             }
             // The bar hid while the first request was on its way: the second is not sent, and there is nothing to say of the first.
             val before = net.asked.size
@@ -939,7 +941,7 @@ class FlightLoadTest {
             // it leaves, asked the one-flight question; every one from ten hours before, the coming hours' list. All about the one number.
             assertEquals(listOf("/api/v9/flight", "/api/v9/routes"), net.paths.take(2))
             assertEquals(listOf("/api/v9/flight") + List(32) { "/api/v9/schedules" }, net.paths.drop(2))
-            assertEquals(setOf(listOf("flight_iata" to "LH454", "api_key" to key)), net.asked.map { it.query }.toSet())
+            assertEquals(setOf(listOf("flight_iata" to "LH454")), net.asked.map { it.query }.toSet())
             // A day after it landed it is put away, which asks nobody.
             assertEquals(emptyList<String>(), watch(r, "2026-10-03T20:00:00Z"))
             assertEquals(Tracked(), r.peek(item))

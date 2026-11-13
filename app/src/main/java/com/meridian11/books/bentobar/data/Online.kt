@@ -92,7 +92,7 @@ object Online {
         val s = current.value
         if (service in s.on && service in s.setUp) return true
         current.value = s.copy(on = s.on + service, setUp = s.setUp + service)
-        save()
+        save(lost = false)
         return true
     }
 
@@ -102,7 +102,7 @@ object Online {
             val s = current.value
             if (service !in s.on) return
             current.value = s.copy(on = s.on - service)
-            save()
+            save(lost = true)
         }
         forget(service)
     }
@@ -119,7 +119,7 @@ object Online {
         keys[service] = k
         val s = current.value
         current.value = s.copy(on = s.on + service, setUp = s.setUp + service, keyed = s.keyed + service)
-        save()
+        save(lost = false)
         return true
     }
 
@@ -129,7 +129,7 @@ object Online {
             if (keys.remove(service) == null && service !in current.value.keyed) return
             val s = current.value
             current.value = s.copy(on = s.on - service, setUp = s.setUp - service, keyed = s.keyed - service)
-            save()
+            save(lost = true)
         }
         forget(service)
     }
@@ -140,12 +140,13 @@ object Online {
     }
 
     /**
-     * The whole file, written beside itself and renamed, so it is never half written. If that fails
-     * (a full disk), the file is removed instead, which needs no room: left as it was, it would bring
-     * back a switch that was turned off or a key that was removed at the next start. What holds now
-     * holds for this run; the next start finds nothing set up. Nothing of it is logged (a key is in it).
+     * The whole file, written beside itself and renamed, so it is never half written. If that fails (a
+     * full disk) and something was [lost] (a switch turned off, a key removed), the file is removed
+     * instead, which needs no room: left as it was, it would bring that back at the next start. After
+     * turning something on the old file stays: nothing it says is untrue, and a full disk must not
+     * cost every other switch and key. What holds now holds for this run. Nothing of it is logged (a key is in it).
      */
-    private fun save() {
+    private fun save(lost: Boolean) {
         val target = file ?: return
         val part = File(target.parentFile, target.name + ".part")
         val saved = try {
@@ -159,7 +160,7 @@ object Online {
         }
         if (!saved) {
             runCatching { part.delete() }
-            runCatching { target.delete() }
+            if (lost) runCatching { target.delete() }
         }
     }
 }

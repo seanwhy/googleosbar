@@ -2,7 +2,7 @@
 <!-- Clipboard and scratchpad. Every name here starts with clipboard_, item_clipboard_ or trigger_clipboard. -->
 <resources xmlns:tools="http://schemas.android.com/tools" tools:locale="en">
     <string name="item_clipboard_title">Clipboard</string>
-    <string name="item_clipboard_desc">Pinned snippets and recent copies; click an entry to copy or paste</string>
+    <string name="item_clipboard_desc">Pinned snippets and recent copies; click an entry to copy it</string>
     <string name="trigger_clipboard">Show while there are pinned snippets or recent copies</string>
     <string name="trigger_clipboard_short">shows with snippets</string>
 
@@ -24,8 +24,6 @@
     <string name="clipboard_bar_label">In the bar</string>
     <string name="clipboard_bar_preview">Latest snippet</string>
     <string name="clipboard_bar_count">Count</string>
-    <string name="clipboard_paste_on_click">Paste into active field on click</string>
-    <string name="clipboard_paste_on_click_help">Also copies the snippet to the clipboard</string>
 
     <plurals name="clipboard_count">
         <item quantity="one">%1$d snippet</item>

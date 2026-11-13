@@ -50,7 +50,7 @@ class WeatherSourceTest {
      * (which the fake leaves wide open). Here neither does, on purpose: what keeps a request from
      * going out in these tests is the item's own rule and nothing behind it.
      */
-    /** Where the device is, for My location, as Android says it (unrounded: the source rounds it), and why not while that isn't known: as WeatherHere would say. */
+    /** Where the device is, for My location, as Android says it (rounded before the source sees it, as [WeatherHere.place] does), and why not while that isn't known. */
     private var here: Fix? = null
     private var locating = Locate.FINDING
 
@@ -60,13 +60,15 @@ class WeatherSourceTest {
     private fun runHeld() { held = false; while (waiting.isNotEmpty()) waiting.removeFirst().run() }
 
     private fun source(staged: () -> Failure? = { null }): WeatherSource {
+        // The service's wait counts by the same clock as the loader here, or an hour on the test's clock wouldn't pass for it.
+        Http.clock = { elapsed }
         val wiring = Refresher.Wiring(Executor { r -> if (held) waiting.addLast(r) else r.run() }, { it.run() }, { elapsed }, { changes++ }, minGapMs = 10_000, afterThrowMs = 60_000,
             mayLoad = { shown })
         return WeatherSource.make(
             refresher = { every, restore, load -> Refresher(wiring, every, restore, load).also { readings = it } },
             ask = { work -> Ask(wiring, work).also { asking = it } },
             background = Executor { backgroundRuns++; it.run() }, wall = { wall }, layout = { layout }, staged = staged, up = { elapsed },
-            here = { here }, locating = { locating })
+            here = { here?.let { WeatherRules.nearby(it.lat, it.lon) } }, locating = { locating })
     }
 
     /** How often something was handed to the background thread that tidies the device. */
@@ -249,7 +251,7 @@ class WeatherSourceTest {
         assertTrue(s.status(item, wall) is Status.Live)
         // The layout holds the choice, never the place.
         assertEquals(mapOf("where" to "here"), item.options)
-        assertEquals(setOf(Place("47.4", "8.5")), WeatherLoad.places(layout, here))
+        assertEquals(setOf(Place("47.4", "8.5")), WeatherLoad.places(layout, here?.let { WeatherRules.nearby(it.lat, it.lon) }))
     }
 
     @Test fun myLocationsReadingIsHeldInMemoryAndNeverWrittenToTheDevice() = FakeHttp.use { net ->
@@ -279,7 +281,7 @@ class WeatherSourceTest {
         assertEquals(2, net.asked.count { r -> ("latitude" to "47.4") in r.query })
         assertEquals(setOf(Kept.safe("47.37,8.55")), Kept.fetched(OPEN_METEO).names())
         planted()
-        restarted.keepOnly(WeatherLoad.places(layout, here), cities = WeatherLoad.places(layout))
+        restarted.keepOnly(WeatherLoad.places(layout, here?.let { WeatherRules.nearby(it.lat, it.lon) }), cities = WeatherLoad.places(layout))
         assertEquals(setOf(Kept.safe("47.37,8.55")), Kept.fetched(OPEN_METEO).names())
     }
 
@@ -295,7 +297,7 @@ class WeatherSourceTest {
         // The item goes (deleted, Off, or back to its city) before the answer: the place is forgotten, and the tick tidies.
         layout = emptyList()
         here = null
-        s.keepOnly(WeatherLoad.places(layout, here), cities = WeatherLoad.places(layout))
+        s.keepOnly(WeatherLoad.places(layout, here?.let { WeatherRules.nearby(it.lat, it.lon) }), cities = WeatherLoad.places(layout))
         runHeld()
         assertEquals(1, net.asked.size)
         // The answer came after: it is held under no place, so an item of My location added later finds nothing from before.
