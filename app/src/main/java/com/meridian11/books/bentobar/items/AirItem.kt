@@ -4,7 +4,6 @@ import androidx.compose.runtime.Composable
 import com.meridian11.books.bentobar.R
 import com.meridian11.books.bentobar.data.ItemConfig
 import com.meridian11.books.bentobar.data.Online
-import com.meridian11.books.bentobar.data.Section
 import com.meridian11.books.bentobar.data.Store
 import com.meridian11.books.bentobar.items.AirRules.AirReading
 import com.meridian11.books.bentobar.util.Now
@@ -42,7 +41,7 @@ object AirItem : ItemType("air", R.string.item_air_title, Sym.AIR, R.string.item
         staged.of(item)?.let { return it }
         if (!Online.on(online)) return null
         val place = AirLoad.place(item, WeatherHere.place) ?: return null
-        if (ask && item.section != Section.OFF) {
+        if (ask) {
             readings.want(place)
             readings.askIfOld(place, AirRules.AGAIN_MS, old = { AirRules.old(it, Now.wall(), Now.elapsed()) }, failed = { it.failure != null })
         }
@@ -61,7 +60,7 @@ object AirItem : ItemType("air", R.string.item_air_title, Sym.AIR, R.string.item
     }
 
     internal fun opened(item: ItemConfig) {
-        if (isStaged(item) || item.section == Section.OFF || !Online.on(online)) return
+        if (isStaged(item) || !Online.on(online)) return
         val place = AirLoad.place(item, WeatherHere.place) ?: return
         readings.menuOpened(place, AirRules.MENU_MS) { it.failure != null }
     }
@@ -90,7 +89,7 @@ object AirItem : ItemType("air", R.string.item_air_title, Sym.AIR, R.string.item
     })
 
     override fun state(item: ItemConfig): ItemState {
-        // Loads the place's reading if it is due: only for an item with a place, outside Off, while the switch is on.
+        // Loads the place's reading if it is due: only for an item with a place, while the switch is on.
         reading(item)
         val status = status(item, Now.wall())
         val live = status as? Status.Live ?: return quiet(status)

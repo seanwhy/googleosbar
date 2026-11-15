@@ -1,5 +1,10 @@
 package com.meridian11.books.bentobar.items
 
+import androidx.compose.runtime.setValue
+import androidx.compose.ui.unit.sp
+import com.meridian11.books.bentobar.util.SymIcon
+import androidx.compose.foundation.layout.heightIn
+import com.meridian11.books.bentobar.ui.Bento
 import android.annotation.SuppressLint
 import android.accessibilityservice.AccessibilityService
 import android.content.BroadcastReceiver
@@ -30,7 +35,6 @@ import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
-import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.foundation.selection.toggleable
@@ -356,15 +360,15 @@ fun AppPicker(selected: List<ComponentName>, multi: Boolean, onChange: (List<Com
             val on = app.component in selected
             val toggle = { onChange(if (multi) (if (on) selected - app.component else selected + app.component) else listOf(app.component)) }
             // One control per app, named by it: TalkBack reads "Gmail, checkbox, checked", not a bare checkbox.
-            Row(Modifier.fillMaxWidth().toggleable(on, role = Role.Checkbox, onValueChange = { toggle() }).padding(vertical = 2.dp),
+            Row(Modifier.fillMaxWidth().heightIn(min = 36.dp).toggleable(on, role = if (multi) Role.Checkbox else Role.RadioButton, onValueChange = { toggle() }).padding(vertical = 2.dp),
                 verticalAlignment = Alignment.CenterVertically) {
                 val icon by produceState(Apps.cachedIcon(app.component, 64, false), app.component) {
                     if (value == null) value = withContext(Dispatchers.IO) { Apps.icon(Env.app, app.component, 64, false) }
                 }
                 icon?.let { Image(it.asImageBitmap(), null, Modifier.size(28.dp)) } ?: Spacer(Modifier.size(28.dp))
                 Spacer(Modifier.width(12.dp))
-                Text(app.label, style = MaterialTheme.typography.bodyMedium, modifier = Modifier.weight(1f))
-                Checkbox(checked = on, onCheckedChange = null)
+                Text(app.label, style = Bento.type.body, color = Bento.colors.ink, modifier = Modifier.weight(1f))
+                if (on) SymIcon(Sym.CHECK, size = 18.sp, color = Bento.colors.accent)
             }
         }
     }

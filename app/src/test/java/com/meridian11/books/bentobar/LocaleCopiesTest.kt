@@ -61,8 +61,10 @@ class LocaleCopiesTest {
 
     /** What British English changes: the rest of a text is the default's, word for word. */
     private fun american(british: String): String = listOf(
-        "colour" to "color", "Colour" to "Color", "favourite" to "favorite", "behaviour" to "behavior", "centre" to "center", "Centre" to "Center",
+        "colour" to "color", "Colour" to "Color", "favourite" to "favorite", "behaviour" to "behavior", "Centred" to "Centered", "centred" to "centered",
+        "centre" to "center", "Centre" to "Center",
         "organise" to "organize", "kilometre" to "kilometer", "greyed" to "grayed", "grey" to "gray", "cancelled" to "canceled", "Cancelled" to "Canceled",
+        "Summarise" to "Summarize", "summarise" to "summarize",
     ).fold(british) { text, (gb, us) -> text.replace(gb, us) }
 
     private val textOf = Regex("""<string name="([^"]+)"[^>]*>(.*)</string>""")
@@ -104,12 +106,23 @@ class LocaleCopiesTest {
     }
 
     @Test fun everyItemTypeHasItsTitleAndItsLineForTheCatalog() {
-        // The item types that bring their own file; the names follow the old ones' pattern.
-        for (type in listOf("media", "devices", "heat", "weather", "flight", "stocks", "clipboard", "displays", "air", "fx")) {
-            val f = files("values")["strings_$type.xml"]
-            assertTrue("values/strings_$type.xml is missing", f != null)
+        // Derived from the registry, so that a new type is checked by being registered: its title and its line are in its own
+        // file, as the newer types' are. The older types keep theirs in the shared file (some of them have a file of their own
+        // for what came later: cpu, clock, sound), and no type joins them there.
+        val own = files("values")
+        val types = com.meridian11.books.bentobar.items.Items.all.map { it.type }
+        val older = setOf("network", "cpu", "memory", "battery", "storage", "clock", "calendar", "event", "timer", "countdown",
+            "caffeine", "sound", "tools", "app", "folder", "text", "spacer",
+            "cloud_clipboard", "remote_keyboard", "ai_antigravity", "ai_codex", "ai_grok", "ai_grok_bot", "ai_usage")
+        for (type in types) {
+            val file = if (type in older) "strings.xml" else "strings_$type.xml"
+            val f = own[file]
+            assertTrue("values/$file is missing", f != null)
             val known = names(f!!)
-            for (n in listOf("item_${type}_title", "item_${type}_desc")) assertTrue("$n is missing from strings_$type.xml", n in known)
+            for (n in listOf("item_${type}_title", "item_${type}_desc")) assertTrue("$n is missing from $file", n in known)
         }
+        // The types that brought their own file before the registry was asked: they still have it.
+        for (type in listOf("media", "devices", "heat", "weather", "flight", "stocks", "displays", "air", "fx"))
+            assertTrue("$type is not registered, or has lost its file", type in types && own["strings_$type.xml"] != null)
     }
 }

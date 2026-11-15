@@ -1,0 +1,5 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- British English for strings_areas.xml: only the strings whose spelling differs from the US default. -->
+<resources xmlns:tools="http://schemas.android.com/tools" tools:ignore="MissingTranslation">
+    <string name="areas_middle_where">Centred in the free space</string>
+</resources>

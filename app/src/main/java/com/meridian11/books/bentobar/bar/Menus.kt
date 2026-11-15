@@ -30,16 +30,19 @@ import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.res.pluralStringResource
 import androidx.compose.ui.res.stringResource
+import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.semantics
 import com.meridian11.books.bentobar.R
 import com.meridian11.books.bentobar.data.Display
+import com.meridian11.books.bentobar.data.HiddenMode
 import com.meridian11.books.bentobar.data.ItemConfig
-import com.meridian11.books.bentobar.data.Section
+import com.meridian11.books.bentobar.data.Standing
 import com.meridian11.books.bentobar.data.Store
 import com.meridian11.books.bentobar.data.hide
 import com.meridian11.books.bentobar.data.notDrawn
 import com.meridian11.books.bentobar.data.setWhenActive
 import com.meridian11.books.bentobar.data.show
-import com.meridian11.books.bentobar.data.turnOff
+import com.meridian11.books.bentobar.data.standing
 import com.meridian11.books.bentobar.items.Items
 import com.meridian11.books.bentobar.items.MenuHost
 import com.meridian11.books.bentobar.items.Ticker
@@ -52,11 +55,13 @@ import com.meridian11.books.bentobar.ui.MenuRoom
 import com.meridian11.books.bentobar.ui.ShownGlass
 import com.meridian11.books.bentobar.ui.menuGlass
 import com.meridian11.books.bentobar.ui.menuShadow
-import com.meridian11.books.bentobar.ui.ChipRow
+import com.meridian11.books.bentobar.ui.ChoiceLabel
 import com.meridian11.books.bentobar.ui.MenuCard
 import com.meridian11.books.bentobar.ui.MenuDivider
 import com.meridian11.books.bentobar.ui.MenuEntry
+import com.meridian11.books.bentobar.ui.MenuSegment
 import com.meridian11.books.bentobar.ui.SectionLabel
+import com.meridian11.books.bentobar.ui.Undo
 import com.meridian11.books.bentobar.util.Sym
 
 /**
@@ -142,51 +147,65 @@ fun MenuShadow(width: Dp, glass: MenuGlassState) {
 
 /**
  * An item's own menu, drawn for the item as the layout has it now: a menu that changes its item (a
- * city added, a flight tracked) is drawn again with the new options. An item that is deleted or
- * turned off while its menu is open closes it.
+ * city added, a flight tracked) is drawn again with the new options. An item that is removed while
+ * its menu is open closes it.
  */
 @Composable
 fun ItemMenu(itemId: String, host: MenuHost) {
     val cfg by Store.config.collectAsState()
-    val item = cfg.items.firstOrNull { it.id == itemId && it.section != Section.OFF }
+    val item = cfg.items.firstOrNull { it.id == itemId }
     val menu = item?.let { Items.of(it.type)?.menu }
     if (item == null || menu == null) { LaunchedEffect(itemId) { host.close() }; return }
     menu(item, host)
 }
 
-/** Right-click on an item: where it lives and how it looks, without opening settings. */
+/**
+ * Right-click on an item in the bar. It says what Visibility in settings says, in the same words, and does it through the
+ * same commands: an item is always in the bar, in it only when active (the default mode) or behind ‹; nothing here says
+ * Off or Hidden. Remove from the bar deletes the item, as the settings' Remove does, and the menu has no Undo: the item is
+ * gone with what its type kept for it ([Undo.removeForGood]), and the library's + makes a new one.
+ */
 @Composable
 fun ItemContextMenu(itemId: String, host: MenuHost, openMenu: () -> Unit) {
     val cfg by Store.config.collectAsState()
     val item = cfg.items.firstOrNull { it.id == itemId } ?: return
     val type = Items.of(item.type) ?: return
-    MenuCard(type.icon, type.title, when (item.section) {
-        Section.SHOWN -> stringResource(R.string.context_shown)
-        Section.HIDDEN -> stringResource(if (item.whenActive) R.string.context_hidden_when_active else R.string.section_hidden)
-        Section.OFF -> stringResource(R.string.common_off)
-    }) {
-        if (type.menu != null) MenuEntry(Sym.OPEN_IN_NEW, stringResource(R.string.common_open)) { openMenu() }
-        if (item.section != Section.SHOWN) MenuEntry(Sym.VISIBILITY, stringResource(R.string.context_always_show)) { Store.update { it.show(item.id) } }
-        if (item.section != Section.HIDDEN) MenuEntry(Sym.VISIBILITY_OFF, stringResource(R.string.section_hidden)) { Store.update { it.hide(item.id) } }
-        if (type.canBeActive) MenuEntry(if (item.whenActive) Sym.CHECK_CIRCLE else Sym.UPDATE, stringResource(R.string.context_show_when_active),
-            detail = if (item.whenActive) "✓" else null, checked = item.whenActive) {
-            Store.update { it.setWhenActive(item.id, !item.whenActive) }
-        }
+    val standing = cfg.standing(item) ?: return
+    val behind = stringResource(R.string.visibility_behind)
+    val behindSpoken = behind.replace("‹", stringResource(R.string.chevron_spoken))
+    MenuCard(type.icon, type.title, when (standing) {
+        Standing.ALWAYS -> stringResource(R.string.context_always_in_bar)
+        Standing.WHEN_ACTIVE -> stringResource(R.string.visibility_when_active)
+        Standing.BEHIND -> behind
+    }, plain = true) {
+        // Bare lines under a hairline: the head has the item's symbol, and a line's words say what it does.
+        MenuDivider()
+        if (type.menu != null) MenuEntry(null, stringResource(R.string.common_open)) { openMenu() }
+        if (cfg.hiddenMode == HiddenMode.SHOW_ALL) {
+            // One tick. A type without a rule is always in the bar here, so it has no such entry.
+            val waits = standing == Standing.WHEN_ACTIVE
+            if (type.canBeActive) MenuEntry(null, stringResource(R.string.visibility_when_active), checked = waits) {
+                Store.update { if (waits) it.show(item.id) else it.setWhenActive(item.id, true) }
+            }
+        } else if (standing == Standing.BEHIND) {
+            MenuEntry(null, stringResource(R.string.visibility_always)) { Store.update { it.show(item.id) } }
+            if (type.canBeActive) MenuEntry(null, stringResource(R.string.context_pops_out), checked = item.whenActive) {
+                Store.update { it.setWhenActive(item.id, !item.whenActive) }
+            }
+        } else MenuEntry(null, behind, modifier = Modifier.semantics { contentDescription = behindSpoken }) { Store.update { it.hide(item.id) } }
         // Not for a type that has only one way to show: the settings don't offer it either.
         if (!type.iconOnly) {
-            SectionLabel(stringResource(R.string.display_show_as))
+            ChoiceLabel(stringResource(R.string.display_show_as))
             val displays = listOf(Display.ICON_AND_TEXT to stringResource(R.string.display_icon_and_text), Display.TEXT to stringResource(R.string.display_text),
                 Display.ICON to stringResource(R.string.display_icon))
-            ChipRow(displays.map { it.second }, selected = displays.indexOfFirst { it.first == item.display }) { i ->
+            MenuSegment(displays.map { it.second }, selected = displays.indexOfFirst { it.first == item.display }) { i ->
                 Store.updateItem(item.id) { it.copy(display = displays[i].first) }
                 Ticker.refresh()
             }
         }
         MenuDivider()
-        MenuEntry(Sym.TUNE, stringResource(R.string.context_item_settings)) { host.openItemSettings(item.id) }
-        // It turns the item off (kept with its settings), so it says so; Delete is in settings, with an undo.
-        // Its own icon: the crossed-out eye two rows up means Hidden, which keeps the item behind ‹.
-        MenuEntry(Sym.DO_NOT_DISTURB_ON, stringResource(R.string.common_turn_off)) { host.close(); Store.update { it.turnOff(item.id) } }
+        MenuEntry(null, stringResource(R.string.context_item_settings)) { host.openItemSettings(item.id) }
+        MenuEntry(null, stringResource(R.string.detail_remove)) { host.close(); Undo.removeForGood(item.id) }
     }
 }
 
@@ -201,7 +220,7 @@ fun BentoBarMenu(host: MenuHost, openItem: (ItemConfig) -> Unit, hideBar: () -> 
     // Worked out here, not when the menu opened, so an item popping out (or in) updates the list.
     val cfg by Store.config.collectAsState()
     val overflow by com.meridian11.books.bentobar.bar.BarOverflow.ids.collectAsState()
-    val hidden = if (everything) cfg.items.filter { it.section != Section.OFF && Items.of(it.type) != null }
+    val hidden = if (everything) cfg.items.filter { Items.of(it.type) != null }
     else cfg.notDrawn { states[it.id]?.active == true }.let { waiting -> cfg.items.filter { it in waiting || it.id in overflow } }
     val first = remember { androidx.compose.ui.focus.FocusRequester() }
     if (everything) androidx.compose.runtime.LaunchedEffect(Unit) { runCatching { first.requestFocus() } }

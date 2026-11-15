@@ -4,7 +4,7 @@
     <string name="cpu_also_hot">Also show when the device runs hot</string>
     <string name="cpu_also_hot_help">Hot means Android has started to slow the device.</string>
     <!-- The rule with that switch on, in the item's settings and in the list: %1$s is the load ("80%"). -->
-    <string name="trigger_cpu_hot">Show when CPU load is above %1$s, or the device runs hot</string>
+    <string name="trigger_cpu_hot">while CPU load is above %1$s, or the device runs hot</string>
     <string name="trigger_cpu_hot_short">shows above %1$s CPU, or when hot</string>
     <string name="cpu_heat">Heat</string>
     <string name="cpu_state_desc_hot">CPU %1$s busy, device hot</string>

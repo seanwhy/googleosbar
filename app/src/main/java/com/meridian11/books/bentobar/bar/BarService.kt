@@ -18,6 +18,7 @@ import android.os.SystemClock
 import android.util.Log
 import android.view.Gravity
 import android.view.KeyEvent
+import android.view.MotionEvent
 import android.view.WindowInsets
 import android.view.WindowManager
 import android.view.accessibility.AccessibilityEvent
@@ -29,15 +30,23 @@ import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.platform.LocalView
 import androidx.compose.ui.unit.dp
 import com.meridian11.books.bentobar.data.HiddenMode
+import com.meridian11.books.bentobar.data.areasInUse
+import com.meridian11.books.bentobar.data.carrierOverflow
+import com.meridian11.books.bentobar.data.chevronOpensMenu
 import com.meridian11.books.bentobar.data.stripPlan
 import com.meridian11.books.bentobar.data.behindChevron
+import com.meridian11.books.bentobar.data.homeArea
 import com.meridian11.books.bentobar.data.moved
+import com.meridian11.books.bentobar.data.owedIds
 import com.meridian11.books.bentobar.data.ItemConfig
 import com.meridian11.books.bentobar.data.Pill
 import com.meridian11.books.bentobar.data.Position
+import com.meridian11.books.bentobar.data.ROOM_ORDER
 import com.meridian11.books.bentobar.data.Section
 import com.meridian11.books.bentobar.data.Store
 import com.meridian11.books.bentobar.items.ChargeOptimization
@@ -48,6 +57,7 @@ import com.meridian11.books.bentobar.items.DisplaysItem
 import com.meridian11.books.bentobar.items.Env
 import com.meridian11.books.bentobar.items.RemoteKeyboardItem
 import com.meridian11.books.bentobar.items.Items
+import com.meridian11.books.bentobar.items.Settle
 import com.meridian11.books.bentobar.items.Ticker
 import kotlinx.coroutines.MainScope
 import kotlinx.coroutines.cancel
@@ -120,6 +130,9 @@ class BarService : AccessibilityService() {
     private fun shutdown() {
         val stopping = bar
         bar = null // first: whatever stop() does, it runs once per controller
+        // While the controller is still there, once for it: what a type holds beyond the bar (a mute, an endless Focus) ends
+        // with the service. A rebind ends it too: it can't be told from an ending.
+        if (stopping != null) for (t in Items.all) Ticker.guarded(t, "settle") { t.settle(Settle.SERVICE_ENDING) }
         stopping?.stop()
         if (current === this) current = null
         Chips.update(this)
@@ -146,29 +159,77 @@ class BarController(private val service: AccessibilityService) {
             set(v) {
                 state.value = v; Ticker.revealHidden = v || menus.menuKey == MenuKey.Bar; if (v) Ticker.refresh()
                 // Out: a click anywhere else folds them away again (see [outsideClick]).
-                strip.watchOutside(v)
+                watchOutside()
             }
     }
     /** The strip's colours and the readings of the status bar behind them. */
     private val colors = ColorReader(service, main, object : ColorReader.Facts {
         override val started get() = this@BarController.started
-        override val onScreen get() = strip.shown
+        override val onScreen get() = strips.any { it.shown }
         override val empty get() = stripEmpty
         override val interactive get() = pm.isInteractive
         override val snapshot get() = snap
     }) { s, done -> StatusBarScan.shoot(service, s, done) }
     private val look get() = colors.look
-    private val maxWidth = mutableIntStateOf(0)
+    /** The room the first strip has: none (0) is what the status calls no room. Each strip's own room is its [AreaStrip.maxWidth]. */
+    private val firstBudget = mutableIntStateOf(0)
     private val heightDp = mutableStateOf(36.dp)
 
-    private val strip = Overlay(service, "BentoBar", onOutside = { outsideClick() }).apply { params.width = 1; watchOutside(false) }
+    /** A strip for each area, in room order. On screen are those of the areas in use that have room. */
+    private val strips = ROOM_ORDER.map { area ->
+        val title = when (area) { Position.RIGHT -> "BentoBar"; Position.LEFT -> "BentoBar left"; Position.CENTER -> "BentoBar middle" }
+        AreaStrip(area, Overlay(service, title, onOutside = { outsideClick(it) }).apply { params.width = 1; watchOutside(false) })
+    }
+    /** The area whose strip does what the bar does once: the first one placed. State: a strip that becomes it is composed again. */
+    private var carrier by mutableStateOf(ROOM_ORDER.first())
+    private fun carrierStrip() = strips.first { it.area == carrier }
+    /** The areas in use that have no room right now: their items are on no strip. */
+    private val owed = mutableStateOf(emptySet<Position>())
+    /** What those areas would draw now, as the first strip last said it: its ‹ is for them, and its menu lists them. */
+    private var owedItems = emptySet<String>()
+    /**
+     * The areas whose strip is on view: on screen, measured and with something to draw. Not [AreaStrip.draws], which also
+     * counts a strip that has not been measured yet. The empty capsule is the home area's only while no other is among them.
+     */
+    private val onView = mutableStateOf(emptySet<Position>())
+    /** The areas placed, in room order: the strips whose window may keep the screen on ([KeepAwakeRule.holder]). */
+    private var placedAreas: List<Position> = emptyList()
 
-    /** Keep awake: a flag on the strip's window, a wake lock while the strip has none to carry it. */
-    private val awake = KeepAwake(main, pm, km, scope, strip) { stripEmpty }
+    /** The strip's window that keeps the screen on now: the first placed that is visible. Null when none is. */
+    private fun awakeWindow(): Overlay? =
+        KeepAwakeRule.holder(placedAreas, strips.associate { it.area to it.state() })?.let { area -> strips.first { it.area == area }.window }
 
-    /** A click outside the strip while hidden items are out folds them away, unless a menu is open (it closes itself). */
-    private fun outsideClick() {
+    /** Keep awake: a flag on the visible strip's window, a wake lock while no strip is visible to carry it. */
+    private val awake = KeepAwake(main, pm, km, scope, strips.map { it.window }) { awakeWindow() }
+
+    /**
+     * Presses outside the bar are heard by one strip's window alone (the first on view: [PopupRules.watchingArea]), and
+     * only while hidden items are out: one press is heard once, in however many windows the bar is. Asked again when
+     * hidden items come out or go, when the first strip is another and when what is on view changes.
+     */
+    private fun watchOutside() {
+        val watching = PopupRules.watchingArea(onView.value, carrier)
+        for (strip in strips) strip.watchOutside(expanded.value && strip.area == watching)
+    }
+
+    /**
+     * The strip a press at [x], [y] on the screen landed on, of those on view (a press where an invisible window lies goes
+     * to what is below it, and is not on the bar); null for a press on none of them.
+     */
+    private fun stripAt(x: Float, y: Float): AreaStrip? {
+        val height = snap?.bar?.height() ?: 0
+        val seen = strips.filter { it.area in onView.value }
+        val area = PopupRules.pressedArea(x, y, seen.map { s -> s.locationOnScreen().let { StripFrame(s.area, it[0], it[1], s.params.width, height) } })
+        return seen.firstOrNull { it.area == area }
+    }
+
+    /**
+     * A click outside the bar while hidden items are out folds them away, unless a menu is open (it closes itself). To
+     * the window that hears it a press on another strip is outside too: that one is on the bar, and is that strip's own.
+     */
+    private fun outsideClick(ev: MotionEvent) {
         if (menus.menuKey != null || !expanded.value) return
+        if (stripAt(ev.rawX, ev.rawY) != null) return
         fold()
     }
 
@@ -179,16 +240,21 @@ class BarController(private val service: AccessibilityService) {
     }
     private var snap: BarSnapshot? = null
     private var overlayIds = emptySet<Int>()
-    private var hovering = false
+    /** The areas whose strip the pointer is over: an Exit from one strip can arrive after the Enter of the next. */
+    private var hoverAreas = emptySet<Position>()
+    /** The pointer is over the bar. */
+    private val hovering get() = hoverAreas.isNotEmpty()
     private var pinned = false
     private var started = false
-    /** Where each item was last drawn (window coordinates), for anchoring menus from tests. */
-    val placed = HashMap<String, Rect>()
+    /** The bar is on screen as far as the last look at it said. A strip's measure can arrive after the bar has left. */
+    private var showing = false
 
     /** The popups and the tooltip. */
-    private val menus: MenuCoordinator = MenuCoordinator(service, main, wm, strip, placed, object : MenuCoordinator.Facts {
+    private val menus: MenuCoordinator = MenuCoordinator(service, main, wm, object : MenuCoordinator.Facts {
         override val snapshot get() = snap
         override val expanded get() = this@BarController.expanded.value
+        override fun stripAt(x: Float, y: Float) = this@BarController.stripAt(x, y)
+        override fun stripOf(id: String) = strips.firstOrNull { id in it.placed }
         override fun popupClosed() { if (!hovering && !pinned) { main.removeCallbacks(collapse); main.postDelayed(collapse, 600) } }
     })
 
@@ -201,8 +267,9 @@ class BarController(private val service: AccessibilityService) {
     private val poll = object : Runnable {
         override fun run() {
             if (!pm.isInteractive) return // screen off: nothing to show; SCREEN_ON restarts this
-            if (strip.shown) lightCheck() else check(full = false)
-            main.postDelayed(this, if (strip.shown) 2_000 else 5_000)
+            val shown = strips.any { it.shown }
+            if (shown) lightCheck() else check(full = false)
+            main.postDelayed(this, if (shown) 2_000 else 5_000)
         }
     }
     private var lastFullScan = 0L
@@ -234,6 +301,20 @@ class BarController(private val service: AccessibilityService) {
             }
         }
     }
+    /**
+     * The pointer came onto the bar or left it ([inside]), whichever strip said so: what a hover brings out, and what
+     * its end lets fold away. A hover ends here only, for the pointer going and for the last strip under it going.
+     */
+    private fun barHover(inside: Boolean) {
+        main.removeCallbacks(expandOnHover); main.removeCallbacks(collapse)
+        if (inside) {
+            if (Store.config.value.hiddenMode == HiddenMode.HOVER && !expanded.value && hiddenItems().isNotEmpty()) main.postDelayed(expandOnHover, 350)
+        } else if (!pinned) main.postDelayed(collapse, 900)
+        else {
+            val secs = Store.config.value.autoCollapseSec
+            if (secs > 0) main.postDelayed(collapse, secs * 1000L)
+        }
+    }
     /** A pointer holds an item's slider: between its first report and the one that says `done`. */
     private var sliding = false
 
@@ -261,6 +342,9 @@ class BarController(private val service: AccessibilityService) {
         awake.start()
         scan()
         main.postDelayed(poll, 2_000)
+        // Last: what a type left behind when the service last ended, or the process with it (a mute of its own with no such
+        // item placed any more, a Focus session past its end), it gives back now.
+        for (t in Items.all) Ticker.guarded(t, "settle") { t.settle(Settle.SERVICE_STARTED) }
     }
 
     fun stop() {
@@ -271,6 +355,7 @@ class BarController(private val service: AccessibilityService) {
         BarLook.current.value = null
         BarStatus.current.value = BarStatus.STOPPED
         BarOverflow.ids.value = emptySet()
+        owedItems = emptySet()
         runCatching { service.unregisterReceiver(screen) }
         colors.stop()
         // Before the strip goes, which would ask keep awake for a wake lock in its place.
@@ -280,7 +365,7 @@ class BarController(private val service: AccessibilityService) {
         // Nothing is revealed once this controller is gone: the ticker outlives it, in the process.
         Ticker.revealHidden = false
         main.removeCallbacksAndMessages(null) // after closeMenu, which posts a collapse
-        strip.destroy()
+        for (strip in strips) strip.window.destroy()
         scope.cancel()
     }
 
@@ -295,13 +380,52 @@ class BarController(private val service: AccessibilityService) {
         menus.hideTip()
         cancelDrag() // the strip's window goes, and with it the release that would end a drag
         // and the Exit that would end a hover: what only the pointer held out doesn't come back with the bar.
-        hovering = false; main.removeCallbacks(expandOnHover)
+        hoverAreas = emptySet(); main.removeCallbacks(expandOnHover)
         if (!pinned && expanded.value) expanded.value = false
-        strip.hide()
+        showing = false // before the windows go: a measure on its way finds the bar gone
+        for (strip in strips) strip.hide()
+        noteOnView()
         // Readings still to come were for a strip that is gone: its return asks again.
         colors.stripLeft()
         awake.update()
         Ticker.stop("bar")
+    }
+
+    /**
+     * One strip's window goes while the bar stays: its area went out of use, or has no room. What hangs from it goes
+     * before the window that anchors it, and what the pointer held in it ends, as when the bar leaves; what it held in
+     * another strip stays. The bar's own ending is [leaveScreen]'s alone.
+     */
+    private fun leave(strip: AreaStrip) {
+        if (!strip.shown) return
+        menus.closeFor(strip)
+        if (dragFrom?.strip === strip) cancelDrag() // its window takes the release with it
+        if (strip.area in hoverAreas) events.getValue(strip).hover(false) // and the Exit
+        strip.hide()
+        strip.dropped = emptySet() // what it had no room for goes with it
+        noteOnView()
+        publishOverflow()
+    }
+
+    /** Which strips are on view is asked again: a strip was measured, or went. The first of them hears a press outside the bar. */
+    private fun noteOnView() {
+        onView.value = strips.filter { it.shown && !it.pending && !it.empty }.mapTo(mutableSetOf()) { it.area }
+        watchOutside()
+    }
+
+    /** The first strip says what the areas with no window would draw now, each time it is composed. */
+    private fun owe(ids: Set<String>) {
+        if (ids != owedItems) { owedItems = ids; publishOverflow() }
+    }
+
+    /**
+     * What has no room right now, for Settings' rows and the ‹ menu: every strip's own and what the areas with no window
+     * are owed, as one set. A ‹ coming or going changes a strip's width, so the bar is looked at again, and only when the
+     * set changed.
+     */
+    private fun publishOverflow() {
+        val ids = strips.flatMapTo(mutableSetOf()) { it.dropped } + owedItems
+        if (BarOverflow.ids.value != ids) { BarOverflow.ids.value = ids; main.post(scanNow) }
     }
 
     /** Window events, logged only where asked for: `adb shell setprop log.tag.BentoBarEvents DEBUG`. */
@@ -402,12 +526,13 @@ class BarController(private val service: AccessibilityService) {
         d.status?.let { BarStatus.current.value = it }
         neighbours = d.neighbours
         if (d.show) {
+            showing = true
             place(s!!, screenW)
             // A new status bar window can look different (see ColorReader.readSoon for the other causes).
             if (d.read == BarRules.Read.NEW_BAR_WINDOW) colors.readSoon(ColorWatch.Cause.QUICK, 250)
             else if (d.read == BarRules.Read.WINDOWS_MOVED) colors.windowsMoved()
         } else {
-            if (strip.shown) Log.i(tag, "bar hidden (statusBar=${s != null} covered=${d.cover?.box?.toShortString()} " +
+            if (strips.any { it.shown }) Log.i(tag, "bar hidden (statusBar=${s != null} covered=${d.cover?.box?.toShortString()} " +
                 "enabled=${cfg.enabled} interactive=$interactive locked=$locked)")
             leaveScreen()
         }
@@ -415,47 +540,90 @@ class BarController(private val service: AccessibilityService) {
 
     /** adb `debug trace on|off`: logs every move and resize with its cause, to chase jitter. */
     private var tracing = false
-    private var lastPlace = ""
+    private var lastWhere = ""
+    /** What the strip was last placed by: a new width is placed by the same. */
+    private var lastPlace: Pair<BarSnapshot, Int>? = null
     private fun trace(what: String) { if (tracing) Log.i(tag, "trace ${SystemClock.uptimeMillis() % 100_000} $what") }
 
     private fun place(s: BarSnapshot, screenW: Int) {
+        lastPlace = s to screenW
         val cfg = Store.config.value
         val gap = (6 * density).toInt()
-        val p = strip.params
-        p.height = s.bar.height()
-        p.y = s.bar.top
         // Without a pill the strip's ends are only room for the highlight's round ends: the window reaches that much
         // further out, into the gap, so the items stay 6 dp from the free area's edges as they always were.
         val ends = (STRIP_PILL_PADDING.value * density).toInt()
-        val out = if (cfg.pill == Pill.NONE) ends else 0
-        when (cfg.position) {
-            Position.RIGHT -> { p.gravity = Gravity.TOP or Gravity.RIGHT; p.x = screenW - s.free.right + gap - out }
-            Position.LEFT -> { p.gravity = Gravity.TOP or Gravity.LEFT; p.x = s.free.left + gap - out }
-            Position.CENTER -> { p.gravity = Gravity.TOP or Gravity.CENTER_HORIZONTAL; p.x = s.free.centerX() - screenW / 2 }
-        }
-        // The whole strip fits the free area: items, the pill's own padding and (decided by the strip,
-        // from what fits) room for ‹.
-        val pillPad = if (cfg.pill == Pill.NONE) 0 else 2 * ends
-        maxWidth.intValue = (s.free.width() - 2 * gap - pillPad).coerceAtLeast(0)
+        // Which strips there are, where and how wide is one rule's answer, carried out here: a window for each area in
+        // use that has room. Each fits its part of the free area: items, the pill's own padding and (decided by the
+        // strip, from what fits) room for ‹.
+        val a = BarRules.arrange(s.free.left, s.free.right, screenW, gap, out = if (cfg.pill == Pill.NONE) ends else 0, ends = ends,
+            between = gap, least = (30 * density).toInt() + 2 * ends, home = cfg.homeArea(), inUse = cfg.areasInUse(),
+            strips = strips.associate { it.area to it.state() })
+        firstBudget.intValue = a.spots.first().budget
         heightDp.value = (s.bar.height() / density).dp
-        val where = "free=${s.free.toShortString()} x=${p.x} maxW=${maxWidth.intValue} [${s.summary}]"
-        if (where != lastPlace) { trace("place $where"); lastPlace = where }
+        val where = "free=${s.free.toShortString()} ${a.spots.joinToString(" ") { "${word(it.area)} x=${it.x} maxW=${it.budget}" }} [${s.summary}]"
+        if (where != lastWhere) { trace("place $where"); lastWhere = where }
+        val was = stripEmpty
+        // Which strip is the first and which areas are owed only name areas, and are said before any window goes or comes:
+        // a window that is added has the watch for presses outside the bar in its params already, as the one strip's had.
+        val before = carrier
+        carrier = a.carrier
+        // Hidden items are out and the first strip is another now: that one hears a press outside the bar.
+        if (carrier != before) watchOutside()
+        owed.value = a.owed
+        val held = awakeWindow()
+        placedAreas = a.spots.map { it.area }
+        // The window that keeps the screen on is about to go: the flag is on the next one first, or the wake lock holds.
+        if (held != null && strips.any { it.window === held && it.area in a.leave }) awake.update()
+        for (strip in strips) if (strip.area in a.leave) leave(strip)
+        // A strip keeps what it had no room for while the bar is off the screen. An area that went out of use or lost its
+        // room meanwhile has no window to say otherwise: nothing of it is left to publish.
+        val stale = strips.filter { s -> s.dropped.isNotEmpty() && a.spots.none { it.area == s.area } }
+        if (stale.isNotEmpty()) { for (strip in stale) strip.dropped = emptySet(); publishOverflow() }
+        // A strip that gets wider, or comes, takes its room after the others have moved or narrowed: asked for the other way
+        // round, it stood for a frame or two in room its neighbour had not left yet.
+        for (spot in BarRules.givingWayFirst(a.spots, strips.filter { it.shown }.associate { it.area to it.params.width })) {
+            val strip = strips.first { it.area == spot.area }
+            val p = strip.params
+            p.height = s.bar.height()
+            p.y = s.bar.top
+            p.gravity = Gravity.TOP or when (spot.area) { Position.RIGHT -> Gravity.RIGHT; Position.LEFT -> Gravity.LEFT; Position.CENTER -> Gravity.CENTER_HORIZONTAL }
+            p.x = spot.x
+            // Exactly as wide as its content last measured (never WRAP_CONTENT), set with where it stands: one move.
+            if (p.width != spot.width) { trace("${word(spot.area)} width ${p.width} -> ${spot.width}"); p.width = spot.width }
+            strip.maxWidth.intValue = spot.budget
+            if (!strip.shown) strip.show { StripHost(strip) } else strip.relayout()
+        }
+        // Android refused an area's window while the others have theirs: the status says so, and the next placing tries again.
+        refused = a.spots.any { spot -> strips.none { it.area == spot.area && it.shown } }
+        // Strips came and went: whether the bar draws anything is asked again. A new window counts as drawing until its
+        // first measure says whether it has content.
+        stripEmpty = strips.none { it.draws }
         BarStatus.current.value = status()
-        if (!strip.shown) {
-            stripEmpty = false // a new window starts visible; its first measure says whether it has content
-            strip.show { StripHost() }
-            // Android refused the window (the service is going): nothing is on screen, so nothing may run or go online.
-            // The next look at the bar tries again.
-            if (!strip.shown) { BarStatus.current.value = BarStatus.STOPPED; return }
-            awake.update()
+        // The strips that were up have left and Android refused the ones in their place: the bar is off the screen.
+        if (!a.first && strips.none { it.shown }) leaveScreen()
+        // Android refused the window (the service is going): nothing is on screen, so nothing may run or go online.
+        // The next look at the bar tries again.
+        if (strips.none { it.shown }) { BarStatus.current.value = BarStatus.STOPPED; return }
+        // Once for each placing, after every window it shows or moves is up: which strip is visible may have changed with
+        // it, or with the measure that asked for it.
+        awake.update()
+        if (a.first) {
             // Back on screen (after a full-screen app, the lock screen, a covering panel): the bar may
             // look different now, or only in a while (after an unlock it kept the lock screen's look for
             // seconds), and a reading owed while hidden is taken here.
             colors.readSoon(ColorWatch.Cause.SLOW, 250)
             Ticker.start("bar")
             Log.i(tag, "bar shown: bar=${s.bar.toShortString()} free=${s.free.toShortString()} [${s.summary}]")
-        } else strip.relayout()
+        } else if (stripEmpty != was) {
+            // An area came or went and with it the last thing drawn, or the first: no reading of its own, only what an
+            // empty bar owes or is owed.
+            trace("strip ${if (stripEmpty) "empty" else "has content"}")
+            colors.contentChanged(stripEmpty)
+        }
     }
+
+    /** An area as the user's word for it, for the trace and the dump. */
+    private fun word(area: Position) = when (area) { Position.RIGHT -> "right"; Position.LEFT -> "left"; Position.CENTER -> "middle" }
 
     // ---- the strip ---------------------------------------------------------------------------
 
@@ -465,68 +633,105 @@ class BarController(private val service: AccessibilityService) {
     }
 
     @Composable
-    private fun StripHost() {
+    private fun StripHost(strip: AreaStrip) {
         val cfg by Store.config.collectAsState()
         val states by Ticker.states.collectAsState()
         val entries = { list: List<ItemConfig> -> list.map { StripEntry(it, states[it.id] ?: Ticker.placeholder(it)) } }
         // While dragging, the bar shows the order the item would land in.
         val items = dragPreview.value?.let { (id, at) -> cfg.items.moved(id, Section.SHOWN, at) } ?: cfg.items
-        val overflow by BarOverflow.ids.collectAsState()
-        val plan = cfg.copy(items = items).stripPlan({ states[it.id]?.active == true }, expanded.value, overflow.isNotEmpty())
+        val active = { item: ItemConfig -> states[item.id]?.active == true }
+        // An area with no room has no window, and what it would draw now must not be out of reach: it is owed to the first
+        // strip. Decided here, so a rule that starts to hold in such an area is heard at once; told once it is applied.
+        val owes = if (strip.area == carrier) cfg.owedIds(owed.value, active, expanded.value) else emptySet()
+        SideEffect { if (strip.area == carrier) owe(owes) }
+        // Its own area's items, and a ‹ for what it has no room for itself: a placed strip's lack of room is not another's
+        // business. The first strip's ‹ is also there for what is owed, for what waits behind the ‹ of an area with no window,
+        // and for presenting's ‹ when the home area has no window.
+        val plan = cfg.copy(items = items).stripPlan(strip.area, active, expanded.value,
+            strip.dropped.isNotEmpty() || (strip.area == carrier && cfg.carrierOverflow(owed.value, owes, active)))
         val shownEntries = entries(plan.visible)
         val revealedEntries = entries(plan.revealed)
         // The one rule for an empty strip: what it puts on the screen, never how many entries it has.
-        val drawn = StripContent.drawn(shownEntries + revealedEntries, plan.chevron, look.value.pill)
+        // The empty capsule shows once: in the home area, or the first strip's while the home area has no window, and not
+        // beside another area's items.
+        val drawn = StripContent.drawn(shownEntries + revealedEntries, plan.chevron, look.value.pill,
+            home = strip.area == StripContent.capsuleArea(cfg.homeArea(), carrier, owed.value) && (onView.value - strip.area).isEmpty())
         // While the window is invisible nothing draws, and the remeasure Compose hands to the next draw would wait for it for
         // good. Measuring still runs, if it is asked for: the rule above is heard as soon as the composition changes.
         val view = LocalView.current
-        SideEffect { if (stripEmpty) view.requestLayout() }
-        MeasuredStrip(bias = when (cfg.position) { Position.RIGHT -> 1f; Position.CENTER -> 0f; Position.LEFT -> -1f },
-            onWidth = { w -> val empty = StripContent.empty(w, drawn); if (w != strip.params.width || empty != stripEmpty) main.post { applyWidth(w, empty) } }) {
+        SideEffect { if (strip.empty) view.requestLayout() }
+        // Its reach is known when its items are laid out, before its width is. It is read as state where the width is
+        // reported, so a fit that changed under an unchanged width (an item gone, a ‹ come) is still heard.
+        val reach = remember { mutableIntStateOf(0) }
+        MeasuredStrip(bias = when (strip.area) { Position.RIGHT -> 1f; Position.CENTER -> 0f; Position.LEFT -> -1f },
+            onWidth = { w ->
+                val empty = StripContent.empty(w, drawn)
+                val r = reach.intValue
+                val window = strip.generation
+                if (w != strip.measured || empty != strip.empty || strip.pending || r != strip.reach) main.post { applyWidth(strip, window, w, empty, r) }
+            }) {
             Strip(
                 visible = shownEntries,
                 revealed = revealedEntries,
                 showChevron = plan.chevron,
-                chevronAlways = plan.chevronAlways,
+                // The first strip's ‹ also comes and goes for the areas with no room. With several areas in use it keeps
+                // a ‹'s room whatever it draws, so that what it keeps, and with it the room behind it, never follows that ‹.
+                chevronAlways = plan.chevronAlways || (strip.area == carrier && cfg.areasInUse().size > 1),
                 chevronReservePx = (30 * density).toInt(),
                 expanded = plan.open,
-                chevronOnLeft = cfg.position != Position.LEFT,
+                chevronOnLeft = strip.area != Position.LEFT,
                 look = look.value,
-                maxWidthPx = maxWidth.intValue,
+                maxWidthPx = strip.maxWidth.intValue,
                 heightDp = heightDp.value,
-                events = events,
-                onOverflow = { ids -> main.post { if (BarOverflow.ids.value != ids) { BarOverflow.ids.value = ids; main.post(scanNow) } } },
+                events = events.getValue(strip),
+                onOverflow = { ids ->
+                    val window = strip.generation
+                    main.post { if (strip.shown && window == strip.generation) { strip.dropped = ids; publishOverflow() } }
+                },
                 // The item a popup belongs to: an item's popup and its right-click menu are the item's, the ‹ menu is ‹'s.
-                open = menus.menuKey?.owner?.ifEmpty { null },
+                open = menus.menuKey?.owner?.ifEmpty { null }.takeIf { menus.menuStrip === strip },
+                onReach = { reach.intValue = it },
             )
         }
     }
 
-    /** Sizes the strip window to its content (an exact width, never WRAP_CONTENT). */
     /**
-     * Nothing to draw ([StripContent.empty]: every item off, only rule items that don't apply now, only blank items): the
-     * strip's window is made invisible rather than left up empty, which is what Android's threat
-     * detection looks for ("imperceptible content" from an accessibility service). Its content keeps
-     * being measured, so it shows again as soon as there's something to draw ([StripHost] asks for that measure).
+     * No strip draws anything ([AreaStrip.draws]: a strip shown and not measured yet counts as drawing, until its first
+     * measure says). A strip with nothing to draw ([StripContent.empty]: every item off, only rule items that don't apply
+     * now, only blank items) has its window made invisible rather than left up empty, which is what Android's threat
+     * detection looks for ("imperceptible content" from an accessibility service). Its content keeps being measured, so
+     * it shows again as soon as there's something to draw ([StripHost] asks for that measure). Keep awake and the colours
+     * are told when this changes.
      */
     private var stripEmpty = false
+    /** An area with a place has no window: Android refused it at the last placing. */
+    private var refused = false
 
-    private fun status() = StripContent.status(empty = strip.shown && stripEmpty, noRoom = maxWidth.intValue == 0)
+    private fun status() = StripContent.status(refused, empty = strips.any { it.shown } && stripEmpty, noRoom = firstBudget.intValue == 0)
 
-    private fun applyWidth(w: Int, empty: Boolean) {
-        if (empty != stripEmpty) {
-            stripEmpty = empty; strip.setContentVisible(!empty); trace("strip ${if (empty) "empty" else "has content"}"); awake.update()
-            colors.contentChanged(empty)
-            if (started && strip.shown) BarStatus.current.value = status()
+    /**
+     * A strip measured its content: what it measured is kept on the strip, and the bar is placed again by it. [window] is
+     * the strip's [AreaStrip.generation] when it was measured.
+     */
+    private fun applyWidth(strip: AreaStrip, window: Int, w: Int, empty: Boolean, reach: Int) {
+        if (!strip.shown || window != strip.generation) return // it left meanwhile, or left and came back: another window's measure
+        val was = stripEmpty
+        strip.measured = w; strip.empty = empty; strip.reach = reach; strip.pending = false
+        strip.setContentVisible(!empty) // the one place a strip's window becomes visible, or invisible again
+        noteOnView()
+        stripEmpty = strips.none { it.draws }
+        if (stripEmpty != was) {
+            trace("strip ${if (stripEmpty) "empty" else "has content"}")
+            colors.contentChanged(stripEmpty)
         }
-        val width = w.coerceAtLeast(1)
-        if (strip.params.width == width) return
-        trace("width ${strip.params.width} -> $width")
-        strip.params.width = width
-        strip.relayout()
+        // Placed again first, then keep awake is told once, by the placing: told before, it would choose by the placing
+        // that is about to change, and take a wake lock and let it go within one measure.
+        val placing = if (showing) lastPlace else null // never puts back a bar that has left
+        if (placing != null) place(placing.first, placing.second) else awake.update()
+        if (started && strips.any { it.shown }) BarStatus.current.value = status()
     }
 
-    private var dragFrom: Pair<String, Rect>? = null
+    private var dragFrom: Drag? = null
     private var dragCenters: Map<String, Float> = emptyMap()
     /** While an item is dragged: its id and the index it would land at, for the strip's live order. */
     private val dragPreview = mutableStateOf<Pair<String, Int>?>(null)
@@ -534,7 +739,16 @@ class BarController(private val service: AccessibilityService) {
     /** Ends a drag without moving anything: the order drawn is the saved one again. */
     private fun cancelDrag() { dragPreview.value = null; dragFrom = null; dragCenters = emptyMap() }
 
-    private val events = object : StripEvents {
+    /**
+     * The one drag: its item, where that stood when the drag began, and the strip it is in. [from] and the others' centres
+     * are places in that strip's window, so a drag is never carried on from another strip.
+     */
+    private class Drag(val id: String, val from: Rect, val strip: AreaStrip)
+
+    /** What the pointer does on one strip: the same for each, but for the window its popups hang from and where its items stand. */
+    private inner class AreaEvents(val strip: AreaStrip) : StripEvents {
+        private val placed = strip.placed
+
         override fun placed(id: String, at: Rect) { placed[id] = at }
 
         override fun gone(id: String) { placed -= id }
@@ -547,15 +761,15 @@ class BarController(private val service: AccessibilityService) {
             val clicked = Ticker.guarded(type, "onClick") { type.onClick(item) } ?: return
             if (clicked) { Ticker.refresh(); return }
             if (type.menu == null) return
-            menus.toggleMenu(MenuKey.Item(item.id), at, type.menuWidthDp) { host -> ItemMenu(item.id, host) }
+            menus.toggleMenu(strip, MenuKey.Item(item.id), at, type.menuWidthDp) { host -> ItemMenu(item.id, host) }
         }
 
         override fun context(item: ItemConfig, at: Rect) {
             placed[item.id] = at
-            menus.toggleMenu(MenuKey.ItemContext(item.id), at, 280) { host ->
+            menus.toggleMenu(strip, MenuKey.ItemContext(item.id), at, 280) { host ->
                 ItemContextMenu(item.id, host) {
                     val type = Items.of(item.type)
-                    if (type?.menu != null) { menus.closeMenu(dissolve = true); menus.toggleMenu(MenuKey.Item(item.id), at, type.menuWidthDp) { h -> ItemMenu(item.id, h) } }
+                    if (type?.menu != null) { menus.closeMenu(dissolve = true); menus.toggleMenu(strip, MenuKey.Item(item.id), at, type.menuWidthDp) { h -> ItemMenu(item.id, h) } }
                 }
             }
         }
@@ -575,8 +789,9 @@ class BarController(private val service: AccessibilityService) {
 
         override fun chevron(at: Rect) {
             // While presenting, or with nothing behind it (show everything, or ‹ only for items that
-            // don't fit), ‹ opens the menu.
-            Store.config.value.let { if (it.presenting || it.hiddenMode == HiddenMode.SHOW_ALL || (!expanded.value && hiddenItems().isEmpty())) return chevronContext(at) }
+            // don't fit, in this area or owed to it), ‹ opens the menu.
+            val hidden = hiddenItems()
+            Store.config.value.let { if (chevronOpensMenu(it.presenting, it.hiddenMode, expanded.value, hidden.isNotEmpty(), hidden.any { h -> h.area == strip.area })) return chevronContext(at) }
             val next = !expanded.value
             expanded.value = next
             pinned = next
@@ -586,7 +801,7 @@ class BarController(private val service: AccessibilityService) {
             if (next && secs > 0) main.postDelayed(collapse, secs * 1000L)
         }
 
-        override fun chevronContext(at: Rect) = menus.barMenu(at, everything = false)
+        override fun chevronContext(at: Rect) = menus.barMenu(strip, at, everything = false)
 
         /**
          * A drag in the bar. While it moves, the strip previews the new order ([dragPreview]), so
@@ -597,15 +812,19 @@ class BarController(private val service: AccessibilityService) {
          */
         override fun drag(item: ItemConfig, dx: Float, done: Boolean) {
             menus.hideTip()
-            if (dragFrom?.first != item.id) {
+            if (dragFrom?.id != item.id || dragFrom?.strip !== strip) {
                 val r = placed[item.id]
-                dragFrom = r?.let { item.id to Rect(it) }
+                dragFrom = r?.let { Drag(item.id, Rect(it), strip) }
                 dragCenters = placed.filterKeys { it != item.id }.mapValues { it.value.exactCenterX() }
             }
-            val from = dragFrom?.second
+            val from = dragFrom?.from
             val cfg = Store.config.value
+            // It lands among its own area's items; with every item in one area those are all the others, as they always were.
+            val others = cfg.items.filter { it.section == Section.SHOWN && it.id != item.id }
             val index = if (item.section != Section.SHOWN || from == null) null
-                else StripDrag.index(from.exactCenterX() + dx, cfg.items.filter { it.section == Section.SHOWN && it.id != item.id }.map { it.id }, BarOverflow.ids.value, dragCenters)
+                else StripDrag.index(from.exactCenterX() + dx, others.map { it.id }, BarOverflow.ids.value, dragCenters,
+                    mine = others.filter { it.area == item.area }.map { it.id }.toSet(),
+                    now = cfg.items.takeWhile { it.id != item.id }.count { it.section == Section.SHOWN })
             if (!done) {
                 if (index != null && dragPreview.value != (item.id to index)) dragPreview.value = item.id to index
                 return
@@ -615,7 +834,7 @@ class BarController(private val service: AccessibilityService) {
             cancelDrag()
         }
 
-        override fun dragTakenAway(item: ItemConfig) { if (dragFrom?.first == item.id) cancelDrag() }
+        override fun dragTakenAway(item: ItemConfig) { if (dragFrom?.id == item.id && dragFrom?.strip === strip) cancelDrag() }
 
         override fun gapClick(key: String) {
             val at = placed[key] ?: return
@@ -630,22 +849,22 @@ class BarController(private val service: AccessibilityService) {
             if (up) { expanded.value = true; pinned = false } else fold()
         }
 
-        override fun itemHover(item: ItemConfig, at: Rect, inside: Boolean) = menus.itemHover(item, at, inside, sliding)
+        override fun itemHover(item: ItemConfig, at: Rect, inside: Boolean) = menus.itemHover(strip, item, at, inside, sliding)
 
         override fun hover(inside: Boolean) {
-            trace("hover $inside")
-            hovering = inside
-            if (!inside) menus.hideTip() // the pointer left the strip: even an item that has gone, and can't say so itself
-            main.removeCallbacks(expandOnHover); main.removeCallbacks(collapse)
-            if (inside) {
-                if (Store.config.value.hiddenMode == HiddenMode.HOVER && !expanded.value && hiddenItems().isNotEmpty()) main.postDelayed(expandOnHover, 350)
-            } else if (!pinned) main.postDelayed(collapse, 900)
-            else {
-                val secs = Store.config.value.autoCollapseSec
-                if (secs > 0) main.postDelayed(collapse, secs * 1000L)
-            }
+            trace("hover $inside ${word(strip.area)}")
+            val (areas, bar) = PopupRules.hoverChanged(hoverAreas, strip.area, inside)
+            hoverAreas = areas
+            // Onto this strip or off it with the pointer over another one as well: to the bar it is where it was. The
+            // tooltip of the strip it left ends all the same; one the other strip is waiting to show is not this one's.
+            if (bar == null && !inside) menus.hideTip(strip)
+            if (bar == null) return
+            if (!inside) menus.hideTip() // the pointer left the bar: even an item that has gone, and can't say so itself
+            barHover(bar)
         }
     }
+
+    private val events = strips.associateWith { AreaEvents(it) }
 
     /**
      * The "BentoBar menu" entry (a keyboard shortcut the user binds in the system's shortcut
@@ -653,12 +872,13 @@ class BarController(private val service: AccessibilityService) {
      * False when the strip isn't showing.
      */
     fun openBarMenu(): Boolean {
+        val strip = carrierStrip()
         if (!started || !strip.shown) return false
         // Under the strip's end next to the system icons (its start when the strip is on the left).
         val w = strip.params.width
         val h = strip.params.height
-        val at = if (Store.config.value.position == Position.LEFT) Rect(0, 0, 1, h) else Rect(w - 1, 0, w, h)
-        menus.barMenu(at, everything = true)
+        val at = if (strip.area == Position.LEFT) Rect(0, 0, 1, h) else Rect(w - 1, 0, w, h)
+        menus.barMenu(strip, at, everything = true)
         return true
     }
 
@@ -687,27 +907,28 @@ class BarController(private val service: AccessibilityService) {
         // (including copied content:// or file:// URIs).
         val copySettleMs = if (capture.performedCopy) 60L else 10L
         main.postDelayed({
-            val originalFlags = strip.params.flags
+            val targetStrip = carrierStrip().takeIf { it.shown } ?: strips.firstOrNull { it.shown } ?: carrierStrip()
+            val originalFlags = targetStrip.params.flags
             val hadNotFocusable = (originalFlags and WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE) != 0
-            if (strip.shown && hadNotFocusable) {
-                strip.params.flags = (originalFlags and WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE.inv()) or
+            if (targetStrip.shown && hadNotFocusable) {
+                targetStrip.params.flags = (originalFlags and WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE.inv()) or
                     WindowManager.LayoutParams.FLAG_NOT_TOUCH_MODAL
-                strip.relayout()
+                targetStrip.relayout()
             }
             main.postDelayed({
                 val firstSnapshot = CloudClipboardItem.readLocalClipboardSnapshot()
                 if (!firstSnapshot.isEmpty) {
-                    if (strip.shown && hadNotFocusable) {
-                        strip.params.flags = originalFlags
-                        strip.relayout()
+                    if (targetStrip.shown && hadNotFocusable) {
+                        targetStrip.params.flags = originalFlags
+                        targetStrip.relayout()
                     }
                     CloudClipboardItem.pushCapturedClip(firstSnapshot, fromShortcut = true)
                 } else {
                     main.postDelayed({
                         val secondSnapshot = CloudClipboardItem.readLocalClipboardSnapshot()
-                        if (strip.shown && hadNotFocusable) {
-                            strip.params.flags = originalFlags
-                            strip.relayout()
+                        if (targetStrip.shown && hadNotFocusable) {
+                            targetStrip.params.flags = originalFlags
+                            targetStrip.relayout()
                         }
                         CloudClipboardItem.pushCapturedClip(secondSnapshot, fromShortcut = true)
                     }, 120L)
@@ -1187,20 +1408,31 @@ class BarController(private val service: AccessibilityService) {
 
     fun debug(cmd: List<String>): String {
         fun first(type: String) = Store.config.value.items.firstOrNull { it.type == type || it.id == type }
+        // What names no item goes to the carrier's strip; what names one, to the strip that drew it.
+        val strip = carrierStrip()
+        val events = events.getValue(strip)
+        // A hook for one strip can name its area (left, middle, right), whose strip must be on screen; with no word it is the
+        // carrier's, as it was with one strip.
+        fun stripOf(area: String?) = if (area == null) strip else strips.firstOrNull { it.shown && word(it.area) == area }
         return when (cmd.firstOrNull()) {
-            "dump" -> "snap=$snap look=${look.value} expanded=${expanded.value} menu=${menus.menuKey} shown=${strip.shown} empty=$stripEmpty placed=$placed"
+            "dump" -> "snap=$snap look=${look.value} expanded=${expanded.value} menu=${menus.menuKey} shown=${strips.any { it.shown }} empty=$stripEmpty " +
+                "carrier=${word(carrier)} owed=${owed.value.map { word(it) }} " + strips.joinToString(" ") {
+                    "${word(it.area)}[shown=${it.shown} empty=${it.empty} pending=${it.pending} width=${it.params.width} x=${it.params.x} " +
+                        "budget=${it.maxWidth.intValue} placed=${it.placed}]"
+                }
             "open", "ctx" -> {
                 val item = first(cmd.getOrElse(1) { "" }) ?: return "no such item"
-                val at = placed[item.id] ?: return "item not drawn yet"
-                if (cmd[0] == "open") events.click(item, at) else events.context(item, at); "ok"
+                val drew = strips.firstOrNull { item.id in it.placed } ?: return "item not drawn yet"
+                val at = drew.placed.getValue(item.id)
+                this.events.getValue(drew).let { if (cmd[0] == "open") it.click(item, at) else it.context(item, at) }; "ok"
             }
-            "chevron" -> { events.chevron(Rect()); "expanded=${expanded.value}" }
+            "chevron" -> { val on = stripOf(cmd.getOrNull(1)) ?: return "no such strip"; this.events.getValue(on).chevron(Rect()); "expanded=${expanded.value}" }
             "scroll" -> {
                 val item = first(cmd.getOrElse(1) { "" }) ?: return "no such item"
                 events.scroll(item, cmd.getOrNull(2)?.toIntOrNull() ?: 1); "ok"
             }
-            "barmenu" -> { events.chevronContext(placed["chevron"] ?: Rect(0, 0, 40, 40)); "ok" }
-            "hover" -> { events.hover(cmd.getOrNull(1) == "on"); "ok" }
+            "barmenu" -> { events.chevronContext(strip.placed["chevron"] ?: Rect(0, 0, 40, 40)); "ok" }
+            "hover" -> { val on = stripOf(cmd.getOrNull(2)) ?: return "no such strip"; this.events.getValue(on).hover(cmd.getOrNull(1) == "on"); "ok" }
             "close" -> { menus.closeMenu(); "ok" }
             "solid" -> { MenuWindow.solid = cmd.getOrNull(1) != "off"; "solid=${MenuWindow.solid}" }
             "scan" -> { scan(); "snap=$snap" }

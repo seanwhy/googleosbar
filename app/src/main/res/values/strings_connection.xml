@@ -1,0 +1,44 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Connection. Every name here starts with connection_, item_connection_ or trigger_connection. -->
+<resources xmlns:tools="http://schemas.android.com/tools" tools:locale="en">
+    <string name="item_connection_title">Connection</string>
+    <string name="item_connection_desc">Says when you\'re offline, need to sign in, have no internet or use a VPN</string>
+    <string name="trigger_connection">while the connection needs a look: offline, no internet, a sign-in page or a VPN</string>
+    <!-- The same rule with the VPN option off. -->
+    <string name="trigger_connection_no_vpn">while the connection needs a look: offline, no internet or a sign-in page</string>
+    <string name="trigger_connection_short">shows when it needs a look</string>
+    <!-- In the bar: one word for each state but a fine one. -->
+    <string name="connection_offline">Offline</string>
+    <string name="connection_sign_in">Sign in</string>
+    <string name="connection_no_internet">No internet</string>
+    <string name="connection_vpn">VPN</string>
+    <string name="connection_metered">Metered</string>
+    <!-- The menu's subtitle, a sentence for each state. -->
+    <string name="connection_says_offline">Not connected</string>
+    <string name="connection_says_sign_in">This network wants you to sign in</string>
+    <string name="connection_says_no_internet">Connected, but the internet can\'t be reached</string>
+    <string name="connection_says_vpn">Connected through a VPN</string>
+    <string name="connection_says_metered">Connected on a metered network</string>
+    <string name="connection_says_fine">Connected</string>
+    <!-- Spoken and the tooltip: "Connection: Connected through a VPN". -->
+    <string name="connection_desc">Connection: %1$s</string>
+    <!-- The menu's rows. -->
+    <string name="connection_row_link">Network</string>
+    <string name="connection_link_none">None</string>
+    <string name="connection_link_wifi">Wi-Fi</string>
+    <string name="connection_link_ethernet">Ethernet</string>
+    <string name="connection_link_mobile">Mobile data</string>
+    <string name="connection_link_other">Other</string>
+    <string name="connection_row_internet">Internet</string>
+    <string name="connection_internet_works">Reached</string>
+    <string name="connection_internet_sign_in">Sign-in needed</string>
+    <string name="connection_internet_none">Not reached</string>
+    <string name="connection_row_vpn">VPN</string>
+    <string name="connection_row_metered">Metered</string>
+    <string name="connection_yes">Yes</string>
+    <string name="connection_no">No</string>
+    <string name="connection_settings">Network settings</string>
+    <!-- The item's option. -->
+    <string name="connection_vpn_counts">Show while a VPN is on</string>
+    <string name="connection_vpn_counts_help">For the item\'s rule: a VPN in use counts as something to show.</string>
+</resources>

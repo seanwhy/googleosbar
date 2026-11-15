@@ -1,0 +1,37 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Camera and mic. Every name here starts with inuse_, item_inuse_ or trigger_inuse. -->
+<resources xmlns:tools="http://schemas.android.com/tools" tools:locale="en">
+    <string name="item_inuse_title">Camera and mic</string>
+    <string name="item_inuse_desc">Shows while an app uses the camera or microphone; mutes the microphone</string>
+    <string name="trigger_inuse">while an app uses the camera or microphone, or the microphone is muted</string>
+    <string name="trigger_inuse_short">shows while in use</string>
+
+    <!-- What the bar says to a screen reader, and the popup's subtitle. -->
+    <string name="inuse_desc_none">Camera and microphone not in use</string>
+    <string name="inuse_desc_camera">Camera in use</string>
+    <string name="inuse_desc_mic">Microphone in use</string>
+    <string name="inuse_desc_both">Camera and microphone in use</string>
+    <string name="inuse_desc_muted">Microphone muted</string>
+    <string name="inuse_desc_camera_muted">Camera in use, microphone muted</string>
+
+    <string name="inuse_camera">Camera</string>
+    <string name="inuse_microphone">Microphone</string>
+    <string name="inuse_in_use">In use</string>
+    <string name="inuse_not_in_use">Not in use</string>
+    <string name="inuse_muted">Muted</string>
+    <string name="inuse_in_use_muted">In use, muted</string>
+    <string name="inuse_time_in_use">Time in use</string>
+
+    <string name="inuse_mute">Mute the microphone for every app</string>
+    <string name="inuse_unmute">Unmute the microphone</string>
+    <string name="inuse_mute_note">The call\'s own microphone button won\'t show this. BentoBar unmutes when you remove this item or turn BentoBar off.</string>
+    <string name="inuse_mute_refused">This device doesn\'t let BentoBar mute the microphone.</string>
+    <string name="inuse_muted_elsewhere">Android or another app muted the microphone. BentoBar leaves that mute as it is.</string>
+
+    <string name="inuse_privacy">Camera and microphone privacy</string>
+    <string name="inuse_privacy_note">BentoBar can\'t switch the camera off. Android\'s privacy settings can.</string>
+
+    <string name="inuse_option_time">Time in use</string>
+    <string name="inuse_option_click">Mute and unmute with a click</string>
+    <string name="inuse_option_click_help">Otherwise a click opens the menu. The call\'s own microphone button won\'t show the mute.</string>
+</resources>

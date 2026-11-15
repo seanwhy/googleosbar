@@ -714,7 +714,6 @@ object AiUsageItem : ItemType("ai_usage", R.string.item_ai_usage_title, Sym.BOLT
 
     override fun state(item: ItemConfig): ItemState = AntigravityItem.state(item)
     override val menu: @Composable (ItemConfig, MenuHost) -> Unit = { item, host -> AntigravityItem.menu(item, host) }
-    override val optionsTitle: Int get() = R.string.item_ai_usage_title
     override val options: @Composable (ItemConfig, (ItemConfig) -> Unit) -> Unit = { item, set ->
         TextRow(
             stringResource(R.string.ai_usage_options_path),

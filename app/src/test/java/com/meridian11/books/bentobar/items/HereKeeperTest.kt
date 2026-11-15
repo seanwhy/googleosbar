@@ -129,11 +129,11 @@ class HereKeeperTest {
         assertEquals(Here(), keeper.held)
     }
 
-    @Test fun anItemOfMyLocationMovedToOffForgetsThePlace() {
+    @Test fun anItemOfMyLocationThatIsRemovedForgetsThePlace() {
         tick()
         android.answer(Located(zurich, age = 0))
         // With a city still in the bar the type's next tick applies this; with no Weather item left, its onIdle.
-        keeper.keepFor(listOf(here.copy(section = Section.OFF), city), on = true)
+        keeper.keepFor(listOf(city), on = true)
         assertEquals(Here(), keeper.held)
     }
 
@@ -227,7 +227,7 @@ class HereKeeperTest {
     @Test fun followForgetsAsKeepForDoes() {
         keeper.follow(listOf(here), sampled = listOf(here), on = true)
         android.answer(Located(zurich, age = 0))
-        assertFalse(keeper.follow(listOf(here.copy(section = Section.OFF)), sampled = emptyList(), on = true))
+        assertFalse(keeper.follow(emptyList(), sampled = emptyList(), on = true))
         assertEquals(Here(), keeper.held)
     }
 

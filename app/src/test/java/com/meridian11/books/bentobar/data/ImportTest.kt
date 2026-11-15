@@ -33,6 +33,15 @@ class ImportTest {
         assertNull(Store.parseLayout("not a layout"))
     }
 
+    @Test fun anAreaWordThisVersionDoesntKnowFallsBackToItsDefaultLikeAnyOtherValue() {
+        // No rule of its own: the reader takes an unknown word of any enum as the field's default, and an area's is Right.
+        val c = Store.parseLayout("""{"version":$LAYOUT_VERSION,"position":"LEFT","items":[
+            {"id":"c","type":"clock","area":"TOP"},{"id":"t","type":"timer","area":"LEFT"},{"id":"m","type":"memory"}]}""")!!
+        assertEquals(listOf(Position.RIGHT, Position.LEFT, Position.RIGHT), c.items.map { it.area })
+        // And what isn't a word at all is what it is for every field: not a layout.
+        assertEquals(LayoutRead.NotALayout, readLayout("""{"version":$LAYOUT_VERSION,"items":[{"id":"c","type":"clock","area":{"side":"top"}}]}"""))
+    }
+
     @Test fun aLayoutFromANewerVersionIsRefusedAndNotClamped() {
         val newer = """{"version":${LAYOUT_VERSION + 1},"items":[{"id":"c","type":"clock"}]}"""
         assertEquals(LayoutRead.Newer(LAYOUT_VERSION + 1), readLayout(newer))
@@ -92,7 +101,7 @@ class ImportTest {
         assertEquals(setOf("version", "enabled", "items", "position", "hiddenMode", "chevron", "revealOnHover", "autoCollapseSec", "pinnedOpen",
             "presenting", "turnedOff", "textSize", "pill", "color", "spacing", "hoverSwitchesPopups", "noAnimations", "systemTint", "chipMode", "onboarded", "cities"), fields)
         val item = (0 until ItemConfig.serializer().descriptor.elementsCount).map { ItemConfig.serializer().descriptor.getElementName(it) }.toSet()
-        assertEquals(setOf("id", "type", "section", "whenActive", "display", "options"), item)
+        assertEquals(setOf("id", "type", "section", "whenActive", "display", "options", "area"), item)
     }
 
     @Test fun everyFieldOfALayoutIsEitherLocalOrCopied() {
@@ -118,10 +127,44 @@ class ImportTest {
     }
 
     @Test fun anOlderLayoutIsMigrated() {
-        val old = """{"version":2,"chevron":false,"items":[{"id":"m","type":"memory","section":"HIDDEN"}]}"""
+        val old = """{"version":2,"chevron":false,"items":[{"id":"m","type":"memory","section":"HIDDEN"},{"id":"c","type":"clock"}]}"""
         val c = Store.parseLayout(old)
         assertNotNull(c)
-        assertEquals(3, c!!.version)
-        assertEquals(Section.OFF, c.items.single().section)
+        assertEquals(LAYOUT_VERSION, c!!.version)
+        // Without ‹ the hidden Memory never showed: the migration puts it in Off, and a layout is read without its Off items.
+        assertEquals(listOf("c"), c.items.map { it.id })
+    }
+
+    @Test fun aVersion3LayoutComesOutAsVersion4WithEveryItemInTheAreaOfItsPosition() {
+        for (position in Position.entries) {
+            val pasted = """{"version":3,"position":"$position","items":[{"id":"c","type":"clock"},
+                {"id":"m","type":"memory","section":"HIDDEN"},{"id":"t","type":"timer","section":"OFF"}]}"""
+            val read = readLayout(pasted) as LayoutRead.Ok
+            assertEquals(4, read.config.version)
+            assertEquals(listOf("c", "m"), read.config.items.map { it.id }) // the Off item is not read
+            assertEquals(listOf(position, position), read.config.items.map { it.area })
+            assertEquals(position, read.config.position) // kept as it was: the migration reads it, and a layout with no items
+            assertEquals(true, read.changed)
+        }
+    }
+
+    /** An upgraded layout with no items has no item to carry its place: its empty bar stays where it was. */
+    @Test fun aVersion3LayoutWithNoItemsKeepsItsPlace() {
+        for (position in Position.entries) {
+            val read = readLayout("""{"version":3,"position":"$position","items":[]}""") as LayoutRead.Ok
+            assertEquals(4, read.config.version)
+            assertEquals(position, read.config.homeArea())
+            assertEquals(position, read.config.oneArea())
+        }
+    }
+
+    @Test fun aVersion4LayoutKeepsItsAreasWhateverItsPositionSays() {
+        val c = BarConfig(position = Position.LEFT, items = listOf(clock.copy(area = Position.CENTER), timer.copy(area = Position.RIGHT)))
+        assertEquals(LayoutRead.Ok(c, changed = false), readLayout(json.encodeToString(BarConfig.serializer(), c)))
+    }
+
+    @Test fun areasTravelWithCopySettings() {
+        val here = BarConfig(items = listOf(clock.copy(area = Position.LEFT), timer.copy(area = Position.CENTER)), presenting = true)
+        assertEquals(listOf(Position.LEFT, Position.CENTER), Store.parseLayout(json.encodeToString(BarConfig.serializer(), here.withoutLocal()))!!.items.map { it.area })
     }
 }

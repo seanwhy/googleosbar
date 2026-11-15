@@ -12,6 +12,27 @@ import com.meridian11.books.bentobar.data.Store
  * once, the highlight jumps. Tolerances (a grace after the pointer leaves, a guard against a double click) stay.
  */
 object Motion {
+    /**
+     * The settings window's times, in milliseconds, as its design gives them. Things travel there and don't fade: a
+     * fade only goes with a move. Every one of them is run through [spec], and Compose stretches it by the system's
+     * animator scale, so "No animations" and the system's "Remove animations" both make it happen at once.
+     */
+    /** A row picked up rises and takes its shadow; over the preview it becomes the item's chip, and a chip a row. A switch's knob. */
+    const val LIFT = 120
+    /** The rows around a move make room; a segment's raised part and the tabs' underline travel. */
+    const val NEIGHBOURS = 160
+    /** A dropped row settles; the panel's content slides in from the side it turned to. */
+    const val SETTLE = 180
+    /** A row that was not dropped anywhere travels back where it came from. */
+    const val BACK = 200
+    /** An area starts or closes: the rows travel to their lanes, or back into the one list. */
+    const val AREA = 200
+    /**
+     * A note with Undo (a removed row's slip, a closed or removed area's, the library's "Added", Look's line) stands
+     * this long, then only the note goes: the change can still be undone. [NoteClock] says what holds it meanwhile.
+     */
+    const val NOTE = 3000
+
     /** "No animations" is set. */
     val off: Boolean get() = Store.config.value.noAnimations
 

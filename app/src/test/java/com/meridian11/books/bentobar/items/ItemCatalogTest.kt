@@ -25,6 +25,13 @@ class ItemCatalogTest {
         for (group in ItemGroup.entries) assertTrue(group.name, Items.inGroup(group).isNotEmpty())
     }
 
+    @Test fun eachGroupIsOneBlockOfTheRegistry() {
+        // Items.all is written one block per group, each under its comment, in the groups' order: a type added outside its
+        // group's block would make the comments untrue.
+        val runs = Items.all.map { it.group }.fold(emptyList<ItemGroup>()) { acc, g -> if (acc.lastOrNull() == g) acc else acc + g }
+        assertEquals(ItemGroup.entries.toList(), runs)
+    }
+
     @Test fun addKeepsTheOnlineGroupForExactlyTheTypesThatGoOnline() {
         assertEquals(Items.all.filter { it.online != null }, Items.inGroup(ItemGroup.ONLINE))
         for (type in Items.inGroup(ItemGroup.ONLINE)) assertTrue(type.type, Items.of(type.type)?.online != null)
@@ -50,6 +57,15 @@ class ItemCatalogTest {
         assertEquals(setOf("network", "cpu", "memory"), Items.all.filter { it.holds }.map { it.type }.toSet())
         assertEquals(setOf("timer", "countdown", "event"), Items.all.filter { it.presents }.map { it.type }.toSet())
         assertEquals(setOf("weather", "air"), Items.all.filter { it.usesMyLocation }.map { it.type }.toSet())
+    }
+
+    @Test fun everyAccessATypeNeedsHasWords() {
+        // Setup's row and the item's line are drawn from these: an access with no words would be a blank row.
+        for (type in Items.all) for (access in type.needs) {
+            assertTrue("${type.type} needs $access, which has no title", Accesses.title(access) != 0)
+            assertTrue("${type.type} needs $access, which has no explanation", Accesses.explain(access) != 0)
+            assertTrue("${type.type} needs $access, which has no button", Accesses.allow(access) != 0)
+        }
     }
 
     @Test fun everySamplerNamedIsARealType() {

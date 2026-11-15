@@ -1,5 +1,7 @@
 package com.meridian11.books.bentobar.items
 
+import androidx.compose.runtime.getValue
+import com.meridian11.books.bentobar.ui.Bento
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxWidth
@@ -10,7 +12,6 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
-import androidx.compose.runtime.getValue
 import androidx.compose.runtime.key
 import androidx.compose.runtime.remember
 import androidx.compose.ui.Alignment
@@ -27,7 +28,6 @@ import androidx.compose.ui.unit.dp
 import com.meridian11.books.bentobar.R
 import com.meridian11.books.bentobar.data.ItemConfig
 import com.meridian11.books.bentobar.data.Online
-import com.meridian11.books.bentobar.data.Section
 import com.meridian11.books.bentobar.ui.KeyWords
 import com.meridian11.books.bentobar.ui.MenuCard
 import com.meridian11.books.bentobar.ui.MenuDivider
@@ -119,7 +119,7 @@ internal fun StocksOptions(item: ItemConfig, set: (ItemConfig) -> Unit) {
     // One card serves whichever item is selected: nothing typed or found for one item stays for the next.
     key(item.id) {
         Column(Modifier.fillMaxWidth().padding(vertical = 6.dp)) {
-            Text(stringResource(R.string.stocks_section), style = MaterialTheme.typography.labelLarge)
+            Text(stringResource(R.string.stocks_section), style = Bento.type.strong, color = Bento.colors.ink)
             val stocks = remember(item) { StocksRules.stocks(item) }
             if (keyed) {
                 if (stocks.size < StocksRules.MOST_STOCKS) StockSearch(item, stocks, set)
@@ -139,8 +139,8 @@ private val STOCKS_KEY = KeyWords(R.string.stocks_key_section, R.string.stocks_c
 
 /**
  * The search: the field with its Search button, and under it what the last search found, each US
- * stock with a press to add it. Typing sends nothing; the button or Enter sends the text. An item in
- * Off may ask nothing. From the keyboard: when stocks arrive the focus is on the first that can be
+ * stock with a press to add it. Typing sends nothing; the button or Enter sends the text.
+ * From the keyboard: when stocks arrive the focus is on the first that can be
  * added, so Enter, Enter is search and add; Down and Up go between the field and it.
  */
 @Composable
@@ -155,7 +155,7 @@ private fun StockSearch(item: ItemConfig, stocks: List<Stock>, set: (ItemConfig)
     SearchWithResults(hasResults = firstFree >= 0, arrival = found,
         field = {
             SearchField(label = stringResource(R.string.stocks_search_label), submit = stringResource(R.string.common_search),
-                canSubmit = item.section != Section.OFF, focus = field,
+                focus = field,
                 onChange = { StocksItem.search.clearIf { it.by == by } },
                 onEnter = { text -> StocksLoad.query(text)?.let { StocksItem.search.ask(StockQuery(it, by)) } })
         },

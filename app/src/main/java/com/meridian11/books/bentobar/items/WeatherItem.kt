@@ -5,7 +5,6 @@ import androidx.compose.runtime.Composable
 import com.meridian11.books.bentobar.R
 import com.meridian11.books.bentobar.data.ItemConfig
 import com.meridian11.books.bentobar.data.Online
-import com.meridian11.books.bentobar.data.Section
 import com.meridian11.books.bentobar.data.Store
 import com.meridian11.books.bentobar.util.Dates
 import com.meridian11.books.bentobar.util.Now
@@ -97,9 +96,15 @@ object WeatherItem : ItemType("weather", R.string.item_weather_title, Sym.PARTLY
         if (staged(item) != null) stagedSince = Now.elapsed() else source.again(item)
     }
 
+    override fun trouble(item: ItemConfig, now: Long): Trouble? = WeatherRules.silence(status(item, now))?.let { (failure, lastAt) ->
+        Trouble(if (failure == Failure.SLOW_DOWN) R.string.weather_no_answer_hour else R.string.weather_no_answer_15, lastAt, againEntry(item) == Again.READY)
+    }
+
+    override fun tryAgain(item: ItemConfig) = again(item)
+
     override fun state(item: ItemConfig): ItemState {
         val now = Now.wall()
-        // Loads the place's reading if it is due: only for an item with a city, outside Off, while the switch is on.
+        // Loads the place's reading if it is due: only for an item with a city, while the switch is on.
         if (staged(item) == null) source.reading(item)
         val bar = WeatherRules.bar(status(item, now), look(item), now, Words, times())
         return ItemState(icon = bar.icon, filled = bar.filled, text = bar.text, desc = bar.desc, active = bar.active, tone = bar.tone,
@@ -113,11 +118,9 @@ object WeatherItem : ItemType("weather", R.string.item_weather_title, Sym.PARTLY
     private var keptFor: Set<Place>? = null
 
     /**
-     * The last reading of a place is deleted with the last item that shows it, when that item gets
-     * another city, and when it is turned off: looked at whenever the layout's items changed, from
-     * [sample] and from [onIdle]. That an item in Off keeps no reading is what makes this sure: the
-     * tick that turns the last item off still runs [onIdle] for the type, while a later delete of an
-     * item that is off runs nothing at all ([WeatherLoad.places]). Main thread.
+     * The last reading of a place is deleted with the last item that shows it, and when that item gets
+     * another city: looked at whenever the layout's items changed, from [sample] and from [onIdle]
+     * ([WeatherLoad.places]). Main thread.
      */
     private fun tidy() {
         val items = Store.config.value.items
@@ -133,7 +136,7 @@ object WeatherItem : ItemType("weather", R.string.item_weather_title, Sym.PARTLY
 
     override fun sample(now: Long) = tidy()
 
-    // Also when the last Weather item went, or the last of My location went to Off: nothing samples this type any more, so this is the moment that is left.
+    // Also when the last Weather item went, or the last of My location: nothing samples this type any more, so this is the moment that is left.
     override fun onIdle() = tidy()
 
     override val menu: @Composable (ItemConfig, MenuHost) -> Unit = { item, host -> WeatherMenu(item, host) }
@@ -153,9 +156,9 @@ object WeatherItem : ItemType("weather", R.string.item_weather_title, Sym.PARTLY
         private set
 
     /** The first Weather item that could show: the one a staged sample is for. */
-    private fun firstShown(): ItemConfig? = Store.config.value.items.firstOrNull { it.type == type && it.section != Section.OFF }
+    private fun firstShown(): ItemConfig? = Store.config.value.items.firstOrNull { it.type == type }
 
-    /** The sample staged for [item], if it is the first Weather item of the layout that is not turned off. */
+    /** The sample staged for [item], if it is the first Weather item of the layout. */
     internal fun staged(item: ItemConfig): WeatherSamples.Sample? = stagedReading?.takeIf { firstShown()?.id == item.id }
 
     /**

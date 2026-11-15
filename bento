@@ -6,7 +6,9 @@
 #   ./bento app               build, install, enable the service, open settings
 #   ./bento install | enable | disable | launch | stop
 #   ./bento debug CMD...      test hooks (see util/DebugReceiver.kt): dump, cfg, reset, open TYPE,
-#                             ctx TYPE, chevron, barmenu, close, timer MIN, awake [MIN|off], look KEY VALUE
+#                             ctx TYPE, chevron [left|middle|right], hover on|off [left|middle|right]
+#                             (an area's strip; with none, the first one), barmenu, close, timer MIN,
+#                             awake [MIN|off], look KEY VALUE
 #   ./bento logs [N]          BentoBar's log lines
 #   ./bento shot [FILE] [H]   the top H px of the screen (status bar + menus; default 60), cropped
 #   ./bento menushot [FILE]   the open menu's area

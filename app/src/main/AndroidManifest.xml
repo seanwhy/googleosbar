@@ -3,9 +3,9 @@
     xmlns:tools="http://schemas.android.com/tools">
 
     <!-- Five items go online, and only after the user set them up on this device: Weather and Air quality ask
-         Open-Meteo, Exchange rates asks Frankfurter, Flight asks AirLabs and US stocks asks Finnhub, the last two
-         with the user's own key. net/Http.kt names the hosts and is the only code that opens a connection; nothing
-         the accessibility service or any other item reads goes there. -->
+         Open-Meteo, Exchange rates asks Frankfurter, Flight asks AirLabs and US stocks asks
+         Finnhub, the last two with the user's own key. net/Http.kt names the hosts and is the only code that opens
+         a connection; nothing the accessibility service or any other item reads goes there. -->
     <uses-permission android:name="android.permission.INTERNET" />
     <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE" />
     <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
@@ -19,7 +19,8 @@
     <!-- To explain why the bar can't run when Advanced Protection is on (normal permission). -->
     <uses-permission android:name="android.permission.QUERY_ADVANCED_PROTECTION_MODE" />
     <!-- Optional "Usage access", off until the user turns it on in Android settings: per-app data
-         use and storage for the Network and Storage menus. BentoBar reads nothing else with it. -->
+         use and storage for the Network and Storage menus, and for a Screen time item when the screen
+         was on today and, while its menu is open, which apps were in front. BentoBar reads nothing else with it. -->
     <uses-permission
         android:name="android.permission.PACKAGE_USAGE_STATS"
         tools:ignore="ProtectedPermissions" />
@@ -35,6 +36,16 @@
     <uses-permission android:name="android.permission.READ_MEDIA_IMAGES" />
     <uses-permission android:name="android.permission.READ_MEDIA_VIDEO" />
     <uses-permission android:name="android.permission.READ_MEDIA_AUDIO" />
+    <!-- Mirror's preview, asked for when a Mirror item first shows: on screen in its popup, never recorded or sent. -->
+    <uses-permission android:name="android.permission.CAMERA" />
+    <!-- Camera and mic's mute of the microphone for every app, made and undone only by the user's press (normal permission). -->
+    <uses-permission android:name="android.permission.MODIFY_AUDIO_SETTINGS" />
+    <!-- Focus's Do Not Disturb rule: off until the user gives Do Not Disturb access in Android's settings. -->
+    <uses-permission android:name="android.permission.ACCESS_NOTIFICATION_POLICY" />
+    <!-- Brightness's slider: off until the user allows "Modify system settings" in Android's settings. -->
+    <uses-permission
+        android:name="android.permission.WRITE_SETTINGS"
+        tools:ignore="ProtectedPermissions" />
 
     <!-- The app picker for app shortcuts and folders lists launchable apps only. -->
     <queries>
@@ -52,6 +63,10 @@
          desktop-class Android devices (BentoBar adds items to the desktop's status bar). Android itself
          doesn't check this, so the APK from GitHub still installs anywhere. -->
     <uses-feature android:name="android.hardware.type.pc" android:required="true" />
+    <!-- The camera is Mirror's alone: a device without one gets BentoBar all the same, and Mirror says so. -->
+    <uses-feature android:name="android.hardware.camera" android:required="false" />
+    <uses-feature android:name="android.hardware.camera.any" android:required="false" />
+    <uses-feature android:name="android.hardware.camera.autofocus" android:required="false" />
 
     <!-- Backups carry the layout, as before. What belongs to one install (whether an online service is
          switched on, the user's key, what a service last sent) is kept in Android's no-backup directory,
@@ -115,9 +130,10 @@
                 android:resource="@xml/accessibility_service" />
         </service>
 
-        <!-- BentoBar's entry in Android's "Notification access" list, for Now playing: Android tells an app
-             what the media players are playing only if the user turned the app on there. BentoBar wants the
-             players' titles and no notifications, and says so three times over: it asks for no notification
+        <!-- One of BentoBar's two entries in Android's "Notification access" list, the one for Now playing (the other,
+             below, is Notification icons'; the user turns each on by itself): Android tells an app
+             what the media players are playing only if the user turned the app on there. Through this entry BentoBar
+             wants the players' titles and no notifications, and says so three times over: it asks for no notification
              type (an empty default list means none), it marks all four types as never wanted (15 is
              conversations, alerting, silent and ongoing together; Android's page for the listener then shows
              them off and disabled), and Android is not to start this service by itself. Off until the user
@@ -131,6 +147,22 @@
             </intent-filter>
             <meta-data android:name="android.service.notification.default_filter_types" android:value="" />
             <meta-data android:name="android.service.notification.disabled_filter_types" android:value="15" />
+            <meta-data android:name="android.service.notification.default_autobind_listenerservice" android:value="false" />
+        </service>
+
+        <!-- Notification icons' entry in Android's "Notification access" list, under a name of its own: other apps'
+             notifications, shown in its item while one is placed and on screen, never kept and never sent. Off until
+             the user turns it on; Android is not to start it by itself: the item asks for it while it shows.
+             items/NoticeAccess.kt. -->
+        <service
+            android:name=".items.NoticeAccess"
+            android:exported="true"
+            android:label="@string/access_notices_label"
+            android:permission="android.permission.BIND_NOTIFICATION_LISTENER_SERVICE">
+            <intent-filter>
+                <action android:name="android.service.notification.NotificationListenerService" />
+            </intent-filter>
+            <meta-data android:name="android.service.notification.default_filter_types" android:value="conversations|alerting|silent|ongoing" />
             <meta-data android:name="android.service.notification.default_autobind_listenerservice" android:value="false" />
         </service>
 
@@ -169,6 +201,8 @@
 
         <receiver android:name=".items.TimerAlarm" android:exported="false" />
         <receiver android:name=".items.ChipAction" android:exported="false" />
+        <!-- A Focus session's end at its time: BentoBar's own alarm, nothing else may send it. -->
+        <receiver android:name=".items.FocusEnd" android:exported="false" />
 
     </application>
 </manifest>

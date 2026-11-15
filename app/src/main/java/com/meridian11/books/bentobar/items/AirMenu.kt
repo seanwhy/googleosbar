@@ -1,5 +1,17 @@
 package com.meridian11.books.bentobar.items
 
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.setValue
+import androidx.compose.ui.Alignment
+import androidx.compose.ui.unit.sp
+import androidx.compose.foundation.layout.width
+import com.meridian11.books.bentobar.util.SymIcon
+import com.meridian11.books.bentobar.ui.Space
+import com.meridian11.books.bentobar.ui.Bento
+import com.meridian11.books.bentobar.ui.ButtonKind
+import com.meridian11.books.bentobar.ui.BentoButton
+import androidx.compose.foundation.layout.ExperimentalLayoutApi
+import androidx.compose.foundation.layout.FlowRow
 import android.content.Intent
 import android.net.Uri
 import android.provider.Settings
@@ -10,17 +22,13 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.padding
-import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
-import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
-import androidx.compose.runtime.getValue
 import androidx.compose.runtime.key
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
-import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.semantics.contentDescription
@@ -29,7 +37,6 @@ import androidx.compose.ui.unit.dp
 import com.meridian11.books.bentobar.R
 import com.meridian11.books.bentobar.data.ItemConfig
 import com.meridian11.books.bentobar.data.Online
-import com.meridian11.books.bentobar.data.Section
 import com.meridian11.books.bentobar.data.Store
 import com.meridian11.books.bentobar.ui.ChoiceRow
 import com.meridian11.books.bentobar.ui.InfoRow
@@ -177,6 +184,7 @@ private fun AirLive(item: ItemConfig, r: AirRules.AirReading, city: String, host
     }
 }
 
+@OptIn(ExperimentalLayoutApi::class)
 @Composable
 internal fun AirOptions(item: ItemConfig, set: (ItemConfig) -> Unit) {
     val online by Online.state.collectAsState()
@@ -189,33 +197,36 @@ internal fun AirOptions(item: ItemConfig, set: (ItemConfig) -> Unit) {
     key(item.id) {
         var changing by remember { mutableStateOf(false) }
         val chooseHere: @Composable () -> Unit = {
-            TextButton(onClick = { set(WeatherRules.useHere(item)); source.typed(by); changing = false; hereChosen() }, enabled = item.section != Section.OFF) {
-                Text(stringResource(R.string.weather_use_here))
-            }
+            BentoButton(stringResource(R.string.weather_use_here), { set(WeatherRules.useHere(item)); source.typed(by); changing = false; hereChosen() },
+                kind = ButtonKind.TEXT)
         }
         Column(Modifier.fillMaxWidth().padding(vertical = 6.dp)) {
-            Text(when {
-                here -> stringResource(R.string.weather_here_current)
-                city != null -> stringResource(R.string.weather_city_current, city)
-                else -> stringResource(R.string.weather_city_none)
-            }, style = MaterialTheme.typography.labelLarge)
-            Text(stringResource(R.string.weather_consent), style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                SymIcon(if (here) Sym.MY_LOCATION else Sym.LOCATION_ON, size = 18.sp, color = Bento.colors.ink2)
+                Spacer(Modifier.width(Space.s))
+                Text(when {
+                    here -> stringResource(R.string.weather_here_current)
+                    city != null -> stringResource(R.string.weather_city_current, city)
+                    else -> stringResource(R.string.weather_city_none)
+                }, style = Bento.type.strong, color = Bento.colors.ink)
+            }
+            Text(stringResource(R.string.weather_consent), Modifier.padding(top = 2.dp), style = Bento.type.help, color = Bento.colors.ink2)
             if ((!here && WeatherRules.place(item) == null) || changing) {
-                CitySearch(item, by, initial = city ?: WeatherRules.cityOf(ZoneId.systemDefault().id), canSubmit = item.section != Section.OFF) { found, region ->
+                CitySearch(item, by, initial = city ?: WeatherRules.cityOf(ZoneId.systemDefault().id)) { found, region ->
                     set(WeatherRules.picked(item, found, region))
                     source.typed(by)
                     changing = false
                 }
-                Row(Modifier.offset(x = (-12).dp)) {
+                FlowRow(Modifier.offset(x = -Space.m)) {
                     if (!here) chooseHere()
-                    if (changing) TextButton(onClick = { source.typed(by); changing = false }) { Text(stringResource(R.string.common_cancel)) }
+                    if (changing) BentoButton(stringResource(R.string.common_cancel), { source.typed(by); changing = false }, kind = ButtonKind.TEXT)
                 }
-            } else Row(Modifier.offset(x = (-12).dp)) {
-                TextButton(onClick = { changing = true }) { Text(stringResource(R.string.weather_change_city)) }
+            } else FlowRow(Modifier.offset(x = -Space.m)) {
+                BentoButton(stringResource(R.string.weather_change_city), { changing = true }, kind = ButtonKind.TEXT)
                 if (!here) chooseHere()
-                else if (city != null) TextButton(onClick = { set(WeatherRules.useCity(item)); source.typed(by) }) { Text(stringResource(R.string.weather_use_city, city)) }
-                if (!on) TextButton(onClick = { Online.turnOn(Online.Service.OPEN_METEO); Ticker.refresh(AirItem.type) }) { Text(stringResource(R.string.weather_turn_on)) }
-                if (here && !setup.location) TextButton(onClick = { askLocation() }) { Text(stringResource(R.string.weather_allow_location)) }
+                else if (city != null) BentoButton(stringResource(R.string.weather_use_city, city), { set(WeatherRules.useCity(item)); source.typed(by) }, kind = ButtonKind.TEXT)
+                if (!on) BentoButton(stringResource(R.string.weather_turn_on), { Online.turnOn(Online.Service.OPEN_METEO); Ticker.refresh(AirItem.type) }, kind = ButtonKind.TEXT)
+                if (here && !setup.location) BentoButton(stringResource(R.string.weather_allow_location), { askLocation() }, kind = ButtonKind.TEXT)
             }
         }
     }

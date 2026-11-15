@@ -463,7 +463,7 @@ class HeatRulesTest {
 
     @Test fun theCpuItemsWords() {
         assertEquals("CPU 12% busy, device hot", text.format("cpu_state_desc_hot", "12%"))
-        assertEquals("Show when CPU load is above 80%, or the device runs hot", text.format("trigger_cpu_hot", "80%"))
+        assertEquals("while CPU load is above 80%, or the device runs hot", text.format("trigger_cpu_hot", "80%"))
         assertEquals("shows above 80% CPU, or when hot", text.format("trigger_cpu_hot_short", "80%"))
     }
 
@@ -482,7 +482,7 @@ class HeatRulesTest {
     }
 
     @Test fun theRulesSentences() {
-        assertEquals("Show when the device is at least hot, and for a minute after it cools", text.format("trigger_heat", text["heat_rule_hot"]))
+        assertEquals("while the device is at least hot, and for a minute after it cools", text.format("trigger_heat", text["heat_rule_hot"]))
         assertEquals("shows when hot", text.format("trigger_heat_short", text["heat_rule_hot"]))
         assertEquals("shows when very hot", text.format("trigger_heat_short", text["heat_rule_very_hot"]))
     }

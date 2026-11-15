@@ -443,18 +443,18 @@ class FlightLoadTest {
             FlightLoad.kept(item, asked, ids)
             assertEquals(setOf(item), Kept.own("flight").names())
             assertEquals(setOf(item), Kept.fetched(AIRLABS).names())
-            // With no Flight item left at all nothing is cleared yet: deleting the last one can still be undone.
+            // With no Flight item left at all nothing is cleared yet: the last one went a moment ago, and one may be back within it.
             FlightLoad.kept(item, asked, emptySet())
             assertEquals(setOf(item), Kept.own("flight").names())
         }
     }
 
-    @Test fun whatWasKeptForTheLastFlightItemGoesOnceItsDeletionCanNoLongerBeUndone() {
+    @Test fun whatWasKeptForTheLastFlightItemGoesAMomentAfterItWentIfNoneIsBack() {
         online { net ->
             follow(net)
             assertEquals(setOf(item), Kept.own("flight").names())
             assertEquals(setOf(item), Kept.fetched(AIRLABS).names())
-            // The moment to undo has passed (longer than the Undo's own ten seconds), and the item is back: nothing is touched.
+            // The moment has passed (half a minute: not Undo's time, which has no end; see FlightRemovedTest), and an item is back: nothing is touched.
             assertTrue(FlightLoad.UNDO_MS >= 30_000)
             assertFalse(FlightLoad.clearWithout(ids))
             assertEquals(setOf(item), Kept.own("flight").names())

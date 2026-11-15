@@ -54,6 +54,8 @@ class MenuWindow(
     /** A press outside the popup (its coordinates are on screen only where it lands on one of BentoBar's own windows). */
     private val onOutside: (MotionEvent) -> Unit,
     private val onEscape: () -> Unit,
+    /** A press inside it: a popup that gave the keys back ([keys]) takes them again. */
+    private val onInside: () -> Unit = {},
 ) {
     val glass = MenuGlassState()
 
@@ -78,6 +80,7 @@ class MenuWindow(
 
         override fun dispatchTouchEvent(ev: MotionEvent): Boolean {
             if (ev.actionMasked == MotionEvent.ACTION_OUTSIDE) { onOutside(ev); return true }
+            if (ev.actionMasked == MotionEvent.ACTION_DOWN) onInside()
             return super.dispatchTouchEvent(ev)
         }
     }
@@ -142,6 +145,52 @@ class MenuWindow(
 
     /** True while the popup is up or still leaving. */
     val isShowing get() = shown
+
+    /** What its content asked to run when it starts to close ([onClosing]), not yet run. */
+    private val closing = ArrayList<() -> Unit>()
+    /** The closing has begun: an action asked for from now on runs at once. */
+    private var closingBegun = false
+    /** Its content gave something up as it began to close: it is never turned round ([reopen]), a new one opens instead. */
+    private var gaveUp = false
+
+    /**
+     * Runs [action] once, when the popup starts to close, whichever way ([close], at once or folding or dissolving; or a
+     * removal with no fold); at once if that has begun. Each call is one action: ask once (in an effect), not on every
+     * composition. The menu's `MenuHost.onClosing`.
+     */
+    fun onClosing(action: () -> Unit) {
+        if (closingBegun) runAction(action) else closing += action
+    }
+
+    private fun closingBegins() {
+        closingBegun = true
+        if (closing.isEmpty()) return
+        gaveUp = true
+        val actions = closing.toList()
+        closing.clear()
+        actions.forEach(::runAction)
+    }
+
+    /** An item's own code: what it gets wrong ends here, and only its kind is logged (it may have been reading something private). */
+    private fun runAction(action: () -> Unit) {
+        try { action() } catch (e: Throwable) {
+            if (e is VirtualMachineError) throw e
+            Log.w("BentoBar", "a popup's closing action failed: ${e.javaClass.simpleName}")
+        }
+    }
+
+    /** Whether it has the keys: false once it gave them back ([keys]) and while it leaves. */
+    val hasKeys: Boolean get() = dialog.window?.attributes?.let { it.flags and WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE == 0 } == true
+
+    /**
+     * Gives the keys back to the app below ([take] false: its own window stops being focusable, still up and still
+     * touchable) or takes them again. For a popup that stays when pressed beside (a mirror, a prompter). Only while it
+     * is up: a leaving one has let go of everything already.
+     */
+    fun keys(take: Boolean) {
+        if (!shown || phase == Phase.CLOSING || phase == Phase.DISSOLVING || phase == Phase.GONE) return
+        if (take) setFlags(0, WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE) else setFlags(WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE, 0)
+    }
 
     /**
      * Shows the popup with its card's top-left corner at ([x], [y]) on screen, [width] px wide. False if
@@ -210,6 +259,8 @@ class MenuWindow(
      * the display changing).
      */
     fun close(dissolve: Boolean = false, now: Boolean = false, gone: (() -> Unit)? = null) {
+        // First, whatever follows: what its content gives up as it goes (a camera) goes the moment the closing starts.
+        closingBegins()
         if (!shown) { gone?.invoke(); return }
         // Closed again at once (the screen going off mid-fold): what was to run after the first close still runs.
         if (gone != null) onGone = gone
@@ -227,11 +278,15 @@ class MenuWindow(
         Choreographer.getInstance().postFrameCallback(tick)
     }
 
-    /** Asked to open again while it folds away: it turns round from where it is, keeping its speed. False if it can't (dissolving, gone). */
+    /**
+     * Asked to open again while it folds away: it turns round from where it is, keeping its speed. False if it can't
+     * (dissolving, gone, or its content gave something up as it began to close: a camera stays closed in it).
+     */
     fun reopen(): Boolean {
-        if (!shown || phase != Phase.CLOSING) return false
+        if (!shown || phase != Phase.CLOSING || gaveUp) return false
         main.removeCallbacks(removal)
         onGone = null
+        closingBegun = false
         takeTouches()
         reopenFrom = glass.heightDp
         reopenSpeed = speed()
@@ -385,6 +440,7 @@ class MenuWindow(
     }
 
     private fun remove() {
+        closingBegins() // a removal with no fold (the bar hiding, the service stopping) is a closing too
         if (!shown) return
         shown = false
         phase = Phase.GONE

@@ -232,6 +232,12 @@ interface StripEvents {
     val slidable: Boolean get() = true
     /** Whether an item can be picked up in this strip. In the settings preview it can't: a drag there would spring back doing nothing. */
     val draggable: Boolean get() = true
+    /**
+     * Whether an item comes in with its fade and slide. In the settings preview it doesn't: the picture is whole in the window's
+     * first frame, however late the second one is (an item that starts invisible waits for it, and a window still being put
+     * together can take seconds over it).
+     */
+    val appearing: Boolean get() = true
 }
 
 /**
@@ -257,6 +263,11 @@ fun Strip(
     onOverflow: (Set<String>) -> Unit = {},
     /** The item whose popup is open ("chevron" for the ‹ menu), or null: the highlight stays on it. */
     open: String? = null,
+    /**
+     * How wide the strip is with a ‹'s whole room ([chevronReservePx]) beside the items it keeps, whether it draws a ‹ or
+     * not, each time they are laid out. With [chevronAlways] it is the same number with the ‹ and without.
+     */
+    onReach: (Int) -> Unit = {},
 ) {
     val pillBg = when (look.pill) {
         Pill.NONE -> Color.Transparent
@@ -264,6 +275,8 @@ fun Strip(
         Pill.SOLID -> if (look.lightText) Color(0xE6202124) else Color(0xE6F1F3F4)
     }
     val density = androidx.compose.ui.platform.LocalDensity.current.density
+    // The strip's two ends in px, as the padding below rounds them.
+    val ends = with(androidx.compose.ui.platform.LocalDensity.current) { STRIP_PILL_PADDING.roundToPx() }
     val glow = remember(density) { Glow(density) }
     val view = androidx.compose.ui.platform.LocalView.current
     SideEffect {
@@ -347,7 +360,8 @@ fun Strip(
         val items = if (chevronOnLeft) revealed + visible else visible + revealed
         if (chevronOnLeft) chevron()
         FitRow(ids = items.map { it.item.id }, maxWidthPx = maxWidthPx, chevronAlways = chevronAlways, chevronPx = chevronReservePx,
-            keepEnd = chevronOnLeft, spacing = look.spacing, onDropped = { ids -> glow.dropped(ids); ids.forEach(events::gone); onOverflow(ids) }) {
+            keepEnd = chevronOnLeft, spacing = look.spacing, onFit = { used -> onReach(used + chevronReservePx + 2 * ends) },
+            onDropped = { ids -> glow.dropped(ids); ids.forEach(events::gone); onOverflow(ids) }) {
             // key(): remembered state (hover, held width) belongs to the item, not to its position,
             // or an item popping in would inherit its neighbour's width.
             items.forEach { androidx.compose.runtime.key(it.item.id) { CompositionLocalProvider(LocalLayoutDirection provides real) { ItemView(it, look, events, glow) } } }
@@ -447,6 +461,14 @@ private fun DrawScope.capsule(color: Color, room: Float, pill: Boolean) {
 }
 
 /**
+ * How wide an item's picture ([ItemState.image], [width] by [height] pixels) is drawn in the strip, in dp: as high as an
+ * icon ([iconDp]) and as wide as its own shape makes it. A square one is an icon's size, as every picture was; a row of
+ * other apps' icons in one picture is as wide as they are. The item's width follows from it, as it does from a symbol.
+ */
+internal fun imageWidthDp(iconDp: Float, width: Int, height: Int): Float =
+    if (width <= 0 || height <= 0) iconDp else iconDp * width / height
+
+/**
  * Which of [widths] fit in [limit] with [gap] between them, keeping from the start (or the end with
  * [keepEnd]) and stopping at the first that doesn't fit; and the width they take.
  */
@@ -472,11 +494,11 @@ internal fun fitStrip(widths: List<Int>, gap: Int, budget: Int, chevronAlways: B
  * reports the dropped [ids] so they can be offered elsewhere instead of silently vanishing.
  * [maxWidthPx] includes ‹: its [chevronPx] is kept when it shows anyway, or when something has to be
  * dropped (‹ then offers it). Decided from this measure pass alone, so the strip can't stay
- * overflowed just because it was overflowed before.
+ * overflowed just because it was overflowed before. [onFit] hears how wide the kept children are, each pass.
  */
 @Composable
 private fun FitRow(ids: List<String>, maxWidthPx: Int, chevronAlways: Boolean, chevronPx: Int, keepEnd: Boolean, spacing: Dp,
-                   onDropped: (Set<String>) -> Unit, content: @Composable () -> Unit) {
+                   onFit: (Int) -> Unit, onDropped: (Set<String>) -> Unit, content: @Composable () -> Unit) {
     val last = remember { arrayOf<Set<String>?>(null) }
     Layout(content) { measurables, constraints ->
         val gap = spacing.roundToPx()
@@ -486,6 +508,7 @@ private fun FitRow(ids: List<String>, maxWidthPx: Int, chevronAlways: Boolean, c
         val (keep, used) = fitStrip(widths, gap, budget, chevronAlways, chevronPx, keepEnd)
         val dropped = ids.filterIndexed { i, _ -> i < keep.size && !keep[i] }.toSet()
         if (dropped != last[0]) { last[0] = dropped; onDropped(dropped) }
+        onFit(used)
         val height = placeables.maxOfOrNull { it.height } ?: 0
         layout(used, height) {
             var x = 0
@@ -605,9 +628,9 @@ private fun ItemView(entry: StripEntry, look: StripLook, events: StripEvents, gl
     // Appearing (the strip starting, an item popping out, ‹ revealing hidden items) fades and slides
     // in instead of popping. Drawn in the graphics layer only: no relayout, so the window doesn't
     // resize per frame.
-    val appear = remember { androidx.compose.animation.core.Animatable(0f) }
+    val appear = remember { androidx.compose.animation.core.Animatable(if (events.appearing) 0f else 1f) }
     LaunchedEffect(Unit) {
-        appear.animateTo(1f, Motion.spec(androidx.compose.animation.core.tween(180,
+        if (events.appearing) appear.animateTo(1f, Motion.spec(androidx.compose.animation.core.tween(180,
             easing = androidx.compose.animation.core.CubicBezierEasing(0.2f, 0f, 0f, 1f))))
     }
     val alert = StripContent.capsule(s)
@@ -698,8 +721,10 @@ private fun ItemView(entry: StripEntry, look: StripLook, events: StripEvents, gl
         if (parts.iconDrawn) {
             val img = s.image
             if (img != null) {
-                Image(img.asImageBitmap(), null, Modifier.size(look.iconDp),
-                    colorFilter = if (AppItem.mono.of(entry.item) && entry.item.type == "app") ColorFilter.tint(iconColor) else null)
+                // A mask (a notification's small icon, an app's monochrome icon) takes the strip's colour, as a symbol does.
+                val tint = s.tintImage || (AppItem.mono.of(entry.item) && entry.item.type == "app")
+                Image(img.asImageBitmap(), null, Modifier.size(width = imageWidthDp(look.iconDp.value, img.width, img.height).dp, height = look.iconDp),
+                    colorFilter = if (tint) ColorFilter.tint(iconColor) else null)
             } else if (s.dayNumber != null) {
                 DayBadge(s.dayNumber, look.iconDp, iconColor, look.background)
             } else if (s.icon != null) {
@@ -722,7 +747,9 @@ private fun ItemView(entry: StripEntry, look: StripLook, events: StripEvents, gl
         if (showText) {
             // Texts that take turns sit in a place as wide as the widest of them; a ticking number in one sized for its widest reading.
             val templates = s.turns ?: if (s.widthKey != null) listOf(Fmt.widthTemplate(s.text!!)) else null
-            val slot = templates?.let { tpls -> remember(tpls, textStyle) { tpls.maxOf { measurer.measure(it, textStyle, maxLines = 1).size.width } } }
+            // In pixels, so measured again when the display's size or the font size changes under a strip that stays: the
+            // measurer is a new one then.
+            val slot = templates?.let { tpls -> remember(tpls, textStyle, measurer) { tpls.maxOf { measurer.measure(it, textStyle, maxLines = 1).size.width } } }
             // With an icon, the number stays next to it and the spare room trails; text alone sits at the end.
             val iconShown = parts.leadInBeforeText
             // An item that promises a length is held to it in width too: 8.5 dp a character at the usual text

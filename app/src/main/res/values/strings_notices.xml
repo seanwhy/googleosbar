@@ -1,0 +1,40 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Notification icons. Every name here starts with notices_, item_notices_ or trigger_notices. -->
+<resources xmlns:tools="http://schemas.android.com/tools" tools:locale="en">
+    <string name="item_notices_title">Notification icons</string>
+    <string name="item_notices_desc">Other apps\' notifications as icons, one per app; the list in its popup</string>
+    <string name="trigger_notices">while other apps have notifications</string>
+    <string name="trigger_notices_short">shows with notifications</string>
+
+    <string name="notices_none">No notifications</string>
+    <string name="notices_needs_access">Needs notification access</string>
+    <plurals name="notices_count">
+        <item quantity="one">%1$d notification</item>
+        <item quantity="other">%1$d notifications</item>
+    </plurals>
+    <!-- What a screen reader says of the item in the bar: how many, and the apps whose icons it shows. -->
+    <plurals name="notices_desc">
+        <item quantity="one">%1$d notification, from %2$s</item>
+        <item quantity="other">%1$d notifications, from %2$s</item>
+    </plurals>
+    <!-- Under a notification's title in the popup: its app, then what it says. -->
+    <string name="notices_row">%1$s · %2$s</string>
+    <string name="notices_dismiss">Dismiss %1$s notification</string>
+    <string name="notices_clear_all">Clear all</string>
+    <string name="notices_note">Read while this item shows, and kept in memory only.</string>
+    <string name="notices_cant_open">This notification can\'t be opened from here</string>
+
+    <string name="notices_limit">Apps in the bar</string>
+    <plurals name="notices_apps">
+        <item quantity="one">%1$d app</item>
+        <item quantity="other">%1$d apps</item>
+    </plurals>
+    <string name="notices_ongoing">Ongoing ones in the bar</string>
+    <string name="notices_ongoing_help">Downloads, calls and apps at work in the background. They stay up until they end, so the item would too.</string>
+    <string name="notices_text">What they say</string>
+    <string name="notices_text_help">Off: the popup lists each notification by its app and title only.</string>
+
+    <!-- In the Live activity item: an app's progress ("Files 62%"), and what a screen reader says of it. -->
+    <string name="notices_live">%1$s %2$s</string>
+    <string name="notices_live_desc">%1$s: %2$s, %3$s</string>
+</resources>

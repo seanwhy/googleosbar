@@ -3,7 +3,7 @@
 <resources xmlns:tools="http://schemas.android.com/tools" tools:locale="en">
     <string name="item_media_title">Now playing</string>
     <string name="item_media_desc">What\'s playing, with pause and skip; shows while something plays</string>
-    <string name="trigger_media">Show while something is playing, and for %1$s after it pauses</string>
+    <string name="trigger_media">while something is playing, and for %1$s after it pauses</string>
     <string name="trigger_media_short">shows while playing</string>
     <string name="media_nothing">Nothing playing</string>
     <string name="media_playing">Playing</string>

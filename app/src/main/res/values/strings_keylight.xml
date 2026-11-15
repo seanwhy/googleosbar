@@ -1,0 +1,21 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Keyboard light: the keyboard's backlight from the bar. Every name here starts with keylight_ or item_keylight_. -->
+<resources xmlns:tools="http://schemas.android.com/tools" tools:locale="en">
+    <string name="item_keylight_title">Keyboard light</string>
+    <string name="item_keylight_desc">The keyboard\'s backlight, with a slider in the bar</string>
+    <!-- In the bar while the system sets the light (before the first slide, and after giving it back). -->
+    <string name="keylight_system">System</string>
+    <!-- %1$s is a percentage ("50%"). -->
+    <string name="keylight_desc">Keyboard light %1$s</string>
+    <string name="keylight_system_desc">Keyboard light, set by the system</string>
+    <string name="keylight_none_desc">No keyboard light BentoBar can set</string>
+    <string name="keylight_refused_desc">Keyboard light: not on this device</string>
+    <string name="keylight_none">No keyboard light</string>
+    <string name="keylight_not_here">Not on this device</string>
+    <string name="keylight_system_subtitle">Set by the system</string>
+    <string name="keylight_none_note">No keyboard with a light that apps may set is connected.</string>
+    <string name="keylight_refused_note">Android didn\'t let BentoBar set the light on this keyboard.</string>
+    <string name="keylight_system_note">The system sets the light now. Slide to set it yourself.</string>
+    <string name="keylight_ours_note">BentoBar holds this level while it runs, also while the bar is hidden. The keyboard\'s own light keys may change it.</string>
+    <string name="keylight_give_back">Give back to the system</string>
+</resources>

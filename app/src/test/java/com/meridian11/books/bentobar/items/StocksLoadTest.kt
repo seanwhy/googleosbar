@@ -187,12 +187,11 @@ class StocksLoadTest {
         assertEquals(Finnhub.Failure.NO_ANSWER, searched { it.reply(Host.FINNHUB, Finnhub.SEARCH, """{"error":"Invalid API key."}""") })
     }
 
-    @Test fun theSymbolsOfALayoutAreItsStocksItemsThatAreNotOff() {
+    @Test fun theSymbolsOfALayoutAreItsStocksItemsShownOrHidden() {
         fun stocks(id: String, json: String, section: Section = Section.SHOWN) = ItemConfig(id, "stocks", section, options = mapOf("stocks" to json))
         val items = listOf(
             stocks("a", """[{"s":"AAPL","n":"APPLE INC"},{"s":"MSFT","n":"MICROSOFT"}]"""),
             stocks("b", """[{"s":"MSFT","n":"MICROSOFT"}]""", Section.HIDDEN),
-            stocks("c", """[{"s":"NVDA","n":"NVIDIA"}]""", Section.OFF),
             ItemConfig("d", "weather", options = mapOf("stocks" to """[{"s":"TSLA"}]""")),
         )
         assertEquals(setOf("AAPL", "MSFT"), StocksLoad.symbols(items))

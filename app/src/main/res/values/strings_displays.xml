@@ -3,7 +3,7 @@
 <resources xmlns:tools="http://schemas.android.com/tools" tools:locale="en">
     <string name="item_displays_title">Displays</string>
     <string name="item_displays_desc">Connected external monitors, resolution and refresh rate; can keep the screen awake while docked</string>
-    <string name="trigger_displays">Show when an external display is connected</string>
+    <string name="trigger_displays">while an external display is connected</string>
     <string name="trigger_displays_short">shows with an external display</string>
 
     <string name="displays_none">Built-in display only</string>

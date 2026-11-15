@@ -1,0 +1,63 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- The bar's three areas, as the item detail, the rows and Look's Position row name them. Every name here starts with areas_. -->
+<resources xmlns:tools="http://schemas.android.com/tools" tools:locale="en">
+    <string name="areas_label">Area</string>
+    <string name="areas_left">Left</string>
+    <string name="areas_middle">Middle</string>
+    <string name="areas_right">Right</string>
+    <string name="areas_look_several">Items are in several areas. Choosing one moves them all there.</string>
+    <!-- Under that control after a press moved items, beside an Undo: "Moved every item to Middle." -->
+    <string name="areas_moved_all">Moved every item to %1$s.</string>
+    <!-- The Bar page with areas. "Add an area" opens a menu of the areas not on screen, each with where it stands in the bar. -->
+    <string name="areas_add">Add an area</string>
+    <string name="areas_left_where">After the clock</string>
+    <string name="areas_middle_where">Centered in the free space</string>
+    <string name="areas_right_where">Next to the system icons</string>
+    <!-- An area's + in the narrow list, read out: "Add an item to Left". -->
+    <string name="areas_add_item">Add an item to %1$s</string>
+    <!-- An area just added that has nothing in it yet; %1$s is its name. Read out, with the keys that move an item there ("Alt+←"). -->
+    <string name="areas_empty_new">Nothing here yet. Drag an item here, or choose %1$s as an item\'s Area. An empty area takes no room in the bar.</string>
+    <string name="areas_empty_new_spoken">%1$s, empty. Move an item here with %2$s.</string>
+    <!-- An area's lower part with nothing in it. -->
+    <string name="areas_nothing">Nothing here</string>
+    <!-- An area whose last item left: it is gone from the page, with Undo beside these words. -->
+    <string name="areas_folded">%1$s is empty now, so it closed.</string>
+    <!-- An area's trash at the end of its head, read out: the area goes with every item in it. %1$s is the area, %2$d how many items it has. -->
+    <plurals name="areas_remove">
+        <item quantity="one">Remove %1$s and its item</item>
+        <item quantity="other">Remove %1$s and its %2$d items</item>
+    </plurals>
+    <!-- The same for an area with nothing in it. -->
+    <string name="areas_remove_empty">Remove %1$s</string>
+    <!-- Above the list after that, with Undo beside these words. -->
+    <plurals name="areas_removed">
+        <item quantity="one">Removed %1$s and its item</item>
+        <item quantity="other">Removed %1$s and its %2$d items</item>
+    </plurals>
+    <!-- On the row that left it. -->
+    <string name="areas_moved">Moved</string>
+    <!-- A screen reader's action on a row: "Move to Left". -->
+    <string name="areas_move_to">Move to %1$s</string>
+    <!-- In the system's list of keyboard shortcuts: Alt with an arrow. -->
+    <string name="areas_key_left">Move to the area on the left</string>
+    <string name="areas_key_right">Move to the area on the right</string>
+    <!-- The library's choice of the area its + adds to. -->
+    <string name="areas_add_to">Add to</string>
+    <!-- An area the bar has no room for right now; %1$s (and %2$s) are the areas that come first, the last one the area itself. -->
+    <string name="areas_no_room_one">No room right now. %1$s takes the free space first. %2$s comes back when there is room.</string>
+    <string name="areas_no_room_two">No room right now. %1$s and %2$s take the free space first. %3$s comes back when there is room.</string>
+    <!-- The line under the preview while an item is dragged onto an area with no items: %1$s the item, %2$s the area. The second is for a finger. -->
+    <string name="areas_drop_starts">Drop to put %1$s in %2$s, a new area. Esc cancels.</string>
+    <string name="areas_drop_starts_touch">Drop to put %1$s in %2$s, a new area. Let go outside to cancel.</string>
+    <!-- Into a part of another area that has no items yet. -->
+    <string name="areas_drop_move_to">Drop to move %1$s to %2$s. Esc cancels.</string>
+    <string name="areas_drop_move_to_touch">Drop to move %1$s to %2$s. Let go outside to cancel.</string>
+    <string name="areas_drop_add_to">Drop to add %1$s to %2$s. Esc cancels.</string>
+    <string name="areas_drop_add_to_touch">Drop to add %1$s to %2$s. Let go outside to cancel.</string>
+    <!-- With several areas on screen the line names the area too: an item's name, then its area ("Weather in Right"). -->
+    <string name="areas_drop_in">%1$s in %2$s</string>
+    <!-- In the preview, in the place of an area the bar has no room for. -->
+    <string name="areas_system_now">Used by the system right now</string>
+    <!-- Read out for an area's name under the preview's bar. %1$s is the area. -->
+    <string name="areas_bracket_spoken">%1$s area</string>
+</resources>

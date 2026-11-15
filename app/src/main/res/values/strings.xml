@@ -118,7 +118,7 @@
     <string name="storage_free_up">Free up space</string>
     <string name="usage_optin_data">See which apps use the most data</string>
     <string name="usage_optin_storage">See which apps use the most storage</string>
-    <string name="usage_explain">Lets BentoBar read how much data and storage each app uses. Android\'s switch also covers which apps you use and when; BentoBar doesn\'t read that, and nothing leaves your device.</string>
+    <string name="usage_explain">Lets BentoBar read how much data and storage each app uses, for the Network and Storage menus. With a Screen time item in your bar, it also reads when the screen was on today and, while that item\'s menu is open, which apps were in front and for how long. None of it is saved, and nothing leaves your device.</string>
     <string name="usage_turn_on">Turn on Usage access</string>
     <string name="usage_top_data">Most data today</string>
     <string name="usage_top_storage">Largest apps</string>
@@ -349,11 +349,16 @@
     <string name="tile_left">%1$s left</string>
 
     <!-- menus -->
-    <string name="context_shown">Shown in the bar</string>
-    <string name="context_hidden_when_active">Hidden, shows when active</string>
     <string name="section_hidden">Hidden</string>
-    <string name="context_always_show">Always show</string>
-    <string name="context_show_when_active">Show when active</string>
+    <string name="context_always_in_bar">Always in the bar</string>
+    <string name="context_pops_out">Pops out when active</string>
+    <string name="visibility_label">Visibility</string>
+    <string name="visibility_always">Always</string>
+    <string name="visibility_when_active">Only when active</string>
+    <string name="visibility_behind">Behind ‹</string>
+    <!-- Read out in place of the ‹ in a label. -->
+    <string name="chevron_spoken">the hidden-items arrow</string>
+    <string name="detail_remove">Remove from the bar</string>
     <string name="display_show_as">Show as</string>
     <string name="display_icon_and_text">Icon and text</string>
     <string name="display_text">Text</string>
@@ -376,7 +381,6 @@
 
     <!-- main -->
     <string name="nav_bar">Bar</string>
-    <string name="nav_add">Add</string>
     <string name="nav_look">Look</string>
     <string name="nav_setup">Setup</string>
     <string name="nav_about">About</string>
@@ -385,75 +389,145 @@
     <string name="page_look">Look and behavior</string>
     <string name="page_setup">Setup</string>
     <string name="page_about">About BentoBar</string>
-    <string name="status_service_off_setup">BentoBar\'s accessibility service is off. Turn it on in step 1.</string>
-    <string name="status_service_off">BentoBar\'s accessibility service is off. Turn it on in Setup.</string>
     <string name="status_hidden">Hidden. Show it again here or with the Quick Settings tile.</string>
     <string name="status_starting">Starting…</string>
     <string name="status_no_room">No free space in the status bar right now.</string>
     <string name="status_empty">Nothing to show in the status bar right now.</string>
     <string name="status_no_bar">A full-screen app hides the status bar, and BentoBar with it.</string>
     <string name="status_covered">A system panel covers the status bar. BentoBar returns when it closes.</string>
+    <!-- While Look's "Presenting mode" is on: the same name, and what its help says it shows. -->
+    <string name="status_presenting">Presenting mode shows only a running timer or a meeting about to start.</string>
     <string name="status_live">Live in the status bar. Changes apply right away.</string>
     <string name="show_in_status_bar">Show in status bar</string>
 
     <!-- barpage -->
-    <string name="bar_deleted_fallback">item</string>
-    <string name="bar_deleted">Deleted %1$s</string>
     <string name="bar_undo">Undo</string>
-    <string name="bar_all_items">All items</string>
+    <!-- What was removed, by its type's name: "Removed Clock". -->
+    <string name="bar_removed">Removed %1$s</string>
+    <!-- The library: the panel's "Add items". -->
+    <string name="library_filter">Filter items</string>
+    <!-- While filtering: types shown, of all types. -->
+    <plurals name="add_filter_count">
+        <item quantity="one">%1$d of %2$d shown.</item>
+        <item quantity="other">%1$d of %2$d shown.</item>
+    </plurals>
+    <string name="library_in_bar">In your bar</string>
+    <!-- A type's + button, read out: "Add Clock". -->
+    <string name="library_add">Add %1$s</string>
+    <!-- On a type's row right after its +, and on the bar's new row; with what the item waits for ("Added · shows when hot"). -->
+    <string name="add_added">Added</string>
+    <string name="add_added_rule">Added · %1$s</string>
+    <!-- Where the + of a type that speaks up now and then puts it, then when it shows ("Adds to When active · shows when hot"). -->
+    <string name="library_adds_when_active">Adds to When active · %1$s</string>
+    <string name="library_adds_behind">Adds behind ‹ · %1$s</string>
+    <!-- With several areas on screen, the area the + adds to: "Adds to Left · shows when hot", "Added to Left". -->
+    <string name="library_adds_to">Adds to %1$s · %2$s</string>
+    <string name="add_added_to">Added to %1$s</string>
+    <string name="add_added_to_rule">Added to %1$s · %2$s</string>
+    <!-- With several areas on screen, a type's + button, read out: "Add Clock to Left". -->
+    <string name="library_add_to">Add %1$s to %2$s</string>
+    <!-- The bar's list and the panel beside it. -->
+    <string name="bar_empty">Nothing in the bar yet. Add an item to start.</string>
+    <!-- The line under the preview while an item is dragged: what letting go does. %1$s is the item, %2$s the item beside its new place. The second of each pair is for a finger. -->
+    <string name="bar_drop_move">Drop to move %1$s after %2$s. Esc cancels.</string>
+    <string name="bar_drop_move_touch">Drop to move %1$s after %2$s. Let go outside to cancel.</string>
+    <string name="bar_drop_move_first">Drop to move %1$s before %2$s. Esc cancels.</string>
+    <string name="bar_drop_move_first_touch">Drop to move %1$s before %2$s. Let go outside to cancel.</string>
+    <string name="bar_drop_add">Drop to add %1$s after %2$s. Esc cancels.</string>
+    <string name="bar_drop_add_touch">Drop to add %1$s after %2$s. Let go outside to cancel.</string>
+    <string name="bar_drop_add_first">Drop to add %1$s before %2$s. Esc cancels.</string>
+    <string name="bar_drop_add_first_touch">Drop to add %1$s before %2$s. Let go outside to cancel.</string>
+    <!-- Into a part of the list that has no items yet. -->
+    <string name="bar_drop_add_to_bar">Drop to add %1$s to the bar. Esc cancels.</string>
+    <string name="bar_drop_add_to_bar_touch">Drop to add %1$s to the bar. Let go outside to cancel.</string>
+    <string name="bar_drop_always">Drop to show %1$s always. Esc cancels.</string>
+    <string name="bar_drop_always_touch">Drop to show %1$s always. Let go outside to cancel.</string>
+    <string name="bar_drop_when_active">Drop to show %1$s only when active. Esc cancels.</string>
+    <string name="bar_drop_when_active_touch">Drop to show %1$s only when active. Let go outside to cancel.</string>
+    <string name="bar_drop_behind">Drop to put %1$s behind ‹. Esc cancels.</string>
+    <string name="bar_drop_behind_touch">Drop to put %1$s behind ‹. Let go outside to cancel.</string>
+    <!-- Over the trash with a row of the bar. -->
+    <string name="bar_drop_off">Drop to remove %1$s from the bar. Esc cancels.</string>
+    <string name="bar_drop_off_touch">Drop to remove %1$s from the bar. Let go outside to cancel.</string>
+    <!-- Over nothing that takes a drop. -->
+    <string name="bar_drop_none">Nothing changes if you let go here.</string>
+    <!-- A type from the library over the lower part, which its type can't wait in. -->
+    <string name="bar_drop_no_rule_add">%1$s has no Show when… rule, so it can only go above the line.</string>
+    <!-- The trash: the strip along the lower edge of the bar's list while a row of the bar is dragged. -->
+    <string name="bar_trash">Drop here to remove</string>
+    <string name="panel_select_item">Select an item</string>
+    <string name="row_needs_calendar">needs calendar access</string>
+    <!-- A row whose service gave no answer: when what it still shows was fetched ("last updated 9:12 AM"). -->
+    <string name="row_last_updated">last updated %1$s</string>
+    <!-- A moved row, read out: its name, then where it stands now ("CPU load, 5th of 7 in the bar"). -->
+    <string name="row_moved">%1$s, %2$s</string>
+    <string name="detail_unknown_help">This item comes from a newer BentoBar. It is kept as it is; update BentoBar to use and change it. The library can\'t keep it, so Remove from the bar deletes it; Undo brings it back.</string>
+    <string name="visibility_no_rule">%1$s has no Show when… rule, so it is always in the bar.</string>
+    <string name="visibility_no_rule_drop">%1$s has no Show when… rule, so it stays in the bar.</string>
+    <!-- %1$s is a type's rule as a clause: "while a device's battery is below 20%". -->
+    <string name="rule_shows">Shows %1$s</string>
+    <string name="rule_pops_out">Pops out %1$s</string>
+    <string name="order_label">Order</string>
+    <!-- %1$s is a place in words (5th), %2$d how many there are. -->
+    <string name="order_in_bar">%1$s of %2$d in the bar</string>
+    <string name="order_when_active">%1$s of %2$d when active</string>
+    <string name="order_hidden">%1$s of %2$d hidden</string>
+    <string name="order_in_area">%1$s of %2$d in %3$s</string>
+    <string name="order_pinned">Always first in %1$s</string>
+    <string name="order_pinned_said">Next meeting is always first in %1$s.</string>
+    <string name="order_st">%1$dst</string>
+    <string name="order_nd">%1$dnd</string>
+    <string name="order_rd">%1$drd</string>
+    <string name="order_th">%1$dth</string>
+    <string name="key_alt">Alt</string>
+    <string name="key_ctrl">Ctrl</string>
+    <string name="key_esc">Esc</string>
+    <string name="key_f">F</string>
+    <!-- In the system's list of keyboard shortcuts: what Esc does on the Bar page. -->
+    <string name="key_esc_does">Cancel or deselect</string>
+    <string name="row_show_always">Show always</string>
+    <string name="row_show_when_active">Show only when active</string>
+    <string name="row_put_behind">Put behind the hidden-items arrow</string>
     <string name="bar_banner_title">One step left: turn on BentoBar</string>
-    <string name="bar_banner_text">Apps can draw on the status bar only through an accessibility service. Setup explains what BentoBar does with it.</string>
-    <string name="bar_banner_set_up">Set up</string>
-    <string name="bar_placeholder_title">Pick an item to change it</string>
-    <string name="bar_placeholder_text">Or right-click an item in the status bar.</string>
-    <string name="bar_preview_hint">Preview. Click an item to edit it.</string>
+    <string name="bar_preview_hint">Preview. Click an item to edit it. Or right-click an item in the status bar.</string>
     <string name="bar_preview_hint_hidden">Preview. Click an item to edit it, and ‹ to show hidden items.</string>
+    <string name="bar_preview_hint_off">Preview. Arrange your bar now; it appears in the status bar once BentoBar is on.</string>
     <plurals name="bar_preview_more">
         <item quantity="one">%1$d more item doesn\'t fit in this preview.</item>
         <item quantity="other">%1$d more items don\'t fit in this preview.</item>
     </plurals>
     <string name="section_shown">In the bar</string>
     <string name="section_shown_help">Left to right, as they appear</string>
-    <string name="section_hidden_reveal_both">Click ‹ or hover over BentoBar to see them.</string>
-    <string name="section_hidden_reveal_chevron">Click ‹ to see them.</string>
-    <string name="section_hidden_help">%1$s Items with a Show when… rule pop out on their own.</string>
-    <string name="section_off_help">Kept with their settings, not shown</string>
-    <string name="section_empty">Nothing here</string>
+    <string name="section_hidden_reveal_both">Click ‹ or hover over BentoBar to see them. Items set to pop out show on their own.</string>
+    <string name="section_hidden_reveal_chevron">Click ‹ to see them. Items set to pop out show on their own.</string>
     <string name="row_overflow">doesn\'t fit right now (in the ‹ menu)</string>
+    <!-- With several areas: %1$s is the arrow of the item's own area, ‹ or ›. -->
+    <string name="row_overflow_behind">doesn\'t fit right now, it\'s behind %1$s</string>
     <string name="row_when_active">shows when active</string>
     <string name="row_icon_only">icon only</string>
     <string name="row_text_only">text only</string>
     <string name="row_move_up">Move up</string>
     <string name="row_move_down">Move down</string>
-    <string name="row_move_to_hidden">Move to Hidden</string>
-    <string name="row_more">More for %1$s</string>
-    <string name="row_show_in_bar">Show in the bar</string>
-    <string name="common_delete">Delete</string>
     <string name="detail_needs_calendar">This item needs calendar access. Your events stay on this device.</string>
     <string name="common_allow">Allow</string>
-    <string name="detail_where">Where</string>
-    <string name="detail_trigger_help">Waits behind ‹ and pops into the bar while this is true</string>
-    <string name="detail_trigger_help_not_hidden">Only hidden items pop into the bar, and this one isn\'t hidden.</string>
-    <string name="detail_trigger_help_move">Turning this on moves it to Hidden. It pops into the bar while this is true.</string>
-    <string name="trigger_network">Show when downloading or uploading faster than %1$s</string>
+    <string name="trigger_network">while downloading or uploading faster than %1$s</string>
     <string name="trigger_network_short">shows above %1$s</string>
-    <string name="trigger_cpu">Show when CPU load is above %1$s</string>
+    <string name="trigger_cpu">while CPU load is above %1$s</string>
     <string name="trigger_cpu_short">shows above %1$s CPU</string>
-    <string name="trigger_memory">Show when memory use is above %1$s, or memory runs low</string>
+    <string name="trigger_memory">while memory use is above %1$s, or memory runs low</string>
     <string name="trigger_memory_short">shows above %1$s memory</string>
-    <string name="trigger_battery">Show when the battery is below %1$s and not charging, or running hot</string>
+    <string name="trigger_battery">while the battery is below %1$s and not charging, or running hot</string>
     <string name="trigger_battery_short">shows below %1$s battery</string>
-    <string name="trigger_storage">Show when less than %1$s of storage is free</string>
+    <string name="trigger_storage">while less than %1$s of storage is free</string>
     <string name="trigger_storage_short">shows below %1$s free</string>
-    <string name="trigger_event">Show %1$s before a meeting, and during it</string>
+    <string name="trigger_event">from %1$s before a meeting, and during it</string>
     <string name="trigger_event_short">shows %1$s before a meeting</string>
-    <string name="trigger_timer">Show while a timer or stopwatch is going, and for a minute after it ends</string>
+    <string name="trigger_timer">while a timer or stopwatch is going, and for a minute after it ends</string>
     <string name="trigger_timer_short">shows while a timer runs</string>
-    <string name="trigger_countdown">Show in the last 24 hours before the date</string>
+    <string name="trigger_countdown">in the last 24 hours before the date</string>
     <string name="trigger_countdown_short">shows in the last 24 hours</string>
-    <string name="trigger_caffeine">Show while Keep awake is on</string>
+    <string name="trigger_caffeine">while Keep awake is on</string>
     <string name="trigger_caffeine_short">shows while on</string>
-    <string name="detail_options">Options</string>
     <string name="detail_duplicate">Duplicate</string>
 
     <!-- pages -->
@@ -462,17 +536,10 @@
     <string name="add_group_tools">Tools</string>
     <string name="add_group_online">Online</string>
     <string name="add_group_online_caption">These ask an online service once you set them up. Nothing else in BentoBar goes online.</string>
-    <string name="add_add">Add</string>
-    <string name="add_add_hidden">Add hidden</string>
-    <string name="add_add_shown">Add always shown</string>
-    <string name="add_added_rule">Added %1$s · %2$s</string>
-    <string name="look_placement">Placement</string>
+    <string name="look_items">Items</string>
     <string name="look_position">Where BentoBar sits</string>
-    <string name="look_position_right">Next to the system icons</string>
-    <string name="look_position_center">Center</string>
-    <string name="look_position_left">After the clock</string>
+    <string name="look_position_help">Moves every item there. To place items one by one, use Area in an item\'s options.</string>
     <string name="look_spacing">Space between items</string>
-    <string name="look_look">Look</string>
     <string name="look_text_size">Text size</string>
     <string name="look_text_small">Small</string>
     <string name="look_text_large">Large</string>
@@ -491,7 +558,11 @@
     <string name="look_chip_fallback">When BentoBar is off</string>
     <string name="look_chip_always">Always</string>
     <string name="look_chip_help">Android shows one chip per app, next to the system icons, and hides it while that app\'s window is open. BentoBar uses it for a running timer or a meeting starting within 15 minutes.</string>
+    <string name="look_popups">Popups</string>
+    <string name="look_presenting_live">Presenting and Live Updates</string>
     <string name="look_backup">Backup</string>
+    <string name="look_your_settings">Your settings</string>
+    <string name="look_kept">A kept layout</string>
     <string name="look_clip_label">BentoBar settings</string>
     <string name="look_copied">Settings copied</string>
     <string name="look_copy">Copy settings</string>
@@ -506,8 +577,18 @@
     <string name="look_kept_discard">Discard</string>
     <string name="row_from_newer">From a newer version</string>
     <string name="look_paste">Paste settings</string>
-    <string name="setup_optional">optional</string>
-    <string name="setup_done">done</string>
+    <string name="setup_on">On</string>
+    <string name="setup_needed">Needed</string>
+    <string name="setup_allowed">Allowed</string>
+    <string name="setup_declined">You chose No thanks. Turn on asks again.</string>
+    <string name="setup_switches">When BentoBar is on, this window switches to Bar by itself.</string>
+    <string name="setup_permissions">Permissions</string>
+    <string name="setup_permissions_sub">Each one is for the items named. BentoBar works without them.</string>
+    <string name="setup_later">Later, for some items</string>
+    <string name="setup_later_sub">BentoBar works without these. Each one is for the items named, and an item asks when it needs one.</string>
+    <string name="setup_stop_using">Stop using</string>
+    <!-- A button's spoken name where several rows have the same button: what it does, then the row. -->
+    <string name="setup_action_for">%1$s: %2$s</string>
     <string name="setup_aap_title">Advanced Protection is on</string>
     <string name="setup_aap_text">It allows only assistive accessibility services, so BentoBar can\'t run. The Live Update chip and Quick Settings tiles still work.</string>
     <string name="setup_turn_on_title">Turn on BentoBar</string>
@@ -544,7 +625,7 @@
     <string name="setup_listener_title">Notification access</string>
     <string name="setup_listener_text">For Now playing: the title, artist and artwork. BentoBar tells Android to send it no notifications.</string>
     <string name="setup_online_title">Online services</string>
-    <string name="setup_online_text">Five items go online, and only after you set them up: Weather and Air quality &amp; UV ask Open-Meteo, and Exchange rates asks Frankfurter; Flight asks AirLabs and US stocks asks Finnhub, each with your own key. Everything else stays offline.</string>
+    <string name="setup_online_text">Five items go online, and only after you set them up: Weather and Air quality &amp; UV ask Open-Meteo and Exchange rates asks Frankfurter; Flight asks AirLabs and US stocks asks Finnhub, each with your own key. Everything else stays offline.</string>
     <string name="setup_online_weather">Weather, Air quality &amp; UV (Open-Meteo)</string>
     <string name="setup_online_flights">Flights (AirLabs)</string>
     <string name="setup_online_weather_first">Search for a city, or choose My location, in a Weather or Air quality item first</string>
@@ -557,17 +638,24 @@
     <string name="about_version">BentoBar %1$s</string>
     <string name="about_tagline">Add, hide and organize items in your Googlebook\'s status bar.</string>
     <string name="about_privacy">Privacy</string>
-    <string name="about_privacy_text">BentoBar goes online for five items only, and only after you set them up: Weather and Air quality &amp; UV ask Open-Meteo about the city you search for (or, with My location, about where the device is, rounded to about 10 km), Exchange rates asks Frankfurter for the European Central Bank\'s reference rates, Flight asks AirLabs about the flight you enter, and US stocks asks Finnhub about the stocks you follow, the last two with a key of your own. BentoBar sends nothing else anywhere: not your layout, your calendar, your clipboard, what\'s playing or anything it measures. It has no accounts of its own, no ads and no analytics, and it sends its developer nothing. Its accessibility service reads the status bar (its layout and its clock\'s color) and where windows are on the screen, never what is in them. With Usage access on, it also reads how much data and storage each app uses, for the Network and Storage menus, and nothing else.</string>
+    <string name="about_privacy_text">BentoBar goes online for five items only, and only after you set them up: Weather and Air quality &amp; UV ask Open-Meteo about the city you search for (or, with My location, about where the device is, rounded to about 10 km), Exchange rates asks Frankfurter for the European Central Bank\'s reference rates, Flight asks AirLabs about the flight you enter, and US stocks asks Finnhub about the stocks you follow, the last two with a key of your own. BentoBar sends nothing else anywhere: not your layout, your calendar, your clipboard, your notifications, the camera\'s picture, what\'s playing or anything it measures. It has no accounts of its own, no ads and no analytics, and it sends its developer nothing. Its accessibility service reads the status bar (its layout and its clock\'s color) and where windows are on the screen, never what is in them. Some items read more, each only while it is in use and only with the access you give it: Notification icons reads other apps\' notifications, Mirror shows the camera\'s picture, and with Usage access on BentoBar reads how much data and storage each app uses, for the Network and Storage menus, and for Screen time when the screen was on and which apps were in front. None of that is stored or sent.</string>
     <string name="about_privacy_weather">Weather sends Open-Meteo the city you search for. For the forecast it sends the coordinates of the city you pick, rounded to about a kilometer: about every 30 minutes while the bar is on screen, and when you open its menu or press Refresh. With My location it sends where this device is instead, rounded to about 10 km: BentoBar asks Android for the approximate location only while such an item is in the bar or waits in Hidden to show for rain or snow, or while BentoBar\'s settings window is open, and keeps it and its forecast in memory only. Open-Meteo sees your IP address, as any website does, and may keep it in its logs for 90 days.</string>
     <string name="about_privacy_air">Air quality &amp; UV sends Open-Meteo what Weather does: the city you search for, then the coordinates of the city you pick, or with My location where this device is, rounded in the same way. It asks about every 30 minutes while the bar is on screen, and when you open its menu or press Refresh, and keeps its readings in memory only. Weather\'s switch in Setup › Online services covers it too.</string>
-    <string name="about_privacy_clipboard">Clipboard reads the text you copy while the item is in use, and keeps your last few copies in memory only: they are gone when BentoBar stops, and are never stored or sent. The snippets you pin are saved with the item, in your layout.</string>
     <string name="about_privacy_stocks">US stocks sends Finnhub your own key with the symbol of each stock you follow: every 2 minutes while the market is open and the bar is on screen, once after the close, and when you open its menu, press Refresh or save a new key. Its search sends what you type when you press Search. Finnhub sees your IP address and can tie requests to your key\'s account. BentoBar ships no key.</string>
     <string name="about_privacy_fx">Exchange rates asks Frankfurter (api.frankfurter.dev) for the European Central Bank\'s reference table of currencies about once an hour while the bar is on screen, and when you open its menu or press Refresh; a failed try is repeated sooner. No key is needed, and the pairs you follow are calculated on your device. Frankfurter sees your IP address, as any website does.</string>
     <string name="about_privacy_flight">Flight sends AirLabs the flight number and your own key: when you track a flight, when you press Refresh or save a new key, and while it follows the flight, about every 3 hours until 3 hours before departure, then every 30 minutes or sooner until it lands; a failed try is repeated sooner. Once it knows the flight has landed it stops asking; after sleeping through a landing it asks once more. AirLabs sees your IP address and can tie lookups to your key\'s account. BentoBar ships no key. Open flight page opens FlightAware in your browser.</string>
-    <string name="about_privacy_media">Now playing, with notification access, reads the title, artist and artwork your media players publish. BentoBar tells Android to send it no notifications, and receives none. Nothing is stored or sent.</string>
-    <string name="about_privacy_others">Device batteries, Heat, External displays, World clock and the volume slider use only what Android tells every app. They need no permission and send nothing. New event hands the chosen time to your calendar app.</string>
-    <string name="about_privacy_backup">If you use Android\'s backup, Android keeps a copy of BentoBar\'s settings in your Google account. Your AirLabs and Finnhub keys, the online switches, your answer to the accessibility explanation, a running timer and keep awake are left out of it.</string>
+    <string name="about_privacy_media">Now playing, with notification access, reads the title, artist and artwork your media players publish. Through that entry BentoBar tells Android to send it no notifications, and receives none. Nothing is stored or sent.</string>
+    <string name="about_privacy_notices">Notification icons has an entry of its own in Android\'s Notification access list, BentoBar notification icons, off until you turn it on. With it, BentoBar reads other apps\' notifications: the app, the title, the text, the icon and a progress. It is connected to them only while an item that shows them is on screen, keeps them in memory only and forgets them when that item goes. The bar shows the apps\' icons, never their words; the popup lists them, by app and title alone if you switch What they say off. Nothing is stored, logged or sent.</string>
+    <string name="about_privacy_mirror">Mirror shows the camera\'s picture in its popup, with the Camera permission, which it asks for when you first open it. The camera runs only while that popup is open. The picture is drawn there and nothing else happens to it: it is never recorded, stored or sent.</string>
+    <string name="about_privacy_inuse">Camera and mic learns from Android that a camera or a microphone is in use: not which app uses it, and nothing of what is seen or heard. Its button mutes the microphone for every app, and only when you press it; BentoBar unmutes when you remove the item or turn BentoBar off, and leaves a mute that Android or another app made as it is. It can\'t switch a camera off.</string>
+    <string name="about_privacy_screentime">Screen time, with Usage access, reads when the screen went on and off today. While its menu is open it also reads which apps were in front and for how long, and lists those that have a launcher entry. None of it is stored or sent, and it is forgotten when the menu closes or the item goes.</string>
+    <string name="about_privacy_prompter">Prompter keeps the notes you write on this device only: not in your layout, not in a copied layout and not in a backup. They are never sent.</string>
+    <string name="about_privacy_others">Device batteries, Heat, External displays, World clock, the volume slider, Headphones and output, Connection, Keyboard light, Day progress, Sunset and Break reminder use only what Android tells every app. They ask you for no access and send nothing; Sunset works from the device\'s time zone, not from where it is. Focus switches Do Not Disturb on and off, with Do Not Disturb access, and Brightness sets the screen\'s brightness, with Android\'s Modify system settings access; neither reads anything with it. Live activity shows what your other items can tell: it keeps the ones you switch on in its options at work, each with the access that item has, and reads nothing of its own. New event hands the chosen time to your calendar app.</string>
+    <string name="about_privacy_backup">If you use Android\'s backup, Android keeps a copy of BentoBar\'s settings in your Google account. Your AirLabs and Finnhub keys, the online switches, a Prompter\'s notes, a Focus session, your answer to the accessibility explanation, a running timer and keep awake are left out of it.</string>
     <string name="about_privacy_policy">Privacy policy</string>
+    <string name="about_privacy_items">Privacy, item by item</string>
+    <string name="about_privacy_others_title">Other items</string>
+    <string name="about_privacy_backup_title">Android\'s backup</string>
     <string name="about_how">How it works</string>
     <string name="about_how_text">Apps can\'t change Android\'s own status bar icons, so BentoBar draws its items in its own windows over the status bar\'s free space. It moves them aside when the system icons change and hides them when an app goes full screen. A running timer or meeting can also appear as a Live Update chip.</string>
     <string name="about_open_source">Open source</string>
@@ -631,15 +719,10 @@
     </plurals>
 
     <!-- plurals: pages -->
-    <plurals name="add_in_your_bar">
-        <item quantity="one">In your bar</item>
-        <item quantity="other">%1$d in your bar</item>
-    </plurals>
     <plurals name="look_collapse_after">
         <item quantity="one">After %1$d s</item>
         <item quantity="other">After %1$d s</item>
     </plurals>
-    <string name="add_added">Added %1$s</string>
     <string name="setup_use_off_runtime">Permission revoked at next restart</string>
     <string name="setup_use_off_exact">Stopped using exact alarms</string>
     <string name="setup_denied_settings">Android won\'t ask again. You can allow it in App info.</string>
@@ -659,6 +742,9 @@
     <string name="common_opens_browser">%1$s, opens in the browser</string>
     <string name="common_duration_min">%1$d\u00A0min</string>
     <string name="common_duration_h_min">%1$d\u00A0h %2$02d\u00A0min</string>
+    <!-- A time in the bar, to the minute, where room is short: Break reminder, Day progress, Screen time, Sunset. -->
+    <string name="common_bar_minutes">%1$d min</string>
+    <string name="common_bar_hours_minutes">%1$d h %2$02d</string>
     <plurals name="common_minutes">
         <item quantity="one">%1$d minute</item>
         <item quantity="other">%1$d minutes</item>
@@ -712,7 +798,7 @@
     <string name="look_system_tint_help">Popups take a tint of your system\'s colors, which follow your wallpaper.</string>
     <string name="look_hidden_mode_help">Show everything puts all items in the bar when there\'s room. Items with a Show when… rule appear only while it applies.</string>
     <string name="section_when_active">When active</string>
-    <string name="section_hidden_reveal_show_all">Shown while their Show when… rule applies. Items without a rule always show.</string>
+    <string name="section_hidden_reveal_show_all">Shown while their Show when… rule applies.</string>
     <string name="calendar_tomorrow">Tomorrow</string>
     <string name="calendar_no_events_week">Nothing in the next 7 days</string>
     <string name="calendar_day_has_events">%1$s, has events</string>
@@ -758,4 +844,6 @@
     <string name="item_remote_keyboard_desc">一键接管本机键盘并原封不动控制远端电脑（直连/VPS 中转，按组合键或点状态栏退出）</string>
     <string name="trigger_remote_keyboard">当远程键盘映射正在进行时显示</string>
     <string name="trigger_remote_keyboard_short">键盘映射开启时</string>
+    <string name="setup_files_title">文件读取权限（云剪切板上传文件）</string>
+    <string name="setup_files_text">授予「所有文件访问权限」后，云剪切板可直接读取并上传您在文件管理器中复制的任意本地文件。</string>
 </resources>

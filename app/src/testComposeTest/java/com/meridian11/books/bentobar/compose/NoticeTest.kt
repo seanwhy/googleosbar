@@ -30,7 +30,7 @@ class NoticeTest {
     @Before fun env() = Env.init(ApplicationProvider.getApplicationContext<Application>())
 
     @Test fun aMessagePostedAsTheWindowComposesIsNotLost() {
-        // A recreated window: BarPage posts its Undo as it composes, in the same pass as the one that starts listening.
+        // A recreated window: a page can post as it composes, in the same pass as the one that starts listening.
         rule.setContent {
             val notices = rememberNotices()
             LaunchedEffect(Unit) { Notice.post("back", "Undo") }

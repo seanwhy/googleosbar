@@ -3,7 +3,7 @@
 <resources xmlns:tools="http://schemas.android.com/tools" tools:locale="en">
     <string name="item_devices_title">Device batteries</string>
     <string name="item_devices_desc">The battery of your mouse, keyboard or stylus; shows when one is low</string>
-    <string name="trigger_devices">Show when a device\'s battery is below %1$s</string>
+    <string name="trigger_devices">while a device\'s battery is below %1$s</string>
     <string name="trigger_devices_short">shows below %1$s</string>
     <string name="devices_none">No device reports a battery</string>
     <string name="devices_note">Mice, keyboards, styluses and game controllers that tell Android their battery level. Headphones aren\'t included: reading their level would take Bluetooth access, which BentoBar doesn\'t ask for.</string>

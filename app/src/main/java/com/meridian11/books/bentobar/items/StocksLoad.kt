@@ -3,7 +3,6 @@ package com.meridian11.books.bentobar.items
 import com.meridian11.books.bentobar.data.ItemConfig
 import com.meridian11.books.bentobar.data.Kept
 import com.meridian11.books.bentobar.data.Online
-import com.meridian11.books.bentobar.data.Section
 import com.meridian11.books.bentobar.net.Http
 import com.meridian11.books.bentobar.net.Reply
 
@@ -37,9 +36,9 @@ sealed interface StockFound {
 object StocksLoad {
     private val service = Online.Service.FINNHUB
 
-    /** The symbols the layout's Stocks items follow, of those that are not turned off: what a quote is kept for. */
+    /** The symbols the layout's Stocks items follow: what a quote is kept for. */
     fun symbols(items: List<ItemConfig>): Set<String> =
-        items.filter { it.type == "stocks" && it.section != Section.OFF }.flatMapTo(HashSet()) { StocksRules.stocks(it).map(Stock::symbol) }
+        items.filter { it.type == "stocks" }.flatMapTo(HashSet()) { StocksRules.stocks(it).map(Stock::symbol) }
 
     private fun mayAsk() = Online.hasKey(service) && Online.on(service)
 

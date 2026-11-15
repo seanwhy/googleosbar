@@ -9,7 +9,7 @@ import java.io.File
 import javax.xml.parsers.DocumentBuilderFactory
 
 /**
- * What the app promises in its manifest, pinned: which permissions it has, that its notification
+ * What the app promises in its manifest, pinned: which permissions it has, that Now playing's notification
  * listener asks for no notifications, that nothing goes out in clear text, and what stays out of a
  * backup. A change to any of these is a decision, so it has to be made here too.
  */
@@ -51,7 +51,20 @@ class ManifestTest {
             "android.permission.READ_MEDIA_IMAGES",
             "android.permission.READ_MEDIA_VIDEO",
             "android.permission.READ_MEDIA_AUDIO",
+            // Mirror's preview; the microphone's mute for every app (Camera and mic); Focus's Do Not Disturb rule; Brightness.
+            // Each is asked for, or given in Android's settings, only when an item that needs it is placed.
+            "android.permission.CAMERA",
+            "android.permission.MODIFY_AUDIO_SETTINGS",
+            "android.permission.ACCESS_NOTIFICATION_POLICY",
+            "android.permission.WRITE_SETTINGS",
         ), manifest.all("uses-permission").map { it.attr("name") }.toSet())
+    }
+
+    @Test fun noCameraIsRequired() {
+        // The camera permission alone would make Google Play offer BentoBar only to devices with a camera: Mirror is one item.
+        val features = manifest.all("uses-feature").associate { it.attr("name") to it.attr("required") }
+        for (camera in listOf("android.hardware.camera", "android.hardware.camera.any", "android.hardware.camera.autofocus"))
+            assertEquals(camera, "false", features[camera])
     }
 
     /**
@@ -68,18 +81,36 @@ class ManifestTest {
             xml(merged.path).all("uses-permission").map { it.attr("name") }.toSet())
     }
 
-    @Test fun theNotificationListenerAsksForNoNotificationsAndIsNotStartedByAndroid() {
-        val listener = application.all("service").single { it.attr("name") == ".items.MediaAccess" }
-        assertEquals("android.permission.BIND_NOTIFICATION_LISTENER_SERVICE", listener.attr("permission"))
-        val meta = listener.all("meta-data").associate { it.attr("name") to it.attr("value") }
-        // "A present but empty value means 'allow no types'" (NotificationListenerService).
-        assertTrue(listener.all("meta-data").any { it.attr("name") == "android.service.notification.default_filter_types" && it.hasAttributeNS(android, "value") })
-        assertEquals("", meta["android.service.notification.default_filter_types"])
+    @Test fun twoNotificationListenersEachItsOwnPromise() {
+        fun listener(name: String) = application.all("service").single { it.attr("name") == name }
+        fun meta(s: Element) = s.all("meta-data").associate { it.attr("name") to it.attr("value") }
+        // Now playing's: asks for no notifications. "A present but empty value means 'allow no types'" (NotificationListenerService).
+        val media = listener(".items.MediaAccess")
+        assertEquals("android.permission.BIND_NOTIFICATION_LISTENER_SERVICE", media.attr("permission"))
+        assertTrue(media.all("meta-data").any { it.attr("name") == "android.service.notification.default_filter_types" && it.hasAttributeNS(android, "value") })
+        assertEquals("", meta(media)["android.service.notification.default_filter_types"])
         // Conversations 1, alerting 2, silent 4, ongoing 8: all four types, never wanted.
-        assertEquals(1 or 2 or 4 or 8, meta["android.service.notification.disabled_filter_types"]!!.toInt())
-        assertEquals("false", meta["android.service.notification.default_autobind_listenerservice"])
-        // And it is the only notification listener.
-        assertEquals(1, application.all("service").count { s -> s.all("action").any { it.attr("name") == "android.service.notification.NotificationListenerService" } })
+        assertEquals(1 or 2 or 4 or 8, meta(media)["android.service.notification.disabled_filter_types"]!!.toInt())
+        assertEquals("false", meta(media)["android.service.notification.default_autobind_listenerservice"])
+        // Notification icons': other apps' notifications, under a name of its own in Android's list, so the user gives each
+        // access on its own and Now playing's promise stays true.
+        val notices = listener(".items.NoticeAccess")
+        assertEquals("android.permission.BIND_NOTIFICATION_LISTENER_SERVICE", notices.attr("permission"))
+        assertEquals("@string/access_notices_label", notices.attr("label"))
+        assertEquals(setOf("conversations", "alerting", "silent", "ongoing"),
+            meta(notices)["android.service.notification.default_filter_types"]!!.split("|").toSet())
+        assertEquals(null, meta(notices)["android.service.notification.disabled_filter_types"])
+        assertEquals("false", meta(notices)["android.service.notification.default_autobind_listenerservice"])
+        // And these two are the only notification listeners.
+        assertEquals(setOf(".items.MediaAccess", ".items.NoticeAccess"), application.all("service")
+            .filter { s -> s.all("action").any { it.attr("name") == "android.service.notification.NotificationListenerService" } }.map { it.attr("name") }.toSet())
+    }
+
+    @Test fun theFocusAlarmIsNotExported() {
+        // Focus's end at its time: only BentoBar's own alarm may send it.
+        val receiver = application.all("receiver").single { it.attr("name") == ".items.FocusEnd" }
+        assertEquals("false", receiver.attr("exported"))
+        assertEquals(0, receiver.all("intent-filter").size)
     }
 
     @Test fun nothingIsEverSentInClearText() {
@@ -109,12 +140,12 @@ class ManifestTest {
     }
 
     @Test fun theExportedPartsAreTheOnesAndroidNeeds() {
-        // The launcher's two entries, the accessibility service, the three tiles and the notification listener:
+        // The launcher's two entries, the accessibility service, the three tiles and the two notification listeners:
         // each is guarded by a system permission or is an activity the user starts.
         val exported = (application.all("activity") + application.all("service") + application.all("receiver") + application.all("provider"))
             .filter { it.attr("exported") == "true" }.map { it.attr("name") }.toSet()
         assertEquals(setOf(".ui.MainActivity", ".ui.BarMenuActivity", ".bar.BarService", ".tile.BarTile", ".tile.AwakeTile", ".tile.TimerTile",
-            ".items.MediaAccess"), exported)
+            ".items.MediaAccess", ".items.NoticeAccess"), exported)
         for (service in application.all("service")) assertNotNull(service.attr("name"), service.attr("permission").takeIf { it.isNotEmpty() })
     }
 
@@ -134,7 +165,7 @@ class ManifestTest {
         // Debug builds add the adb test hooks from src/debug, guarded by the shell's DUMP permission; a release has none.
         val hooks = if (type == "debug") setOf(".util.DebugReceiver", ".util.BarFlipActivity") else emptySet()
         assertEquals(setOf(".ui.MainActivity", ".ui.BarMenuActivity", ".bar.BarService", ".tile.BarTile", ".tile.AwakeTile", ".tile.TimerTile",
-            ".items.MediaAccess", "androidx.profileinstaller.ProfileInstallReceiver") + hooks, exported)
+            ".items.MediaAccess", ".items.NoticeAccess", "androidx.profileinstaller.ProfileInstallReceiver") + hooks, exported)
         // The one a library adds: AndroidX's profile installer, which only the shell (it holds DUMP) can start.
         val installer = app.all("receiver").single { it.attr("name") == "androidx.profileinstaller.ProfileInstallReceiver" }
         assertEquals("android.permission.DUMP", installer.attr("permission"))

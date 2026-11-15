@@ -16,7 +16,7 @@ class ChipRulesTest {
         assertTrue(ChipRules.needsCalendar(notifies = true, timerRuns = false, meetingItem = true))
         assertFalse("nothing shown", ChipRules.needsCalendar(notifies = false, timerRuns = false, meetingItem = true))
         assertFalse("the chip is the timer's", ChipRules.needsCalendar(notifies = true, timerRuns = true, meetingItem = true))
-        assertFalse("no meeting item outside Off", ChipRules.needsCalendar(notifies = true, timerRuns = false, meetingItem = false))
+        assertFalse("no meeting item in the layout", ChipRules.needsCalendar(notifies = true, timerRuns = false, meetingItem = false))
     }
 
     @Test fun itChangesAtTheLeadTimeTheStartAndTheEnd() {

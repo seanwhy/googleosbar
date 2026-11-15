@@ -1,7 +1,6 @@
 package com.meridian11.books.bentobar.items
 
 import com.meridian11.books.bentobar.data.ItemConfig
-import com.meridian11.books.bentobar.data.Section
 import com.meridian11.books.bentobar.items.AirRules.AirReading
 import com.meridian11.books.bentobar.net.Host
 import com.meridian11.books.bentobar.net.Http
@@ -26,7 +25,7 @@ object AirLoad {
     fun place(item: ItemConfig, here: Place?): Place? = if (WeatherRules.here(item)) here else WeatherRules.place(item)
 
     fun places(items: List<ItemConfig>, here: Place? = null): Set<Place> =
-        items.filter { it.type == "air" && it.section != Section.OFF }.mapNotNullTo(HashSet()) { place(it, here) }
+        items.filter { it.type == "air" }.mapNotNullTo(HashSet()) { place(it, here) }
 
     /**
      * Asks the service about [place]; blocks, so only a background load calls it. A good answer is a new reading; a failure is a

@@ -26,6 +26,12 @@ class FitStripTest {
         assertEquals(listOf(false, true, true), keep.toList())
     }
 
+    @Test fun aPictureIsAsHighAsAnIconAndAsWideAsItsShape() {
+        assertEquals("a square one is an icon, as every picture was", 15f, imageWidthDp(15f, 96, 96), 0f)
+        assertEquals("a row of three icons in one picture", 45f, imageWidthDp(15f, 288, 96), 0f)
+        assertEquals("nothing to go by: an icon's room", 15f, imageWidthDp(15f, 0, 0), 0f)
+    }
+
     @Test fun keepEndFalseDropsFromTheEnd() {
         val (keep, _) = fitStrip(widths, 10, 130, chevronAlways = false, chevronPx = 30, keepEnd = false)
         assertEquals(listOf(true, true, false), keep.toList())

@@ -3,7 +3,6 @@ package com.meridian11.books.bentobar.items
 import com.meridian11.books.bentobar.data.ItemConfig
 import com.meridian11.books.bentobar.data.Kept
 import com.meridian11.books.bentobar.data.Online
-import com.meridian11.books.bentobar.data.Section
 import com.meridian11.books.bentobar.net.Host
 import com.meridian11.books.bentobar.net.Http
 import com.meridian11.books.bentobar.net.Reply
@@ -23,7 +22,7 @@ sealed interface Found {
     class Places(val list: List<City>) : Found
     data object Offline : Found
     data object NoAnswer : Found
-    /** Not asked at all (the item is in Off, nothing shows items): nothing is shown for it. */
+    /** Not asked at all (nothing shows items): nothing is shown for it. */
     data object Unasked : Found
 }
 
@@ -56,15 +55,11 @@ object WeatherLoad {
     fun searchRequest(text: String) = Request(Host.OPEN_METEO_GEOCODING, "/v1/search", listOf("name" to text, "count" to "5", "format" to "json"))
 
     /**
-     * The places the layout's Weather items ask about, of those that are not turned off. An item in Off
-     * keeps its settings and nothing else. Its reading goes while the type still has a live item to look
-     * at the layout (the tick that turns it off); kept with an item that is off, it would outlive the
-     * item, since nothing runs for a type whose last item is off when that is deleted. [here]: where the
-     * device is, for the items of My location; without it, the cities alone, which are the places whose
-     * reading is kept on the device.
+     * The places the layout's Weather items ask about. [here]: where the device is, for the items of My
+     * location; without it, the cities alone, which are the places whose reading is kept on the device.
      */
     fun places(items: List<ItemConfig>, here: Place? = null): Set<Place> =
-        items.filter { it.type == "weather" && it.section != Section.OFF }.mapNotNullTo(HashSet()) { place(it, here) }
+        items.filter { it.type == "weather" }.mapNotNullTo(HashSet()) { place(it, here) }
 
     /**
      * The place [item] asks about: its city, or for one of My location where the device is ([here], which comes rounded
@@ -151,7 +146,7 @@ object WeatherLoad {
  * The Weather item's one way to the service: everything the item, its menu and its settings do that
  * could send something goes through here, and the tests drive exactly this. The rules it holds:
  *
- * Nothing is asked for an item without a city, for one in Off, or while the service is switched off;
+ * Nothing is asked for an item without a city, or while the service is switched off;
  * and it is switched on in two places only, [search] and [turnOn], which are the user's own acts.
  * One reading per place serves every item with that city.
  */
@@ -171,9 +166,9 @@ class WeatherSource(
     /** The place [item] asks about: its city, or where the device is. Null: none yet. */
     private fun place(item: ItemConfig): Place? = WeatherLoad.place(item, here())
 
-    /** The place [item] may ask about right now, or null: no city, an item in Off, or the switch off. */
+    /** The place [item] may ask about right now, or null: no city, or the switch off. */
     private fun asked(item: ItemConfig): Place? =
-        if (item.section == Section.OFF || !Online.on(service)) null else place(item)
+        if (!Online.on(service)) null else place(item)
 
     /**
      * What is known for [item]'s place, loading it first if that is due. This is what the bar's state
@@ -182,10 +177,8 @@ class WeatherSource(
     fun reading(item: ItemConfig): Reading? {
         if (!Online.on(service)) return null
         val place = place(item) ?: return null
-        if (item.section != Section.OFF) {
-            readings.want(place)
-            askIfOld(place)
-        }
+        readings.want(place)
+        askIfOld(place)
         return readings.peek(place)
     }
 
@@ -237,7 +230,7 @@ class WeatherSource(
 
     /**
      * Refresh (or Try again) as [item]'s menu draws it right now: see [WeatherRules.again]. For an
-     * item that may ask nothing (no city, in Off, the switch off) it is dimmed and says nothing.
+     * item that may ask nothing (no city, the switch off) it is dimmed and says nothing.
      * Main thread.
      */
     fun againEntry(item: ItemConfig): Again {
@@ -259,12 +252,11 @@ class WeatherSource(
 
     /**
      * Search, or Enter in the field: the one act that sends a name, and with it the Weather switch
-     * goes on. Typing never comes here. False, and nothing happens: fewer than two letters, or an
-     * item in Off, which may ask nothing. [by] names the field that asked. Main thread.
+     * goes on. Typing never comes here. False, and nothing happens: fewer than two letters. [by]
+     * names the field that asked. Main thread.
      */
     fun search(text: String, item: ItemConfig, by: String): Boolean {
         val name = WeatherRules.query(text) ?: return false
-        if (item.section == Section.OFF) return false
         Online.turnOn(service)
         asking.ask(Query(name, by))
         return true

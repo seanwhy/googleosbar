@@ -1,0 +1,25 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Break reminder. Every name here starts with breaks_, item_breaks_ or trigger_breaks. -->
+<resources xmlns:tools="http://schemas.android.com/tools" tools:locale="en">
+    <string name="item_breaks_title">Break reminder</string>
+    <string name="item_breaks_desc">The time until your next break, counted while the screen is on</string>
+    <string name="trigger_breaks">while a break is due</string>
+    <string name="trigger_breaks_short">shows when a break is due</string>
+    <!-- The bar's time until the next break: "38 min", "1 h 20" (hours, then minutes in two figures). -->
+    <!-- The bar's word when one is due. -->
+    <string name="breaks_due">Break</string>
+    <!-- Spoken: %1$s is a length of time in words ("38 minutes"). -->
+    <string name="breaks_desc">Next break in %1$s</string>
+    <string name="breaks_desc_due">Time for a break, after %1$s</string>
+    <string name="breaks_time_for_one">Time for a break</string>
+    <!-- %1$s as the bar writes it ("38 min"). -->
+    <string name="breaks_next_in">Next break in %1$s</string>
+    <string name="breaks_worked">Since the last break</string>
+    <string name="breaks_next">Next break</string>
+    <string name="breaks_now">Now</string>
+    <!-- %1$d: the break's length in minutes. -->
+    <string name="breaks_note">A break is %1$d min with the screen off or BentoBar hidden. Only that is counted: not the keyboard, the mouse or what is on screen.</string>
+    <string name="breaks_took_one">I took one</string>
+    <string name="breaks_every">A break every</string>
+    <string name="breaks_rest">A break lasts</string>
+</resources>

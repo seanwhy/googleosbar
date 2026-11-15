@@ -64,9 +64,12 @@ import java.util.concurrent.Executors
 /**
  * Usage access (PACKAGE_USAGE_STATS), an optional special app access the user turns on in Android
  * settings. Android can't show apps which other apps use the CPU or memory, but with Usage access
- * it shares each app's data use (NetworkStatsManager) and storage (StorageStatsManager). BentoBar
- * reads only those two, for the Network and Storage menus. The same switch would also let it read
- * which apps you use and when; it doesn't.
+ * it shares each app's data use (NetworkStatsManager) and storage (StorageStatsManager). This file
+ * reads only those two, for the Network and Storage menus.
+ *
+ * The same switch also covers which apps were used and when. Only a Screen time item reads any of
+ * that (ScreenTimeLoad): when the screen went on and off today, and, while its menu is open, which
+ * apps were in front and for how long. None of it is written anywhere or logged.
  *
  * Off unless the user turns it on. The queries run on one low-priority background thread, only
  * while a Network or Storage menu is open, and are cached ([data] about 10 s, [storage] about

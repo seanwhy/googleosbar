@@ -288,11 +288,12 @@ class BarRulesTest {
     @Test fun whatMovesTheStripOrWhatItHoldsIsGeometry() {
         val g = BarRules.geometry(layout)
         assertNotEquals(g, BarRules.geometry(layout.copy(enabled = false)))
-        assertNotEquals(g, BarRules.geometry(layout.copy(position = com.meridian11.books.bentobar.data.Position.LEFT)))
+        assertNotEquals(g, BarRules.geometry(layout.copy(items = layout.items.map { it.copy(area = com.meridian11.books.bentobar.data.Position.LEFT) })))
         assertNotEquals(g, BarRules.geometry(layout.copy(pill = com.meridian11.books.bentobar.data.Pill.SOLID)))
         assertNotEquals(g, BarRules.geometry(layout.copy(spacing = layout.spacing + 2)))
         assertNotEquals(g, BarRules.geometry(layout.copy(items = layout.items + com.meridian11.books.bentobar.data.ItemConfig("u", "text"))))
-        assertNotEquals(g, BarRules.geometry(layout.copy(items = layout.items.map { it.copy(section = com.meridian11.books.bentobar.data.Section.OFF) })))
+        assertNotEquals(g, BarRules.geometry(layout.copy(items = layout.items.map { it.copy(section = com.meridian11.books.bentobar.data.Section.HIDDEN) })))
+        assertNotEquals(g, BarRules.geometry(layout.copy(items = emptyList())))
     }
 
     @Test fun whatTheStripOnlyDrawsIsNotGeometry() {
@@ -300,5 +301,13 @@ class BarRulesTest {
         assertEquals(g, BarRules.geometry(layout.copy(color = com.meridian11.books.bentobar.data.ColorMode.DARK)))
         assertEquals(g, BarRules.geometry(layout.copy(textSize = com.meridian11.books.bentobar.data.TextSize.LARGE)))
         assertEquals(g, BarRules.geometry(layout.copy(pinnedOpen = true, autoCollapseSec = 5)))
+    }
+
+    @Test fun oneItemsAreaIsGeometryAndTheOldPositionAloneIsNot() {
+        val two = layout.copy(items = layout.items + com.meridian11.books.bentobar.data.ItemConfig("u", "text"))
+        val g = BarRules.geometry(two)
+        assertNotEquals(g, BarRules.geometry(two.copy(items = two.items.map { if (it.id == "u") it.copy(area = com.meridian11.books.bentobar.data.Position.CENTER) else it })))
+        // Since version 4 the items say where they are: the Position a layout had before is only what the migration reads.
+        assertEquals(g, BarRules.geometry(two.copy(position = com.meridian11.books.bentobar.data.Position.LEFT)))
     }
 }

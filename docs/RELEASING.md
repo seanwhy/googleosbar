@@ -64,23 +64,157 @@ learned the hard way" says why. Run it again on every new draft.
 - **Unlock.** Lock and unlock: within about ten seconds the strip's colour matches the bar's again (it once stayed white
   after the lock screen's light icons).
 - **Full screen.** An app in full screen hides the strip when the bar hides (at once on some systems, up to about 2 s on others)
-  and brings it back when the bar returns; a shade or the keyboard's full-screen key behave the same.
+  and brings it back when the bar returns; a shade or the keyboard's full-screen key behave the same. A bar with more
+  items than fit (so with a ‹ for them) comes back with its ‹ in its first frame, and its window is sized once
+  (`debug trace on`: no more than one `width` line on the return; a recording shows no frame with a cut ‹).
 - **The empty strip.** With every item hidden or empty there is no stray window and no invisible overlay (Play Protect
-  flagged one); Settings shows the strip as empty.
+  flagged one); Settings shows the strip as empty. With a pill background and items in several areas, a bar with
+  nothing to draw is one empty capsule, and an area with nothing to draw has none beside another area's items.
 - **Play Protect.** After the install, Safety Center (Settings > Security) shows no "App displays over other apps" or
-  other warning for BentoBar.
+  other warning for BentoBar. Then overnight, with an area that draws nothing (Left holding only a Hidden item whose Show
+  when rule does not apply), Presenting switched on and off a few times and the screen on for part of the night: still
+  none in the morning.
 - **Menus.** The ‹ chevron and an item open their menus at the right width (not cut off, not pushed under the chevron);
   a click outside closes them; the glass and its shadow sit together.
+- **Where a bar starts.** A fresh install (or the app's data cleared) has its four items in Left, after the clock, and
+  the next item added goes there. An install updated from 2.1 or earlier keeps its bar where it was, its items in the
+  areas they had, and what is added to a bar in Right alone still goes to Right.
+- **One area.** Look › Where BentoBar sits puts every item in Left, Middle or Right and shows that one as chosen. In each
+  the bar is one strip that looks and behaves as the previous release did there, and no row in Settings names an area.
+  With every item removed and a pill background, the row still shows a place as chosen, a press on another moves the
+  empty capsule there, and the next item added goes there.
+- **Three areas.** Put items in Left, Middle and Right (an item's detail › Area): rows name their areas and Look shows
+  none as chosen, with a line under the row's title saying that choosing one moves every item there (with one area, or
+  no items, the row has no such line). The strips do not overlap, and a press in a gap between them reaches the status
+  bar. A ticking item or a timer in Left moves neither Right nor the Middle; a Left or a Right that grows (a long Now
+  playing title) pushes the Middle aside smoothly, never in a jump, and it returns to the centre; in a recording no
+  frame has the grown area's item in the place the Middle has not left yet. The picture on the Bar page
+  shows the areas where the bar has them; in a narrow settings window Left keeps its room longest, then Right, then the
+  Middle, and the line under the picture counts every item not drawn, once.
+- **An area that comes and goes.** Right holding only a Hidden timer with Show when on: starting the timer brings Right
+  up within a second, stopping it takes Right away, and the other areas do not move either time and go on ticking. The
+  same with Presenting on. Start and stop the timer several times within a second or two: Right never shows blank or at
+  another width for a frame (a recording), and with `debug trace on` no more than one `right width` line follows each
+  return. Then the same with Left, the first strip, as the one that comes and goes.
+- **No room.** Narrow the free part of the status bar (snap windows, or a larger display size) until an area has no room
+  (Left keeps its room, then Right, and the Middle is the first to go):
+  its items are in the first strip's ‹ menu and their rows in Settings say they don't fit right now; the other strips do
+  not move when that ‹ comes and goes, and nothing flickers at the edge of room. With Presenting on, a ‹ that ends it
+  stays on screen. An area with no room whose items are all Hidden (Left: a clock; Right: two Hidden items; hidden items
+  on a click) still gives the bar a ‹: the first strip draws one, and a press on it opens the menu that lists them. With
+  room for nothing, the home area's ‹ is drawn as it was with one strip, and the keyboard's "BentoBar menu" opens it.
+  Give the room back: the areas return and the rows clear.
+- **One bar across areas.** With hidden items out, a click on another app folds them, once; a click on an item in
+  another area opens its popup and folds nothing. A click on another app folds them also while the first strip draws
+  nothing (Left holding only a spacer with no line, Right with a Hidden item: click Right's ‹, then another app). A press
+  on another area's item closes an open popup and opens its own (one click): the first dissolves while the second
+  unfolds. A ‹ menu closed under one area and at once opened from another area's ‹ opens under that one, not turned
+  round under the first. The pointer moving from one strip straight to the next keeps hidden items out, takes the highlight with
+  it and leaves no tooltip behind; the next item's tooltip still comes. A ‹ in an area with nothing hidden opens the menu
+  while another area's ‹ opens and folds the bar. A drag stays among its own area's items. From the keyboard's "BentoBar
+  menu", an item drawn in another area than the first strip's opens its menu under that item, which shows as open.
+- **The trash under the list.** On the Bar page, drag a row with the mouse: a strip comes up along the list's lower
+  edge ("Drop here to remove"), rising, and no row moves for it. Over it the strip is red and the line under the
+  preview says "Drop to remove…"; let go and the row is gone, "Removed…" stands in its place, and Undo or Ctrl+Z brings
+  it back. Let go beside the strip (on the panel, on the page's ground) or press Esc over it: nothing changes and the
+  strip sinks. The same by finger, by a row's handle: the strip is easy to hit and the copy under the finger does not
+  hide that it is red. With more rows than fit, hold a row just above the strip: the list scrolls; over the strip it
+  rests. Scroll that way to the list's end and drop the row there: the list comes down into the strip's room as the
+  strip sinks, in one even move (a test holds that it takes several frames; whether it looks even is for the eye),
+  and the row lands in its place. Pick up one of the last rows of a full list, where the strip comes up under the pointer, and let go without
+  moving away: nothing is removed; move off the strip and back, and it takes the row. Drag a type out of Add items:
+  no strip. In a narrow window and with three areas the strip spans the list's card. With "No animations" it is
+  simply there and gone.
+- **Remove an area.** With items in two or three areas, each lane's head ends in a trash (a screen reader says
+  "Remove Left and its 3 items" or the like). A click removes the lane and its items, the others take the room, and
+  "Removed Left and its 3 items" stands above the list with Undo; Undo brings every item back where it was. The
+  pointer rests where the trash was, which is where the note's Undo may then stand: the note still goes after three
+  seconds. Double-click a trash, the last lane's most of all: the area stays removed (a note's Undo takes no click
+  for the system's double-tap time after the note came; a test holds it with an injected mouse, a real double click
+  and a double tap by finger are for a device), and a click on Undo a moment later brings it back. With the keyboard (Tab to the trash, Enter) the keyboard
+  is then on the note's Undo; after a mouse click, see where Tab goes next. Remove the bar's last area: the empty
+  bar's page with the note on top. An area opened with "Add an area" and still empty closes with no note.
+- **Notes go after three seconds.** Remove an item, close an area by moving its last row, add from the library, and
+  use Look's "Where BentoBar sits": each note with Undo is gone three seconds later, a row's slip closing up as the
+  rows travel. Point at a note, or Tab to its Undo: it stays, and goes three seconds after the pointer or the
+  keyboard left. After a note went, Ctrl+Z still takes the change back, and the keyboard's shortcut list still
+  shows Undo. With Android's "Time to take action" set longer, the notes stay that long. With a screen reader on
+  (touch exploration), a note is read out and stays until the next change: find it by touch and double-tap its Undo
+  well after three seconds.
+- **The red button.** An item's options end in "Remove from the bar": red words and a trash on a pale red ground,
+  beside Duplicate and as tall, clearly a button in light and dark, with no keycap beside it; under the pointer and
+  pressed its ground is a step stronger each time; Delete and Backspace still remove the selected item. Look's
+  Discard (under a kept layout) and Setup's Remove key look the same.
 - **Live Update chip.** A timer or a meeting shows its chip with BentoBar's settings window closed.
 - **Items that tick.** A clock and a network speed item do not make neighbours move; the bar's CPU use stays low
   (about 1% of one core on a release build).
-- **Keep awake and timers.** Keep awake keeps the screen on and ends when switched off. A finished timer rings once, through
-  its notification (only with notifications allowed), and the ring ends when that notification is dismissed or the item's
-  Stop is pressed. The Clock app's `DISMISS_TIMER` intent does not reach BentoBar's ring, so do not use it to stop one on
-  the device; dismiss the notification. Allow notifications for a timer test only, and take the permission back after.
+- **Keep awake and timers.** Keep awake keeps the screen on and ends when switched off. With three areas exactly one strip
+  window carries the keep-screen-on flag (`adb shell dumpsys window windows`); empty that area and the screen still stays
+  on, also with nothing drawn in any area (a wake lock then, `dumpsys power`), and never on the lock screen. A finished
+  timer rings once, through its notification (only with notifications allowed), and the ring ends when that notification
+  is dismissed or the item's Stop is pressed. The Clock app's `DISMISS_TIMER` intent does not reach BentoBar's ring, so do
+  not use it to stop one on the device; dismiss the notification. Allow notifications for a timer test only, and take the
+  permission back after.
 - **Update over the old release.** Installed over the previous release (same key), the layout and the accessibility
-  switch are still there.
+  switch are still there, and a strip that stood on the left or in the middle stands where it did.
 - **Online services.** With them off nothing is asked; weather shows the placeholder, not an error.
+- **The items added after 1.7.1.** None of them has run on a device yet. Each has its list below; run an item's list
+  before the release that first carries it. `./bento debug TYPE stage …` stages what a test can't make happen.
+- **Camera and mic.** Another app using the camera or the microphone brings the item out, with a time that counts;
+  BentoBar's own Mirror doesn't, nor the two seconds after it closes. A USB camera unplugged while in use doesn't
+  leave the item stuck. The mute: a recording made while it is on is silent with the built-in, a USB and a Bluetooth
+  microphone; if one of them still records, set `InUseRules.OFFER_MUTE` to false and ship without the button. The mute
+  is given back on Remove, when BentoBar is turned off, and at a start that finds the item gone; it stays while the
+  bar is hidden; a mute another app made is left alone. The link to Android's privacy settings opens them.
+- **Mirror.** The popup shows the camera's picture within a second, or "Android didn't let BentoBar use the camera."
+  (a camera opened from an overlay window is the doubt). The picture is upright and unstretched, and Mirrored turns
+  it. The camera's light goes out as the popup starts to close: by its button, Esc, a click on the item or on another
+  one, and full screen. The popup stays while you type in another window. The permission is asked on the first
+  opening; refused, the popup says so and Setup has the Camera row.
+- **Prompter.** While its popup is open, keys still go to the other app; Space pauses and plays only when the popup
+  has the focus. The motion is even at speeds 1 and 10 and stops at "End of your notes". Edit opens the options. The
+  notes survive BentoBar being turned off and on. Remove deletes them with the item (Undo right after brings both
+  back); a new Prompter starts empty. Remove one with notes, close the settings window (the caption's close button,
+  and once with Back), open it again: Ctrl+Z brings nothing back. Remove one, resize or rotate the window, or put
+  another window in front and come back: Ctrl+Z still brings it back with its notes.
+- **Notification icons.** "BentoBar notification icons" is its own entry in Notification access, and is not connected
+  while no such item is placed. With access: one icon per app (`./bento debug notices` counts those it couldn't load
+  as `bells=`), and the popup opens, dismisses and clears. `listener=` in the same line says whether it is connected:
+  only while the item is live, and gone within a second of the bar hiding. Access switched on or off while it shows is
+  followed within two seconds. `notices stage three|many|progress|none|noaccess`.
+- **Live activity.** Alone in the Middle with "Only when active" and nothing happening it draws nothing: `debug dump`,
+  and a night with Play Protect on (below). A timer started from the tile shows within a second; a meeting from ten
+  minutes before until ten minutes in; a meeting stands before a timer, and a finished timer's "Done" before both for
+  a minute. Now playing needs its access; a flight comes with `flight show NAME`; another app's progress ("App 62%")
+  only with Notification icons switched on in Live activity's options. Its sources' listeners go while the bar is
+  hidden. `live stage several`.
+- **Focus.** The popup asks for Do Not Disturb access, and the mode "BentoBar Focus" comes on. A session ends by its
+  alarm with the screen off, with the bar hidden, and with BentoBar turned off. A restart of the device before the end
+  and one after it both leave Do Not Disturb as it should be once BentoBar is on again. Switched off in Android's
+  Modes, the item follows within five seconds. A session with no end ends on Remove and when BentoBar is turned off.
+  The mode leaves Android's list when the last Focus item is forgotten. `focus stage ready|running|endless|noaccess`.
+- **Brightness.** Dimmed until "Modify system settings" is allowed. The slider and the system's own agree along the
+  whole range, also with automatic brightness on; the built-in screen only.
+- **Keyboard light.** On a backlit keyboard a dimmed "System" until the first slide, and nothing on a keyboard without
+  a light. The keys follow a slide. "Give back to the system" does; so do Remove and turning BentoBar off. Where
+  Android refuses the light the item says "Not on this device".
+- **Headphones and output.** A wired or USB-C headset's name within a second; a Bluetooth one's (it may read
+  "Bluetooth"); a change of output within five seconds; a monitor on HDMI or USB-C; the volume agrees with Sound's.
+- **Connection.** "Sign in" behind a captive portal, a VPN, "No internet", "Offline", "Metered"; and no callback left
+  behind once the item is gone (`dumpsys connectivity`).
+- **Network's addresses.** The menu's Addresses rows against Settings › Internet › the network's details: the IP
+  address, IPv6, the gateway, DNS, and Private DNS not in use, automatic and set to a host; a VPN (no gateway row);
+  a network with IPv6 resolvers. Wi-Fi off and on with the menu open takes the section away and brings it back. One
+  callback while a Network item is live, none once it is gone or the screen is off (`dumpsys connectivity`).
+  `network stage wifi|ethernet|vpn|ipv6|offline`, then `network off`.
+- **Screen time.** The glyph alone without Usage access; the time within about fifteen seconds of allowing it, close
+  to Android's own figure; a closed lid and a restart are not counted; the menu lists the apps longest in front; it
+  starts again at midnight.
+- **Day progress, Sunset, Break reminder.** Sunset within two minutes of a published table for the time zone's city; a
+  zone under an old name (`Asia/Calcutta`) still names a city, and UTC says "BentoBar doesn't know where this time
+  zone is". The week starts on the day Android's regional preferences say. The lid closed, or the bar hidden, for a
+  rest's length starts the break count again. `sun stage evening|night|polar|nozone`, `progress stage
+  morning|evening|yearend`, `breaks stage early|due`.
 
 ## What the tag does
 

@@ -30,6 +30,11 @@ import javax.net.ssl.SSLParameters
 import javax.net.ssl.SSLSocket
 import javax.net.ssl.SSLSocketFactory
 
+internal fun cloudClipPreview(snippet: String, maxChars: Int): String {
+    val line = TextRules.oneLine(snippet, maxChars + 1)
+    return if (TextRules.fits(line, maxChars)) line else TextRules.first(line, maxChars - 1).trimEnd() + "…"
+}
+
 @Serializable
 data class NetTransferIdentity(
     val vpsUrl: String = CloudClipboardProtocol.DEFAULT_VPS_URL,
@@ -74,7 +79,7 @@ data class CloudClipboardEntry(
         } else {
             text
         }
-        return ClipboardRules.preview(raw, maxChars).ifEmpty { raw.trim().take(maxChars) }
+        return cloudClipPreview(raw, maxChars).ifEmpty { raw.trim().take(maxChars) }
     }
 }
 

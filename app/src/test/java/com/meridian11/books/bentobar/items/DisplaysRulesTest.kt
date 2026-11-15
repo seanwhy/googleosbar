@@ -46,7 +46,7 @@ class DisplaysRulesTest {
         assertTrue(DisplaysRules.ruleOn(listOf(awakeItem)))
         // Folded behind ‹ without Show when: never sampled, and the promise holds all the same.
         assertTrue(DisplaysRules.ruleOn(listOf(awakeItem.copy(section = Section.HIDDEN, whenActive = false))))
-        assertFalse(DisplaysRules.ruleOn(listOf(awakeItem.copy(section = Section.OFF))))
+        assertFalse("removed", DisplaysRules.ruleOn(emptyList()))
         assertFalse(DisplaysRules.ruleOn(listOf(ItemConfig("d2", "displays"))))
         assertFalse(DisplaysRules.ruleOn(listOf(ItemConfig("c", "clock", options = mapOf("awake" to "true")))))
         // Only the connection is left for wantAwake to add.
@@ -62,12 +62,11 @@ class DisplaysRulesTest {
 
     @Test fun wantAwakeRequiresActiveDisplaysItemWithAwakeOptionAndExternalScreen() {
         val awakeItem = ItemConfig("d1", "displays", options = mapOf("awake" to "true"))
-        val offItem = awakeItem.copy(section = Section.OFF)
         val plainItem = ItemConfig("d2", "displays")
 
         assertFalse(DisplaysRules.wantAwake(listOf(plainItem), listOf(builtIn, uhd)))
         assertFalse(DisplaysRules.wantAwake(listOf(awakeItem), listOf(builtIn)))
-        assertFalse(DisplaysRules.wantAwake(listOf(offItem), listOf(builtIn, uhd)))
+        assertFalse(DisplaysRules.wantAwake(emptyList(), listOf(builtIn, uhd)))
         assertTrue(DisplaysRules.wantAwake(listOf(awakeItem), listOf(builtIn, uhd)))
     }
 }

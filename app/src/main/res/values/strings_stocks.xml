@@ -3,7 +3,7 @@
 <resources xmlns:tools="http://schemas.android.com/tools" tools:locale="en">
     <string name="item_stocks_title">US stocks</string>
     <string name="item_stocks_desc">Prices of the stocks you pick, one at a time; needs your own Finnhub key</string>
-    <string name="trigger_stocks">Show when a stock moves %1$s or more in a day</string>
+    <string name="trigger_stocks">when a stock moves %1$s or more in a day</string>
     <string name="trigger_stocks_short">shows on a %1$s move</string>
     <string name="stocks_consent">Stock prices come from Finnhub, a market data service, with a free key of your own. BentoBar sends Finnhub your key, the symbols of the stocks you follow and what you search for, nothing else. Finnhub sees your IP address and knows which key asked. US stocks and ETFs only.</string>
 

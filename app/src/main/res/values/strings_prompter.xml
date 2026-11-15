@@ -1,0 +1,27 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Prompter. Every name here starts with prompter_ or item_prompter_. -->
+<resources xmlns:tools="http://schemas.android.com/tools" tools:locale="en">
+    <string name="item_prompter_title">Prompter</string>
+    <string name="item_prompter_desc">Your notes moving up under the camera, to read while you speak</string>
+
+    <string name="prompter_desc_playing">Prompter, playing</string>
+    <string name="prompter_speed">Speed %1$d</string>
+    <string name="prompter_empty">Write your notes in this item\'s options</string>
+    <string name="prompter_end">End of your notes</string>
+    <string name="prompter_play">Play</string>
+    <string name="prompter_play_again">Play from the start</string>
+    <string name="prompter_pause">Pause</string>
+    <string name="prompter_slower">Slower</string>
+    <string name="prompter_faster">Faster</string>
+    <string name="prompter_restart">Back to the start</string>
+    <string name="prompter_edit">Edit your notes</string>
+    <string name="prompter_close">Close</string>
+
+    <string name="prompter_notes_label">Your notes</string>
+    <string name="prompter_notes_help">Kept on this device only: never in a copied layout or a backup.</string>
+    <string name="prompter_size">Text size</string>
+    <string name="prompter_size_s">Small</string>
+    <string name="prompter_size_m">Medium</string>
+    <string name="prompter_size_l">Large</string>
+    <string name="prompter_speed_label">Speed</string>
+</resources>

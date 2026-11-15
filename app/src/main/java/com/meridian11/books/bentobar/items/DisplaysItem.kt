@@ -48,7 +48,7 @@ object DisplaysItem : ItemType("displays", R.string.item_displays_title, Sym.DES
     override val trigger = Trigger(R.string.trigger_displays, R.string.trigger_displays_short)
 
     /**
-     * True while an external display is connected and a Displays item outside Off has "Keep awake while connected" on.
+     * True while an external display is connected and a Displays item has "Keep awake while connected" on.
      * Kept up to date by [follow], whatever is being sampled: the promise is about the screen, and a bar hidden by a
      * full-screen app is exactly when it matters.
      */

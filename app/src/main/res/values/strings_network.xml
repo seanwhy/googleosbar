@@ -1,0 +1,12 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Network: the Addresses section of its menu. Every name here starts with network_; the item's older text is in strings.xml. -->
+<resources xmlns:tools="http://schemas.android.com/tools" tools:locale="en">
+    <string name="network_link_title">Addresses</string>
+    <string name="network_link_ipv4">IP address</string>
+    <string name="network_link_ipv6">IPv6</string>
+    <string name="network_link_gateway">Gateway</string>
+    <string name="network_link_dns">DNS</string>
+    <string name="network_link_private_dns">Private DNS</string>
+    <!-- Private DNS's row while this network's lookups aren't encrypted: switched off, or in the automatic mode on a network that can't. -->
+    <string name="network_link_private_dns_unused">Not in use</string>
+</resources>

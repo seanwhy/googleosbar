@@ -1,0 +1,30 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Sunset. Every name here starts with sun_ or item_sun_. -->
+<resources xmlns:tools="http://schemas.android.com/tools" tools:locale="en">
+    <string name="item_sun_title">Sunset</string>
+    <string name="item_sun_desc">The time until sunset or sunrise, around the main city of your time zone</string>
+    <!-- The bar's time until it: "48 min", "1 h 12" (hours, then minutes in two figures). -->
+    <string name="sun_sunrise">Sunrise</string>
+    <string name="sun_sunset">Sunset</string>
+    <string name="sun_show_next">Whichever is next</string>
+    <string name="sun_length">Length of day</string>
+    <!-- The menu's subtitle; %1$s as the bar writes it ("1 h 12"). -->
+    <string name="sun_rise_in">Sunrise in %1$s</string>
+    <string name="sun_set_in">Sunset in %1$s</string>
+    <!-- A polar day or night. -->
+    <string name="sun_no_set">The sun doesn\'t set today</string>
+    <string name="sun_no_rise">The sun doesn\'t rise today</string>
+    <string name="sun_polar_day">It stays above the horizon all day and all night.</string>
+    <string name="sun_polar_night">It stays below the horizon all day.</string>
+    <!-- %1$s: the city the times are for ("London"). -->
+    <string name="sun_around">Around %1$s, the main city of this device\'s time zone. Worked out on this device.</string>
+    <string name="sun_where_help">For the main city of the device\'s time zone, worked out on this device: no location is used.</string>
+    <!-- A time zone with no city, such as UTC. -->
+    <string name="sun_nozone">BentoBar doesn\'t know where this time zone is</string>
+    <string name="sun_nozone_note">The times are worked out for the main city of the device\'s time zone, and this zone has none. Choose your region\'s time zone in Android\'s settings.</string>
+    <!-- Spoken and the tooltip: "Sunset in 1 hour 12 minutes, at 5:56 PM, around London". -->
+    <string name="sun_desc_rise">Sunrise in %1$s, at %2$s, around %3$s</string>
+    <string name="sun_desc_set">Sunset in %1$s, at %2$s, around %3$s</string>
+    <!-- "The sun doesn't set today around Tromsø". -->
+    <string name="sun_desc_polar">%1$s around %2$s</string>
+</resources>

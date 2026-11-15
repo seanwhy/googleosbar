@@ -3,7 +3,7 @@
 <resources xmlns:tools="http://schemas.android.com/tools" tools:locale="en">
     <string name="item_fx_title">Exchange rates</string>
     <string name="item_fx_desc">Foreign exchange rates and an inline currency converter, from the European Central Bank</string>
-    <string name="trigger_fx">Show when a currency pair moves %1$s or more in a day</string>
+    <string name="trigger_fx">when a currency pair moves %1$s or more in a day</string>
     <string name="trigger_fx_short">shows on a %1$s move</string>
 
     <string name="fx_consent">Exchange rates come from Frankfurter (api.frankfurter.dev), which publishes reference rates from the European Central Bank. No key is needed. BentoBar asks for the table of rates about once an hour while the bar is on screen (a failed try is repeated sooner); Frankfurter sees your IP address, as any website does.</string>

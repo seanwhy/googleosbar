@@ -26,15 +26,16 @@ import androidx.savedstate.setViewTreeSavedStateRegistryOwner
 /**
  * A Compose UI in a TYPE_ACCESSIBILITY_OVERLAY window: the only window type an app may put on
  * top of the status bar. It brings its own lifecycle, saved-state and view-model owners because
- * there's no Activity. [onOutside] fires for touches outside the window (menus close on it) and
- * [onKey] gets key events while the window has focus.
+ * there's no Activity. [onOutside] fires for touches outside the window (menus close on it) and is
+ * handed the touch, which says where it was when it fell on another of this app's windows. [onKey]
+ * gets key events while the window has focus.
  */
 class Overlay(
     private val context: Context,
     title: String,
     focusable: Boolean = false,
     touchable: Boolean = true,
-    private val onOutside: (() -> Unit)? = null,
+    private val onOutside: ((MotionEvent) -> Unit)? = null,
     private val onKey: ((KeyEvent) -> Boolean)? = null,
 ) : LifecycleOwner, ViewModelStoreOwner, SavedStateRegistryOwner {
 
@@ -142,7 +143,7 @@ class Overlay(
     @SuppressLint("ViewConstructor")
     private inner class Frame(context: Context) : FrameLayout(context) {
         override fun dispatchTouchEvent(ev: MotionEvent): Boolean {
-            if (ev.actionMasked == MotionEvent.ACTION_OUTSIDE) { onOutside?.invoke(); return true }
+            if (ev.actionMasked == MotionEvent.ACTION_OUTSIDE) { onOutside?.invoke(ev); return true }
             return super.dispatchTouchEvent(ev)
         }
 

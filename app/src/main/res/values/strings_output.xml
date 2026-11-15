@@ -1,0 +1,28 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Headphones and output. Every name here starts with output_, item_output_ or trigger_output. -->
+<resources xmlns:tools="http://schemas.android.com/tools" tools:locale="en">
+    <string name="item_output_title">Headphones and output</string>
+    <string name="item_output_desc">Where sound plays: headphones, USB, a display or the speaker</string>
+    <string name="trigger_output">while sound plays anywhere but the built-in speaker</string>
+    <string name="trigger_output_short">shows when not on the speaker</string>
+    <!-- What an output is called when it has no name of its own, and the built-in speaker always. -->
+    <string name="output_kind_speaker">Speaker</string>
+    <string name="output_kind_wired">Headphones</string>
+    <string name="output_kind_bluetooth">Bluetooth</string>
+    <string name="output_kind_usb">USB audio</string>
+    <string name="output_kind_display">Display</string>
+    <string name="output_kind_other">Other output</string>
+    <!-- Spoken and the tooltip: "Sound plays on Headset". -->
+    <string name="output_desc">Sound plays on %1$s</string>
+    <string name="output_none">No sound output</string>
+    <!-- The menu's subtitle: "Sound goes to Headset". -->
+    <string name="output_goes_to">Sound goes to %1$s</string>
+    <string name="output_in_use">In use</string>
+    <string name="output_media_volume">Media volume</string>
+    <string name="output_muted">Muted</string>
+    <string name="output_note">Android decides where sound goes; choose it in Sound settings.</string>
+    <string name="output_sound_settings">Sound settings</string>
+    <string name="output_bluetooth_settings">Bluetooth settings</string>
+    <string name="output_show_name">Show the name</string>
+    <string name="output_show_name_help">The headphones\' or the display\'s own name beside the icon.</string>
+</resources>

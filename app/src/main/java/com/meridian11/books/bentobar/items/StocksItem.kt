@@ -7,7 +7,6 @@ import androidx.compose.runtime.Composable
 import com.meridian11.books.bentobar.R
 import com.meridian11.books.bentobar.data.ItemConfig
 import com.meridian11.books.bentobar.data.Online
-import com.meridian11.books.bentobar.data.Section
 import com.meridian11.books.bentobar.data.Store
 import com.meridian11.books.bentobar.util.Dates
 import com.meridian11.books.bentobar.util.Now
@@ -72,7 +71,7 @@ object StocksItem : ItemType("stocks", R.string.item_stocks_title, Sym.TRENDING_
     /** The quotes of [item]'s stocks: the staged ones in a test, else the loader's, asking for those that are due. */
     internal fun quotesFor(item: ItemConfig, stocks: List<Stock> = StocksRules.stocks(item), ask: Boolean = true): Map<String, Quote> {
         staged?.let { if (first()?.id == item.id) return it.quotes }
-        if (ask && item.section != Section.OFF && Online.on(online) && Online.hasKey(online)) stocks.forEach { quotes.want(it.symbol) }
+        if (ask && Online.on(online) && Online.hasKey(online)) stocks.forEach { quotes.want(it.symbol) }
         return stocks.mapNotNull { s -> quotes.peek(s.symbol)?.let { s.symbol to it } }.toMap()
     }
 
@@ -86,7 +85,7 @@ object StocksItem : ItemType("stocks", R.string.item_stocks_title, Sym.TRENDING_
 
     /** The menu opened: while the market is open, a quote older than half a minute is asked again. */
     internal fun opened(item: ItemConfig) {
-        if (staged != null || item.section == Section.OFF || !Online.on(online) || !Online.hasKey(online)) return
+        if (staged != null || !Online.on(online) || !Online.hasKey(online)) return
         val open = Market.open(Instant.ofEpochMilli(Now.wall()))
         for (s in StocksRules.stocks(item)) {
             val q = quotes.peek(s.symbol)
@@ -154,7 +153,7 @@ object StocksItem : ItemType("stocks", R.string.item_stocks_title, Sym.TRENDING_
 
     @Volatile private var staged: Staged? = null
 
-    private fun first(): ItemConfig? = Store.config.value.items.firstOrNull { it.type == type && it.section != Section.OFF }
+    private fun first(): ItemConfig? = Store.config.value.items.firstOrNull { it.type == type }
 
     /** Whether [item] shows a staged state. */
     internal fun isStaged(item: ItemConfig): Boolean = staged != null && first()?.id == item.id

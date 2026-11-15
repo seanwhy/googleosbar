@@ -487,7 +487,7 @@ class DevicesRulesTest {
         assertEquals("1 device", text.plural("devices_count", 1))
         assertEquals("2 devices", text.plural("devices_count", 2))
         assertEquals("85% · Charging", text.format("devices_level_charging", "85%"))
-        assertEquals("Show when a device's battery is below 20%", text.format("trigger_devices", "20%"))
+        assertEquals("while a device's battery is below 20%", text.format("trigger_devices", "20%"))
         assertEquals("shows below 20%", text.format("trigger_devices_short", "20%"))
     }
 }

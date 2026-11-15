@@ -174,16 +174,6 @@ class WeatherSourceTest {
         assertFalse(Online.setUp(OPEN_METEO))
     }
 
-    @Test fun anItemThatIsOffCannotSearchAndTurnsNothingOn() = FakeHttp.use { net ->
-        net.places()
-        val s = source()
-        val off = added.copy(section = Section.OFF)
-        layout = listOf(off)
-        assertFalse(s.search("Springfield", off, "settings:w1"))
-        sentNothing(net)
-        assertFalse(Online.on(OPEN_METEO))
-    }
-
     @Test fun whatIsSentIsTheTextCleanedUpAndNothingElseOfTheField() = FakeHttp.use { net ->
         net.places()
         val s = source()
@@ -403,19 +393,6 @@ class WeatherSourceTest {
         s.turnOn()
         assertNotNull(s.reading(item))
         assertEquals(2, net.asked.size)
-    }
-
-    @Test fun anItemThatIsOffAsksNothing() = FakeHttp.use { net ->
-        net.forecasts()
-        val s = source()
-        val off = zurich(section = Section.OFF)
-        layout = listOf(off)
-        s.turnOn()
-        assertNull(s.reading(off))
-        s.watch(off, 60 * min)
-        s.opened(off)
-        assertFalse(s.again(off))
-        sentNothing(net)
     }
 
     // ---- how often ------------------------------------------------------------------------------
@@ -755,8 +732,7 @@ class WeatherSourceTest {
         assertEquals(Again.READY, s.againEntry(item))
         s.reading(item)
         assertEquals(Again.UP_TO_DATE, s.againEntry(item))
-        // The same reading seen from an item that is turned off, or with the switch off: not "up to date", nothing.
-        assertEquals(Again.WAIT, s.againEntry(item.copy(section = Section.OFF)))
+        // The same reading seen with the switch off: not "up to date", nothing.
         Online.turnOff(OPEN_METEO)
         assertEquals(Again.WAIT, s.againEntry(item))
         assertEquals(1, net.asked.size)
@@ -946,7 +922,7 @@ class WeatherSourceTest {
         assertTrue(after.status(item, wall) is Status.Live)
     }
 
-    @Test fun anItemTurnedOffLeavesNoReadingSoDeletingItLaterLeavesNoneEither() = FakeHttp.use { net ->
+    @Test fun aRemovedItemLeavesNoReadingAndOneThatComesBackAsksAfresh() = FakeHttp.use { net ->
         net.forecasts()
         val s = source()
         val item = zurich()
@@ -954,16 +930,12 @@ class WeatherSourceTest {
         s.turnOn()
         s.reading(item)
         assertEquals(setOf(Kept.safe("47.37,8.55")), Kept.fetched(OPEN_METEO).names())
-        // Turned off. The tick that puts the type to sleep looks at the layout one last time, and that is when the reading goes.
-        val off = item.copy(section = Section.OFF)
-        layout = listOf(off)
+        // Removed. The tick that puts the type to sleep looks at the layout one last time, and that is when the reading goes.
+        layout = emptyList()
         s.keepOnly(WeatherLoad.places(layout))
         assertEquals(emptySet<String>(), Kept.fetched(OPEN_METEO).names())
-        assertNull(s.peek(off))
-        // Deleted while off: nothing runs for a type without a live item, and nothing has to.
-        layout = emptyList()
-        assertEquals(emptySet<String>(), Kept.fetched(OPEN_METEO).names())
-        // Turned on again instead, it asks afresh: one request, like an item that is new.
+        assertNull(s.peek(item))
+        // Back again (an Undo), it asks afresh: one request, like an item that is new.
         layout = listOf(item)
         s.keepOnly(WeatherLoad.places(layout))
         assertNotNull(s.reading(item))

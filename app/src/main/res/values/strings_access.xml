@@ -1,0 +1,23 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- The accesses some items need (items/Accesses.kt): Setup's row for each, and the line with its button in an item's
+     options and popup. Each is given in Android's own settings, or its own dialog for the camera. Every name here starts
+     with access_. -->
+<resources xmlns:tools="http://schemas.android.com/tools" tools:locale="en">
+    <string name="access_notices_label">BentoBar notification icons</string>
+
+    <string name="access_camera_title">Camera</string>
+    <string name="access_camera_explain">For Mirror: you, from the camera, in its popup. Nothing is recorded or sent.</string>
+    <string name="access_camera_allow">Allow the camera</string>
+
+    <string name="access_notices_title">Other apps\' notifications</string>
+    <string name="access_notices_explain">For Notification icons: other apps\' notifications, shown in the bar and its popup. BentoBar keeps none of them and sends none.</string>
+    <string name="access_notices_allow">Allow notification access</string>
+
+    <string name="access_do_not_disturb_title">Do Not Disturb</string>
+    <string name="access_do_not_disturb_explain">For Focus: turns Do Not Disturb on for a session, and off again when it ends.</string>
+    <string name="access_do_not_disturb_allow">Allow Do Not Disturb access</string>
+
+    <string name="access_write_settings_title">Modify system settings</string>
+    <string name="access_write_settings_explain">For Brightness: sets the screen\'s brightness from the bar.</string>
+    <string name="access_write_settings_allow">Allow changing settings</string>
+</resources>

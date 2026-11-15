@@ -1,0 +1,13 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Live activity. Every name here starts with live_, item_live_ or trigger_live. -->
+<resources xmlns:tools="http://schemas.android.com/tools" tools:locale="en">
+    <string name="item_live_title">Live activity</string>
+    <string name="item_live_desc">The one thing happening now: a timer, a meeting, a flight, what plays</string>
+    <string name="trigger_live">while something is happening</string>
+    <string name="trigger_live_short">shows while something happens</string>
+
+    <string name="live_none">Nothing is happening right now</string>
+    <!-- Under a source's switch in the item's settings. %1$s is the access's name as Setup's row has it ("Calendar"). -->
+    <string name="live_needs">Needs: %1$s</string>
+    <string name="live_choose">Choose what shows here</string>
+</resources>

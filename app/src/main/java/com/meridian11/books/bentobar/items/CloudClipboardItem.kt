@@ -1658,7 +1658,7 @@ object CloudClipboardItem : ItemType(
 
             val clipPreview = when {
                 localClipFiles.isNotEmpty() -> formatFilesPreview(localClipFiles)
-                localClip.isNotBlank() -> ClipboardRules.preview(localClip, 36)
+                localClip.isNotBlank() -> cloudClipPreview(localClip, 36)
                 else -> null
             }
             MenuEntry(

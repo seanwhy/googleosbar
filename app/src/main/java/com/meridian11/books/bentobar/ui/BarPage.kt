@@ -1,44 +1,16 @@
 package com.meridian11.books.bentobar.ui
 
-import android.content.pm.PackageManager
-import android.graphics.Rect
-import android.os.SystemClock
-import androidx.compose.animation.animateContentSize
-import androidx.compose.foundation.ScrollState
-import androidx.compose.foundation.gestures.scrollBy
+import android.content.res.Resources
+import androidx.annotation.StringRes
+import androidx.compose.animation.AnimatedContent
+import androidx.compose.animation.core.tween
+import androidx.compose.animation.fadeIn
+import androidx.compose.animation.fadeOut
+import androidx.compose.animation.slideInHorizontally
+import androidx.compose.animation.slideOutHorizontally
+import androidx.compose.animation.togetherWith
 import androidx.compose.foundation.background
-import androidx.compose.foundation.border
-import androidx.compose.foundation.layout.RowScope
-import androidx.compose.foundation.layout.offset
-import androidx.compose.material3.Slider
-import androidx.compose.material3.SliderDefaults
-import androidx.compose.runtime.SideEffect
-import androidx.compose.runtime.key
-import androidx.compose.runtime.mutableIntStateOf
-import androidx.compose.runtime.rememberCoroutineScope
-import androidx.compose.runtime.withFrameNanos
-import androidx.compose.ui.draw.shadow
-import androidx.compose.ui.input.key.Key
-import androidx.compose.ui.input.key.KeyEventType
-import androidx.compose.ui.input.key.isAltPressed
-import androidx.compose.ui.input.key.key
-import androidx.compose.ui.input.key.onPreviewKeyEvent
-import androidx.compose.ui.input.key.type
-import androidx.compose.ui.layout.onGloballyPositioned
-import androidx.compose.ui.semantics.CustomAccessibilityAction
-import androidx.compose.ui.semantics.clearAndSetSemantics
-import androidx.compose.ui.semantics.contentDescription
-import androidx.compose.ui.semantics.customActions
-import androidx.compose.ui.semantics.heading
-import androidx.compose.ui.semantics.selected
-import androidx.compose.ui.semantics.semantics
-import androidx.compose.ui.unit.IntOffset
-import com.meridian11.books.bentobar.items.Trigger
-import kotlin.math.roundToInt
-import androidx.compose.foundation.clickable
-import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
-import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
@@ -49,566 +21,640 @@ import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
-import androidx.compose.foundation.layout.widthIn
-import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
-import androidx.compose.foundation.verticalScroll
-import androidx.compose.material3.Card
-import androidx.compose.material3.CardDefaults
-import androidx.compose.material3.DropdownMenu
-import androidx.compose.material3.DropdownMenuItem
-import androidx.compose.material3.FilledTonalButton
-import androidx.compose.material3.IconButton
-import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.OutlinedButton
-import androidx.compose.material3.Text
-import androidx.compose.runtime.LaunchedEffect
-import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.DisposableEffect
+import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.MutableState
+import androidx.compose.runtime.SideEffect
+import androidx.compose.runtime.Stable
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.key
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
-import androidx.compose.ui.Alignment
+import androidx.compose.ui.AbsoluteAlignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
-import androidx.compose.ui.graphics.Brush
-import androidx.compose.ui.graphics.Color
-import androidx.compose.ui.input.pointer.PointerIcon
-import androidx.compose.ui.input.pointer.pointerHoverIcon
+import androidx.compose.ui.input.key.Key
+import androidx.compose.ui.input.key.KeyEvent
+import androidx.compose.ui.input.key.KeyEventType
+import androidx.compose.ui.input.key.isAltPressed
+import androidx.compose.ui.input.key.isCtrlPressed
+import androidx.compose.ui.input.key.isMetaPressed
+import androidx.compose.ui.input.key.key
+import androidx.compose.ui.input.key.nativeKeyCode
+import androidx.compose.ui.input.key.onKeyEvent
+import androidx.compose.ui.input.key.type
+import androidx.compose.ui.layout.onGloballyPositioned
 import androidx.compose.ui.platform.LocalDensity
-import androidx.compose.ui.text.style.TextOverflow
-import androidx.compose.ui.unit.dp
-import androidx.compose.ui.unit.sp
-import androidx.compose.ui.platform.LocalContext
-import androidx.compose.ui.res.pluralStringResource
+import androidx.compose.ui.platform.LocalResources
+import androidx.compose.ui.platform.LocalView
+import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.res.stringResource
+import androidx.compose.ui.semantics.LiveRegionMode
+import androidx.compose.ui.semantics.Role
+import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.liveRegion
+import androidx.compose.ui.semantics.semantics
+import androidx.compose.ui.unit.dp
 import com.meridian11.books.bentobar.R
-import com.meridian11.books.bentobar.bar.Strip
-import com.meridian11.books.bentobar.bar.StripEntry
-import com.meridian11.books.bentobar.bar.StripEvents
-import com.meridian11.books.bentobar.bar.StripLook
-import com.meridian11.books.bentobar.bar.Contrast
-import com.meridian11.books.bentobar.data.ColorMode
-import com.meridian11.books.bentobar.data.Display
+import com.meridian11.books.bentobar.bar.BarOverflow
+import com.meridian11.books.bentobar.data.BarConfig
+import com.meridian11.books.bentobar.data.HiddenMode
 import com.meridian11.books.bentobar.data.ItemConfig
 import com.meridian11.books.bentobar.data.Position
-import com.meridian11.books.bentobar.data.Section
-import com.meridian11.books.bentobar.data.HiddenMode
+import com.meridian11.books.bentobar.data.Step
 import com.meridian11.books.bentobar.data.Store
 import com.meridian11.books.bentobar.data.hide
-import com.meridian11.books.bentobar.data.putIn
+import com.meridian11.books.bentobar.data.landedIn
+import com.meridian11.books.bentobar.data.partOf
+import com.meridian11.books.bentobar.data.parts
 import com.meridian11.books.bentobar.data.setWhenActive
 import com.meridian11.books.bentobar.data.show
-import com.meridian11.books.bentobar.data.turnOff
-import com.meridian11.books.bentobar.data.spacingDp
-import com.meridian11.books.bentobar.data.stripPlan
+import com.meridian11.books.bentobar.data.stepped
+import com.meridian11.books.bentobar.data.without
+import com.meridian11.books.bentobar.data.withoutArea
 import com.meridian11.books.bentobar.items.ItemState
+import com.meridian11.books.bentobar.items.ItemType
 import com.meridian11.books.bentobar.items.Items
 import com.meridian11.books.bentobar.items.Ticker
-import com.meridian11.books.bentobar.util.Dates
-import com.meridian11.books.bentobar.util.Fonts
 import com.meridian11.books.bentobar.util.Sym
-import com.meridian11.books.bentobar.util.SymIcon
-import java.time.ZonedDateTime
+import kotlinx.coroutines.delay
 
-@Composable
-fun BarPage(running: Boolean, selected: String?, onSelect: (String?) -> Unit, onSetup: () -> Unit) {
-    val cfg by Store.config.collectAsState()
-    val states by Ticker.states.collectAsState()
-    val item = cfg.items.firstOrNull { it.id == selected }
-    val deleted by Undo.deleted.collectAsState()
-    val res = androidx.compose.ui.platform.LocalResources.current
-    LaunchedEffect(deleted) {
-        val d = deleted ?: return@LaunchedEffect
-        val name = Items.of(d.item.type)?.title ?: res.getString(R.string.bar_deleted_fallback)
-        if (!Undo.offered(d, SystemClock.elapsedRealtime())) { Undo.deleted.compareAndSet(d, null); return@LaunchedEffect }
-        // The window's one snackbar, like every other message. Forgotten once it has had its time, not when the page goes
-        // first (a recreated window offers it again, within [Undo.offered]'s time).
-        Notice.post(res.getString(R.string.bar_deleted, name), res.getString(R.string.bar_undo), onAction = { Undo.restore(d) }, onGone = { Undo.deleted.compareAndSet(d, null) })
-    }
-    BoxWithConstraints(Modifier.fillMaxSize()) {
-        val wide = maxWidth >= 900.dp
-        val listScroll = rememberScrollState()
-        Column(Modifier.fillMaxSize().padding(horizontal = 24.dp, vertical = 8.dp)) {
-            if (!running) SetupBanner(onSetup)
-            BarPreview(states, selected, onSelect)
-            Spacer(Modifier.height(16.dp))
-            if (wide) {
-                Row(Modifier.weight(1f)) {
-                    Column(Modifier.width(470.dp).fillMaxHeight().verticalScroll(listScroll)) {
-                        Sections(cfg.items, states, selected, onSelect, listScroll)
-                    }
-                    Spacer(Modifier.width(20.dp))
-                    Box(Modifier.weight(1f).fillMaxHeight()) {
-                        if (item != null) Column(Modifier.verticalScroll(rememberScrollState())) { ItemDetail(item, states[item.id], onSelect) }
-                        else Placeholder()
-                    }
-                }
-            } else {
-                Column(Modifier.weight(1f).verticalScroll(if (item != null) rememberScrollState() else listScroll)) {
-                    if (item != null) {
-                        TextButton(onClick = { onSelect(null) }) { SymIcon(Sym.ARROW_BACK, size = 18.sp); Spacer(Modifier.width(6.dp)); Text(stringResource(R.string.bar_all_items)) }
-                        ItemDetail(item, states[item.id], onSelect)
-                    } else Sections(cfg.items, states, selected, onSelect, listScroll)
-                }
-            }
-        }
-    }
-}
+/** What the panel shows: the bar's list (below the width that has room for both), the library, or the selected item's options. */
+enum class PanelSide { BAR, ADD, OPTIONS }
 
-@Composable
-private fun SetupBanner(onSetup: () -> Unit) {
-    Card(colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.primaryContainer),
-        modifier = Modifier.fillMaxWidth().padding(bottom = 14.dp)) {
-        Row(Modifier.padding(16.dp), verticalAlignment = Alignment.CenterVertically) {
-            SymIcon(Sym.INFO, size = 24.sp, color = MaterialTheme.colorScheme.onPrimaryContainer)
-            Spacer(Modifier.width(14.dp))
-            Column(Modifier.weight(1f)) {
-                Text(stringResource(R.string.bar_banner_title), style = MaterialTheme.typography.titleMedium,
-                    color = MaterialTheme.colorScheme.onPrimaryContainer)
-                Text(stringResource(R.string.bar_banner_text),
-                    style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onPrimaryContainer)
-            }
-            FilledTonalButton(onClick = onSetup) { Text(stringResource(R.string.bar_banner_set_up)) }
-        }
-    }
-}
+/** A row the list goes to after a change: scrolled into view, and focused if the row it stands for had the focus. */
+internal data class Follow(val id: String, val focus: Boolean, val serial: Int)
 
-@Composable
-private fun Placeholder() {
-    Column(Modifier.fillMaxWidth().padding(top = 40.dp), horizontalAlignment = Alignment.CenterHorizontally) {
-        SymIcon(Sym.TOUCH_APP, size = 40.sp, color = MaterialTheme.colorScheme.outline)
-        Spacer(Modifier.height(10.dp))
-        Text(stringResource(R.string.bar_placeholder_title), style = MaterialTheme.typography.titleMedium)
-        Text(stringResource(R.string.bar_placeholder_text), style = MaterialTheme.typography.bodyMedium,
-            color = MaterialTheme.colorScheme.onSurfaceVariant)
-    }
-}
+/**
+ * One key of the Bar page: the press ([key] with Alt or Ctrl, or bare; Shift held too is the same press), and what it
+ * does in words ([does]). The page's key handler, the keycaps the window draws and the system's list of shortcuts
+ * ([BarKeys.listed], which the window hands the system) all read the binding, so they cannot disagree. [also] is a
+ * second key that does the same and is not listed.
+ */
+internal data class Binding(val key: Key, val alt: Boolean = false, val ctrl: Boolean = false, @StringRes val does: Int, val also: Key? = null) {
+    fun pressed(e: KeyEvent): Boolean = (e.key == key || (also != null && e.key == also)) && e.isAltPressed == alt && e.isCtrlPressed == ctrl && !e.isMetaPressed
 
-/** A mock status bar with the real strip in it; clicking an item selects it. */
-@Composable
-private fun BarPreview(states: Map<String, ItemState>, selected: String?, onSelect: (String?) -> Unit) {
-    val cfg by Store.config.collectAsState()
-    val tick by Ticker.tick.collectAsState()
-    var expanded by remember { mutableStateOf(false) }
-    // The preview is narrower than a status bar: what it has no room for is said under it, or an item
-    // that is in the list and not in the picture looks lost.
-    var dropped by remember { mutableStateOf(emptySet<String>()) }
-    // What the bar shows, by the same function: the preview makes no choice of its own.
-    val plan = cfg.stripPlan({ states[it.id]?.active == true }, expanded, dropped.isNotEmpty())
-    val entries = { list: List<ItemConfig> -> list.map { StripEntry(it, states[it.id] ?: Ticker.placeholder(it)) } }
-    // The preview uses the strip's real colours: the sampled bar when BentoBar is running and the
-    // colour is automatic, else the forced Light or Dark choice.
-    val live by com.meridian11.books.bentobar.bar.BarLook.current.collectAsState()
-    val bar = when (cfg.color) {
-        ColorMode.LIGHT -> Contrast.resolve(Color.White, null)
-        ColorMode.DARK -> Contrast.resolve(Contrast.DARK_TEXT, null)
-        ColorMode.AUTO -> live ?: Contrast.resolve(Color.White, null)
-    }
-    val look = StripLook(bar.fg, bar.barDark, cfg.textSize, cfg.spacingDp.dp, cfg.pill, bar.background)
-    val barBrush = when {
-        bar.opaque -> androidx.compose.ui.graphics.SolidColor(bar.background)
-        bar.barDark -> Brush.horizontalGradient(listOf(Color(0xFF5B6F8A), Color(0xFF3F6F73), Color(0xFF4F7E78)))
-        else -> Brush.horizontalGradient(listOf(Color(0xFFDDE6F3), Color(0xFFD5E8E6), Color(0xFFE3EEE9)))
-    }
-    val select by androidx.compose.runtime.rememberUpdatedState(onSelect)
-    // One object for the page's life, as the bar's own events are: rebuilt each time, every item would redraw on every tick.
-    val events = remember { object : StripEvents {
-        override fun click(item: ItemConfig, at: Rect) = select(item.id)
-        override fun context(item: ItemConfig, at: Rect) = select(item.id)
-        // The picture only selects: a wheel over it must not start a timer that later rings, or change the volume.
-        override fun scroll(item: ItemConfig, steps: Int) {}
-        // A slider is only drawn here: a click on it selects the item, like a click anywhere on an item.
-        override val slidable: Boolean get() = false
-        // Nor can an item be picked up: Sections' rows are where the order changes.
-        override val draggable: Boolean get() = false
-        override fun chevron(at: Rect) { expanded = !expanded }
-        override fun chevronContext(at: Rect) { expanded = !expanded }
-        override fun hover(inside: Boolean) {}
-        override fun placed(id: String, at: Rect) {}
-    } }
-    Column {
-        BoxWithConstraints(
-            Modifier.fillMaxWidth().height(52.dp).clip(RoundedCornerShape(18.dp))
-                .background(barBrush),
-        ) {
-            // The strip may take what the mock clock and system icons leave (about 380 dp go to them and the gaps).
-            val maxPx = with(LocalDensity.current) { (maxWidth - 380.dp).coerceAtLeast(200.dp).roundToPx() }
-            val now = remember(tick) { ZonedDateTime.now() }
-            // The system's 12/24-hour setting and the locale's own short date, like the real status bar.
-            val h24 = android.text.format.DateFormat.is24HourFormat(LocalContext.current)
-            Row(Modifier.fillMaxSize().padding(horizontal = 18.dp), verticalAlignment = Alignment.CenterVertically) {
-                Text(Dates.format(Dates.timeSkeleton(h24), now) + "   " + Dates.format("EEEMMMd", now), color = look.fg,
-                    fontFamily = Fonts.bar, fontWeight = Fonts.barWeight, fontSize = 14.sp)
-                if (cfg.position == Position.LEFT) Spacer(Modifier.width(16.dp)) else Spacer(Modifier.weight(1f))
-                Strip(entries(plan.visible), entries(plan.revealed), plan.chevron,
-                    chevronAlways = plan.chevronAlways, chevronReservePx = 0, expanded = plan.open,
-                    chevronOnLeft = cfg.position != Position.LEFT, look = look, maxWidthPx = maxPx, heightDp = 52.dp, events = events,
-                    onOverflow = { dropped = it })
-                if (cfg.position == Position.LEFT) Spacer(Modifier.weight(1f)) else if (cfg.position == Position.CENTER) Spacer(Modifier.weight(1f))
-                Spacer(Modifier.width(12.dp))
-                Row(horizontalArrangement = Arrangement.spacedBy(14.dp), verticalAlignment = Alignment.CenterVertically) {
-                    Text("US", color = look.fg, fontFamily = Fonts.bar, fontWeight = Fonts.barWeight, fontSize = 13.sp)
-                    SymIcon(Sym.NOTIFICATIONS, size = 18.sp, color = look.fg)
-                    SymIcon(Sym.WIFI, size = 18.sp, color = look.fg)
-                    SymIcon(Sym.BATTERY_FULL, size = 18.sp, color = look.fg)
-                }
-            }
-        }
-        val hint = stringResource(if (plan.hidden.isNotEmpty()) R.string.bar_preview_hint_hidden else R.string.bar_preview_hint)
-        Text(if (dropped.isEmpty()) hint else hint + " " + pluralStringResource(R.plurals.bar_preview_more, dropped.size, dropped.size),
-            style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant,
-            modifier = Modifier.padding(start = 6.dp, top = 6.dp))
-    }
-}
+    /** As the system counts keys: for its list of shortcuts. */
+    val keycode: Int get() = key.nativeKeyCode
+    val modifiers: Int get() = (if (alt) android.view.KeyEvent.META_ALT_ON else 0) or (if (ctrl) android.view.KeyEvent.META_CTRL_ON else 0)
 
-@Composable
-private fun Sections(items: List<ItemConfig>, states: Map<String, ItemState>, selected: String?, onSelect: (String?) -> Unit, scroll: ScrollState) {
-    val cfg by Store.config.collectAsState()
-    val reorder = remember { Reorder() }
-    val scope = rememberCoroutineScope()
-    SideEffect { reorder.items = items }
-    // The Store's new order has arrived (or something else changed it): stop previewing the drop.
-    LaunchedEffect(items) { reorder.pending = null }
-    // While dragging: scroll when the pointer nears the top or bottom edge, and keep the opening under it.
-    val density = LocalDensity.current
-    val edge = with(density) { 56.dp.toPx() }
-    val maxStep = with(density) { 14.dp.toPx() }
-    LaunchedEffect(reorder.dragging) {
-        if (reorder.dragging == null) return@LaunchedEffect
-        while (true) {
-            withFrameNanos { }
-            val v = reorder.edgeSpeed(edge, maxStep)
-            if (v != 0f) scroll.scrollBy(v)
-            reorder.sync()
-        }
-    }
-    val order = reorder.order(items)
-    // Says how hidden items come back with the current settings (hover reveal is off by default).
-    val showAll = cfg.hiddenMode == HiddenMode.SHOW_ALL
-    val reveal = stringResource(when (cfg.hiddenMode) {
-        HiddenMode.HOVER -> R.string.section_hidden_reveal_both
-        HiddenMode.CLICK -> R.string.section_hidden_reveal_chevron
-        HiddenMode.SHOW_ALL -> R.string.section_hidden_reveal_show_all
-    })
-    val grabbing = remember { PointerIcon(android.view.PointerIcon.TYPE_GRABBING) }
-    Box(Modifier.fillMaxWidth().onGloballyPositioned { reorder.container = it }.reorderable(reorder, scope)
-        .pointerHoverIcon(if (reorder.dragging != null) grabbing else PointerIcon.Default, overrideDescendants = reorder.dragging != null)) {
-        Column {
-            SectionCard(Section.SHOWN, stringResource(R.string.section_shown), stringResource(R.string.section_shown_help), order, states, selected, onSelect, reorder)
-            // With everything shown, this section holds the items that wait for their "Show when" rule.
-            SectionCard(Section.HIDDEN, stringResource(if (showAll) R.string.section_when_active else R.string.section_hidden),
-                if (showAll) reveal else stringResource(R.string.section_hidden_help, reveal), order, states, selected, onSelect, reorder)
-            SectionCard(Section.OFF, stringResource(R.string.common_off), stringResource(R.string.section_off_help), order, states, selected, onSelect, reorder)
-        }
-        // The dragged row, above all the cards (each card clips its own rows).
-        val dragged = reorder.dragging?.let { id -> items.firstOrNull { it.id == id } }
-        if (dragged != null) {
-            Box(Modifier.offset { IntOffset(reorder.rowLeft.roundToInt(), reorder.ghostTop.roundToInt()) }
-                .width(with(density) { reorder.rowWidth.toDp() }).clearAndSetSemantics { }) {
-                RowGhost(dragged, states[dragged.id])
-            }
-        }
-    }
-}
+    /** The key held with it, as a keycap's words: "Alt", "Ctrl", or none. */
+    fun held(res: Resources): List<String> = listOfNotNull(res.getString(R.string.key_alt).takeIf { alt }, res.getString(R.string.key_ctrl).takeIf { ctrl })
 
-@Composable
-private fun SectionCard(section: Section, title: String, help: String, all: List<ItemConfig>, states: Map<String, ItemState>,
-                        selected: String?, onSelect: (String?) -> Unit, reorder: Reorder) {
-    val items = all.filter { it.section == section }
-    Card(colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceContainerLow),
-        modifier = Modifier.fillMaxWidth().padding(bottom = 14.dp).onGloballyPositioned { reorder.cards[section] = it }) {
-        // The card grows and shrinks smoothly as a dragged row's opening comes and goes.
-        Column(Modifier.animateContentSize().padding(vertical = 12.dp)) {
-            Text(title, style = MaterialTheme.typography.titleMedium, modifier = Modifier.padding(horizontal = 16.dp).semantics { heading() })
-            Text(help, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant,
-                modifier = Modifier.padding(horizontal = 16.dp))
-            Spacer(Modifier.height(6.dp))
-            if (items.isEmpty()) Text(stringResource(R.string.section_empty), style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.outline,
-                modifier = Modifier.padding(horizontal = 16.dp, vertical = 8.dp))
-            items.forEachIndexed { i, item ->
-                key(item.id) {
-                    if (item.id == reorder.dragging) DropOpening(item.id, reorder)
-                    else ItemRow(item, states[item.id], i, items.size, item.id == selected, onSelect, reorder)
-                }
-            }
-        }
+    /** The key itself as a keycap's words: an arrow as its sign, a key by its name. */
+    fun sign(res: Resources): String = when (key) {
+        Key.DirectionLeft -> "←"
+        Key.DirectionRight -> "→"
+        Key.DirectionUp -> "↑"
+        Key.DirectionDown -> "↓"
+        Key.Escape -> res.getString(R.string.key_esc)
+        Key.F -> res.getString(R.string.key_f)
+        else -> android.view.KeyEvent.keyCodeToString(keycode).removePrefix("KEYCODE_")
     }
-}
 
-/** Where the dragged row will land. */
-@Composable
-private fun DropOpening(id: String, reorder: Reorder) {
-    val shape = RoundedCornerShape(14.dp)
-    val tint = MaterialTheme.colorScheme.primary
-    Box(Modifier.onGloballyPositioned { reorder.rows[id] = it }.animatePlacement()
-        .fillMaxWidth().padding(horizontal = 8.dp).height(with(LocalDensity.current) { reorder.rowHeight.toDp() })
-        .clip(shape).background(tint.copy(alpha = 0.08f)).border(1.dp, tint.copy(alpha = 0.35f), shape))
-}
-
-private val rowShape = RoundedCornerShape(14.dp)
-
-@Composable
-private fun ItemRow(item: ItemConfig, state: ItemState?, index: Int, count: Int, selected: Boolean, onSelect: (String?) -> Unit, reorder: Reorder) {
-    val type = Items.of(item.type)
-    val name = rowName(item)
-    var menu by remember { mutableStateOf(false) }
-    val moveUp = stringResource(R.string.row_move_up)
-    val moveDown = stringResource(R.string.row_move_down)
-    val toShown = stringResource(R.string.row_show_in_bar)
-    val toHidden = stringResource(R.string.row_move_to_hidden)
-    val turnOff = stringResource(R.string.common_turn_off)
-    val move = { to: Int -> Store.move(item.id, item.section, to) }
-    // The arrows went away with drag and drop, so screen readers get the moves as actions on the row.
-    val actions = buildList {
-        if (index > 0) add(CustomAccessibilityAction(moveUp) { move(index - 1); true })
-        if (index < count - 1) add(CustomAccessibilityAction(moveDown) { move(index + 1); true })
-        if (item.section != Section.SHOWN) add(CustomAccessibilityAction(toShown) { Store.update { it.show(item.id) }; true })
-        if (item.section != Section.HIDDEN) add(CustomAccessibilityAction(toHidden) { Store.update { it.hide(item.id) }; true })
-        if (item.section != Section.OFF) add(CustomAccessibilityAction(turnOff) { Store.update { it.turnOff(item.id) }; true })
-    }
-    val grab = remember { PointerIcon(android.view.PointerIcon.TYPE_GRAB) }
-    Row(
-        Modifier.onGloballyPositioned { reorder.rows[item.id] = it }.animatePlacement()
-            .fillMaxWidth().padding(horizontal = 8.dp).clip(rowShape)
-            .background(if (selected) MaterialTheme.colorScheme.secondaryContainer else Color.Transparent),
-        verticalAlignment = Alignment.CenterVertically,
-    ) {
-        Row(
-            Modifier.weight(1f).onGloballyPositioned { reorder.grabAreas[item.id] = it }
-                // Keyboard: Alt+Up and Alt+Down move the focused row (the ≡ menu has the same moves).
-                .onPreviewKeyEvent { e ->
-                    if (e.type != KeyEventType.KeyDown || !e.isAltPressed) return@onPreviewKeyEvent false
-                    when (e.key) {
-                        Key.DirectionUp -> { if (index > 0) move(index - 1); true }
-                        Key.DirectionDown -> { if (index < count - 1) move(index + 1); true }
-                        else -> false
-                    }
-                }
-                .clickable(enabled = type != null) { onSelect(item.id) }.pointerHoverIcon(PointerIcon.Hand)
-                .semantics { customActions = actions; this.selected = selected }
-                .padding(start = 2.dp, top = 6.dp, bottom = 6.dp),
-            verticalAlignment = Alignment.CenterVertically,
-        ) {
-            // The handle: a mouse can drag the whole row, a finger only this (elsewhere it scrolls).
-            Box(Modifier.onGloballyPositioned { reorder.handles[item.id] = it }.pointerHoverIcon(grab).size(width = 28.dp, height = 36.dp),
-                contentAlignment = Alignment.Center) {
-                SymIcon(Sym.DRAG_INDICATOR, size = 20.sp, color = MaterialTheme.colorScheme.outline)
-            }
-            RowBody(item, state)
-        }
-        Box {
-            IconButton(onClick = { menu = true }) { SymIcon(Sym.MENU, size = 18.sp, contentDescription = stringResource(R.string.row_more, name)) }
-            DropdownMenu(expanded = menu, onDismissRequest = { menu = false }) {
-                if (index > 0) DropdownMenuItem(text = { Text(moveUp) }, onClick = { menu = false; move(index - 1) },
-                    leadingIcon = { SymIcon(Sym.ARROW_UPWARD, size = 18.sp) })
-                if (index < count - 1) DropdownMenuItem(text = { Text(moveDown) }, onClick = { menu = false; move(index + 1) },
-                    leadingIcon = { SymIcon(Sym.ARROW_DOWNWARD, size = 18.sp) })
-                if (item.section != Section.SHOWN) DropdownMenuItem(text = { Text(toShown) }, onClick = { menu = false; Store.update { it.show(item.id) } },
-                    leadingIcon = { SymIcon(Sym.VISIBILITY, size = 18.sp) })
-                if (item.section != Section.HIDDEN) DropdownMenuItem(text = { Text(stringResource(R.string.section_hidden)) }, onClick = { menu = false; Store.update { it.hide(item.id) } },
-                    leadingIcon = { SymIcon(Sym.VISIBILITY_OFF, size = 18.sp) })
-                if (item.section != Section.OFF) DropdownMenuItem(text = { Text(turnOff) }, onClick = { menu = false; Store.update { it.turnOff(item.id) } },
-                    leadingIcon = { SymIcon(Sym.REMOVE, size = 18.sp) })
-                DropdownMenuItem(text = { Text(stringResource(R.string.common_delete)) }, onClick = { menu = false; if (selected) onSelect(null); Undo.delete(item) },
-                    leadingIcon = { SymIcon(Sym.DELETE, size = 18.sp) })
-            }
-        }
-    }
-}
-
-/** The floating copy of a row while it's dragged: same size and content, lifted. */
-@Composable
-private fun RowGhost(item: ItemConfig, state: ItemState?) {
-    val name = rowName(item)
-    Row(Modifier.fillMaxWidth().padding(horizontal = 8.dp).shadow(8.dp, rowShape).clip(rowShape)
-        .background(MaterialTheme.colorScheme.surfaceContainerHighest), verticalAlignment = Alignment.CenterVertically) {
-        Row(Modifier.weight(1f).padding(start = 2.dp, top = 6.dp, bottom = 6.dp), verticalAlignment = Alignment.CenterVertically) {
-            Box(Modifier.size(width = 28.dp, height = 36.dp), contentAlignment = Alignment.Center) {
-                SymIcon(Sym.DRAG_INDICATOR, size = 20.sp, color = MaterialTheme.colorScheme.primary)
-            }
-            RowBody(item, state)
-        }
-        Box(Modifier.size(48.dp), contentAlignment = Alignment.Center) { SymIcon(Sym.MENU, size = 18.sp, contentDescription = name) }
-    }
-}
-
-/** What a row calls an item: a type this version doesn't know has no name here, only where it came from. */
-@Composable
-private fun rowName(item: ItemConfig): String = Items.of(item.type)?.title ?: stringResource(R.string.row_from_newer)
-
-/** The item's icon, name and detail line, shared by the row and its dragged copy. */
-@Composable
-private fun RowScope.RowBody(item: ItemConfig, state: ItemState?) {
-    val type = Items.of(item.type)
-    Box(Modifier.size(36.dp).clip(RoundedCornerShape(10.dp)).background(MaterialTheme.colorScheme.surfaceContainerHighest),
-        contentAlignment = Alignment.Center) { SymIcon(type?.icon ?: Sym.UPDATE, size = 20.sp) }
-    Spacer(Modifier.width(12.dp))
-    Column(Modifier.weight(1f)) {
-        Text(rowName(item), style = MaterialTheme.typography.bodyLarge, maxLines = 1, overflow = TextOverflow.Ellipsis)
-        val overflow by com.meridian11.books.bentobar.bar.BarOverflow.ids.collectAsState()
-        val detail = if (type == null) "" else listOfNotNull(
-            if (item.id in overflow) stringResource(R.string.row_overflow) else null,
-            state?.text?.takeIf { it.isNotBlank() },
-            // The rule in short ("shows above 80% CPU"), so the list says when each hidden item pops out.
-            if (item.whenActive && item.section == Section.HIDDEN) type.trigger?.short(item) ?: stringResource(R.string.row_when_active) else null,
-            if (type.iconOnly) null
-            else when (item.display) { Display.ICON -> stringResource(R.string.row_icon_only); Display.TEXT -> stringResource(R.string.row_text_only); else -> null }).joinToString(" · ")
-        if (detail.isNotEmpty()) Text(detail, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant,
-            maxLines = 1, overflow = TextOverflow.Ellipsis)
-    }
+    /** The whole press as keycaps: "Ctrl", "F". */
+    fun caps(res: Resources): List<String> = held(res) + sign(res)
 }
 
 /**
- * One item's settings, kept by its id: choosing another item (a click in the preview takes no focus)
- * starts afresh, so a field being typed in can't save what it holds into the next one.
+ * The Bar page's keys. Each binding is here and nowhere else. [handler] is the page's, for a press that no control took
+ * (nothing in the window has the focus): the window hands it here.
  */
-@Composable
-private fun ItemDetail(item: ItemConfig, state: ItemState?, onSelect: (String?) -> Unit) {
-    key(item.id) { ItemDetailCard(item, state, onSelect) }
-}
+internal object BarKeys {
+    val UP = Binding(Key.DirectionUp, alt = true, does = R.string.row_move_up)
+    val DOWN = Binding(Key.DirectionDown, alt = true, does = R.string.row_move_down)
+    val FIND = Binding(Key.F, ctrl = true, does = R.string.library_filter)
+    val DUPLICATE = Binding(Key.D, ctrl = true, does = R.string.detail_duplicate)
+    val REMOVE = Binding(Key.Delete, does = R.string.detail_remove, also = Key.Backspace)
+    val UNDO = Binding(Key.Z, ctrl = true, does = R.string.bar_undo)
+    val ESC = Binding(Key.Escape, does = R.string.key_esc_does)
+    val all = listOf(UP, DOWN, FIND, DUPLICATE, REMOVE, UNDO, ESC)
 
-@Composable
-private fun ItemDetailCard(item: ItemConfig, state: ItemState?, onSelect: (String?) -> Unit) {
-    val type = Items.of(item.type) ?: return
-    val context = androidx.compose.ui.platform.LocalContext.current
-    Card(colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceContainerLow),
-        modifier = Modifier.fillMaxWidth().widthIn(max = 760.dp)) {
-        Column(Modifier.padding(20.dp)) {
-            Row(verticalAlignment = Alignment.CenterVertically) {
-                Box(Modifier.size(48.dp).clip(RoundedCornerShape(14.dp)).background(MaterialTheme.colorScheme.primaryContainer),
-                    contentAlignment = Alignment.Center) {
-                    SymIcon(type.icon, size = 26.sp, filled = true, color = MaterialTheme.colorScheme.onPrimaryContainer)
-                }
-                Spacer(Modifier.width(14.dp))
-                Column(Modifier.weight(1f)) {
-                    Text(type.title, style = MaterialTheme.typography.titleLarge)
-                    Text(type.blurb, style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
-                }
-                if (state?.text != null) Text(state.text, style = MaterialTheme.typography.titleMedium.copy(fontFeatureSettings = "tnum"),
-                    color = MaterialTheme.colorScheme.primary, maxLines = 1)
-            }
-            Spacer(Modifier.height(12.dp))
-            // "Needs calendar access" by the same rule the item itself uses (granted, and not switched off in
-            // Setup), from the observed setup state: asking Android while drawing isn't re-read when it changes.
-            val setup by Setup.state.collectAsState()
-            if (android.Manifest.permission.READ_CALENDAR in type.permissions && !setup.calendar) {
-                Card(colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.tertiaryContainer), modifier = Modifier.fillMaxWidth()) {
-                    Row(Modifier.padding(12.dp), verticalAlignment = Alignment.CenterVertically) {
-                        Text(stringResource(R.string.detail_needs_calendar), style = MaterialTheme.typography.bodyMedium,
-                            modifier = Modifier.weight(1f), color = MaterialTheme.colorScheme.onTertiaryContainer)
-                        FilledTonalButton(onClick = {
-                            // Allow here is also switching Calendar back on in Setup; Android is asked only if it still has to grant it.
-                            Store.update { it.copy(turnedOff = it.turnedOff - com.meridian11.books.bentobar.data.Uses.CALENDAR) }
-                            if (context.checkSelfPermission(android.Manifest.permission.READ_CALENDAR) != PackageManager.PERMISSION_GRANTED)
-                                (context as? android.app.Activity)?.requestPermissions(arrayOf(android.Manifest.permission.READ_CALENDAR), 2)
-                            Setup.refresh(context); Ticker.refresh()
-                        }) { Text(stringResource(R.string.common_allow)) }
-                    }
-                }
-                Spacer(Modifier.height(8.dp))
-            }
-            // The same for notification access (Now playing): the words, then the way to Android's switch.
-            if (type.notificationAccess && !setup.mediaAccess) {
-                Card(colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.tertiaryContainer), modifier = Modifier.fillMaxWidth()) {
-                    Row(Modifier.padding(12.dp), verticalAlignment = Alignment.CenterVertically) {
-                        Column(Modifier.weight(1f)) {
-                            Text(stringResource(R.string.media_access_explain), style = MaterialTheme.typography.bodyMedium,
-                                color = MaterialTheme.colorScheme.onTertiaryContainer)
-                            if (setup.sideloaded) Text(stringResource(R.string.media_access_restricted), style = MaterialTheme.typography.bodySmall,
-                                color = MaterialTheme.colorScheme.onTertiaryContainer, modifier = Modifier.padding(top = 4.dp))
-                        }
-                        Spacer(Modifier.width(12.dp))
-                        FilledTonalButton(onClick = { com.meridian11.books.bentobar.items.MediaAccess.openSettings(context) }) {
-                            Text(stringResource(R.string.media_access_allow))
-                        }
-                    }
-                }
-                Spacer(Modifier.height(8.dp))
-            }
-            ChoiceRow(stringResource(R.string.detail_where), listOf(Section.SHOWN to stringResource(R.string.section_shown),
-                Section.HIDDEN to stringResource(R.string.section_hidden), Section.OFF to stringResource(R.string.common_off)), item.section) { s ->
-                Store.update { it.putIn(item.id, s) }
-            }
-            val trigger = type.trigger
-            if (type.canBeActive && trigger != null) TriggerControl(item, trigger)
-            if (!type.iconOnly) ChoiceRow(stringResource(R.string.display_show_as), listOf(Display.ICON_AND_TEXT to stringResource(R.string.display_icon_and_text),
-                Display.TEXT to stringResource(R.string.display_text), Display.ICON to stringResource(R.string.display_icon)), item.display) { d ->
-                Store.updateItem(item.id) { it.copy(display = d) }; Ticker.refresh()
-            }
-            type.options?.let { opts ->
-                Spacer(Modifier.height(4.dp))
-                SectionLabel(stringResource(type.optionsTitle))
-                opts(item) { changed -> Store.updateItem(item.id) { changed }; Ticker.refresh() }
-            }
-            Spacer(Modifier.height(12.dp))
-            Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-                OutlinedButton(onClick = { onSelect(Store.duplicate(item)) }) { Text(stringResource(R.string.detail_duplicate)) }
-                TextButton(onClick = { onSelect(null); Undo.delete(item) }) { Text(stringResource(R.string.common_delete), color = MaterialTheme.colorScheme.error) }
-            }
-        }
-    }
+    var handler: ((android.view.KeyEvent) -> Boolean)? = null
+    /** Several lanes are on screen, so [AreaKeys] have somewhere to move a row. The page says so. */
+    var several = false
+
+    /** What the system's list of shortcuts shows: the page's keys while it is on screen, the areas' while they do something. */
+    fun listed(): List<Binding> = if (handler == null) emptyList() else if (several) all + AreaKeys.all else all
+
+    /** The keycaps beside Order: "Alt", "↑ ↓". */
+    fun orderCaps(res: Resources): List<String> = UP.held(res) + "${UP.sign(res)} ${DOWN.sign(res)}"
 }
 
 /**
- * "Show when…": the switch reads as the rule itself ("Show when CPU load is above 80%"), and a
- * slider below sets the number, updating the words as it moves. It saves when the slider is let go.
+ * The keys that move an item to the lane beside it: Alt with ← or →. The binding is here and nowhere else (the page's
+ * key handler, the keycaps beside Area, what an empty lane says and the system's list of shortcuts all ask this), so
+ * that it can become another one in this one place if a device keeps these for itself. Shift held too is the same
+ * press, which is the way round such a device today.
  */
-@OptIn(androidx.compose.material3.ExperimentalMaterial3Api::class)
-@Composable
-private fun TriggerControl(item: ItemConfig, trigger: Trigger) {
-    val threshold = trigger.threshold
-    val stored = threshold?.shown(item) ?: 0
-    var live by remember(item.id, stored) { mutableIntStateOf(stored) }
-    val sentence = trigger.sentence(item, live)
-    SwitchRow(sentence, item.whenActive, help = stringResource(when {
-        item.section == Section.HIDDEN -> R.string.detail_trigger_help
-        item.whenActive -> R.string.detail_trigger_help_not_hidden
-        else -> R.string.detail_trigger_help_move
-    })) { on ->
-        Store.update { it.setWhenActive(item.id, on) }
+internal object AreaKeys {
+    val LEFT = Binding(Key.DirectionLeft, alt = true, does = R.string.areas_key_left)
+    val RIGHT = Binding(Key.DirectionRight, alt = true, does = R.string.areas_key_right)
+    val all = listOf(LEFT, RIGHT)
+
+    /** Whether [e] asks for the lane on the right (true) or on the left (false); null for any other key. */
+    fun side(e: KeyEvent): Boolean? = when {
+        RIGHT.pressed(e) -> true
+        LEFT.pressed(e) -> false
+        else -> null
     }
-    if (threshold != null) {
-        val r = threshold.range
-        Slider(
-            value = live.toFloat(),
-            onValueChange = { live = threshold.snap(it) },
-            onValueChangeFinished = {
-                if (live != threshold.of(item)) { Store.updateItem(item.id) { it.with(threshold.key, live.toString()) }; Ticker.refresh() }
-            },
-            steps = ((r.last - r.first) / threshold.step - 1).coerceAtLeast(0),
-            // Steps make the keyboard and screen readers move one value at a time; dozens of tick marks would only clutter.
-            track = { SliderDefaults.Track(it, drawTick = { _, _ -> }) },
-            valueRange = r.first.toFloat()..r.last.toFloat(),
-            modifier = Modifier.fillMaxWidth().semantics { contentDescription = sentence },
-        )
-    }
+
+    /** The keycaps beside Area. */
+    fun caps(res: Resources): List<String> = LEFT.held(res) + "${LEFT.sign(res)} ${RIGHT.sign(res)}"
+
+    /** One of the two as it is said: "Alt+←". */
+    fun spoken(res: Resources, right: Boolean): String = (if (right) RIGHT else LEFT).caps(res).joinToString("+")
 }
 
-/** Delete with an undo: the item and where it was, until the snackbar goes. */
-object Undo {
-    /** [at]: when, in `SystemClock.elapsedRealtime()`. */
-    data class Deleted(val item: ItemConfig, val index: Int, val at: Long = SystemClock.elapsedRealtime())
-    val deleted = kotlinx.coroutines.flow.MutableStateFlow<Deleted?>(null)
+/**
+ * What the Bar page has of areas right now: the lanes [on] screen in the bar's order, the area the last change closed
+ * ([fold], said in a slip with Undo) and the areas the bar has no room for ([noRoom]). Everything about areas is drawn
+ * only while there are [several] lanes.
+ */
+internal data class Lanes(val on: List<Position>, val fold: Position? = null, val noRoom: Set<Position> = emptySet()) {
+    val several: Boolean get() = on.size > 1
+}
 
-    /** As long as the snackbar shows (SnackbarDuration.Long). */
-    const val OFFER_MS = 10_000L
+/**
+ * The Bar page's commands, one for each thing a click, a key or a screen reader's action can do to the bar, so the three
+ * can't differ. Each change to the layout is one step of [Undo] through `LayoutIntents`; this class writes no section,
+ * rule or area itself. It also holds what the page remembers between frames: the panel's side, the library's filter,
+ * the row to follow, and what was last said.
+ */
+@Stable
+internal class BarEdit(private val res: Resources, side: MutableState<PanelSide>, filter: MutableState<String> = mutableStateOf("")) {
+    var onSelect: (String?) -> Unit = {}
+    /** The window has room for the list and the panel side by side. */
+    var wide = true
+    /** The selected item, if it is in the bar. */
+    var selected: String? = null
+    var side by side
+    /** The side the panel shows right now, which is [side] where that can be shown. */
+    var showing = PanelSide.ADD
+    /** What the library's filter holds. */
+    var filter by filter
+    /** The filter is to take the keyboard (Ctrl+F, a letter typed with no field in focus). */
+    var focusFilter by mutableStateOf(false)
+    /** What the library goes to after a change. */
+    var seek by mutableStateOf<Seek?>(null)
+    var focusedRow: String? = null
+    var slipFocused = false
+    var follow by mutableStateOf<Follow?>(null)
+    /** Why a key or a drop did nothing, for the line under the preview. */
+    var said by mutableStateOf<String?>(null)
+    /** What a change came to, for a screen reader: "CPU load, 5th of 7 in the bar". */
+    var announced by mutableStateOf("")
+    /**
+     * The areas "Add an area" opened: the window's own, in no layout, so an empty one is gone when the Bar tab is left.
+     * One stays here while it has rows and leaves when it closes ([settle]).
+     */
+    var opened by mutableStateOf(emptySet<Position>())
+    /** The area the library adds to while several lanes are on screen; null is the area in use. */
+    var addTo by mutableStateOf<Position?>(null)
+    /** The item a drop from the library last brought: it arrived as its copy, so its row doesn't open as a clicked + one's does. */
+    var landed: String? = null
+    /** An empty lane that is to take the keyboard: the one just opened. */
+    var focusLane by mutableStateOf<Position?>(null)
+    /** The note above the list (a lane closed, an area was removed) is to take the keyboard: what had it went with the lane. */
+    var focusFold by mutableStateOf(false)
+    /** "Add an area" is to take the keyboard: the empty lane it opened closed under it. */
+    var focusAddArea by mutableStateOf(false)
+    private var serial = 0
+    /** The last change, and whether several lanes were on screen before it. */
+    private var judged: Pair<Undo.Kept, Boolean>? = null
+    /** The change whose closed lane [settle] has taken out of [opened]. */
+    private var settled: Undo.Kept? = null
+
+    private fun home() = if (wide) PanelSide.ADD else PanelSide.BAR
+    private fun item(id: String) = Store.config.value.items.firstOrNull { it.id == id }
+
+    /** A click on an item, in the list or the preview: the panel turns to its options. */
+    fun select(id: String) {
+        said = null
+        onSelect(id)
+        side = PanelSide.OPTIONS
+    }
+
+    /** Esc, or a click on an empty part of the bar's card: the item is let go and the panel turns back. */
+    fun letGo() {
+        said = null
+        onSelect(null)
+        side = home()
+    }
 
     /**
-     * Whether [d] is still offered back at [now]: again when the window is recreated meanwhile (a resize,
-     * a theme), never after that time (settings left with the snackbar up and opened again later).
+     * The selected item is no longer in the bar, and not by this page's Remove (the bar's own menu took it out, or a
+     * pasted layout): nothing is selected any more, and a panel that was on its options is where it stands with no item.
+     * Left selected, it would turn the panel to its options by itself if a pasted layout brought it back.
      */
-    fun offered(d: Deleted, now: Long): Boolean = now - d.at in 0 until OFFER_MS
-
-    fun delete(item: ItemConfig) {
-        deleted.value = Deleted(item, Store.config.value.items.indexOfFirst { it.id == item.id })
-        Store.remove(item.id)
+    fun left() {
+        onSelect(null)
+        if (side == PanelSide.OPTIONS) side = home()
     }
 
-    fun restore(d: Deleted) = Store.update { c ->
-        if (c.items.any { it.id == d.item.id }) c
-        else c.copy(items = c.items.toMutableList().apply { add(d.index.coerceIn(0, size), d.item) })
+    private fun several(kept: Undo.Kept): Boolean {
+        judged?.let { if (it.first === kept) return it.second }
+        return (lanesOnScreen(kept.before, opened).size > 1).also { judged = kept to it }
+    }
+
+    /** The area the last change closed, until Undo or the next change; not one that "Add an area" has opened again since. */
+    fun fold(cfg: BarConfig = Store.config.value, kept: Undo.Kept? = Undo.last.value): Position? {
+        kept ?: return null
+        return foldOf(kept, cfg, several(kept))?.takeUnless { kept === settled && it in opened }
+    }
+
+    /** The lanes on screen: the areas with rows and the opened ones, without the one that just closed. */
+    fun lanes(cfg: BarConfig = Store.config.value, kept: Undo.Kept? = Undo.last.value): List<Position> =
+        lanesOnScreen(cfg, opened - setOfNotNull(fold(cfg, kept)))
+
+    /** After a frame: a lane that closed is not held open, and nothing is added to it or to a lane that is the only one. */
+    fun settle(kept: Undo.Kept?, fold: Position?, lanes: Int) {
+        if (fold != null && kept !== settled) {
+            settled = kept
+            if (fold in opened) opened = opened - fold
+            if (addTo == fold) addTo = null
+        }
+        if (lanes < 2 && addTo != null) addTo = null
+    }
+
+    /** A choice of "Add an area": its lane is on screen, empty, with the keyboard, and the library adds to it. */
+    fun openArea(area: Position) {
+        said = null
+        opened = opened + area
+        addTo = area
+        focusLane = area
+    }
+
+    /**
+     * Remove an area, by its head's trash or a screen reader's action there: every item of it leaves the bar in one
+     * step of [Undo] ([withoutArea]) and its lane closes; the page says what went above the list, with the Undo that
+     * brings them all back. A selected item that was there is let go. A lane that "Add an area" opened and that is still
+     * empty simply closes: nothing changed, so nothing is kept and nothing is said. With the bar's last items gone the
+     * page is the empty bar's, one lane, so the lanes opened beside it close too. [focus]: the keyboard was on the
+     * trash; from there or from a row of the lane it goes to the note's Undo, as after a lane closes, and with no note
+     * to "Add an area".
+     */
+    fun removeArea(area: Position, focus: Boolean = false) {
+        val ids = Store.config.value.items.filter { it.area == area }.map { it.id }
+        val inLane = focus || focusedRow in ids
+        said = null
+        if (ids.isEmpty()) {
+            if (area !in opened) return
+            opened = opened - area
+            if (addTo == area) addTo = null
+            if (inLane) focusAddArea = true
+            return
+        }
+        if (!Undo.change(area = area) { it.withoutArea(area) }) return
+        opened = if (Store.config.value.items.isEmpty()) emptySet() else opened - area
+        if (addTo == area) addTo = null
+        if (selected in ids) left()
+        if (inLane) focusFold = true
+        // The note is a live region and says it.
+        announced = ""
+    }
+
+    /** The area a + adds to: the one chosen in "Add to" while several lanes are on screen, else the area in use. */
+    private fun target(): Position? = addTo?.takeIf { lanes().size > 1 }
+
+    /** "Add items": the library, with the item still selected. */
+    fun toLibrary() { side = PanelSide.ADD }
+
+    /** Ctrl+F: the library, and the keyboard in its filter. The item stays selected. */
+    fun find() {
+        toLibrary()
+        focusFilter = true
+    }
+
+    /**
+     * The + on a type: a fresh item of it, in the area in use or the one "Add to" names, under the line if the type
+     * comes waiting on its rule. The bar's list goes to the new row; the keyboard stays on the +.
+     */
+    fun add(type: ItemType) {
+        said = null
+        val before = Store.config.value
+        val id = Store.addFresh(type, target())
+        if (Undo.note(before, added = id)) moved(id, focus = false)
+        if (type.type == "cloud_clipboard" && !com.meridian11.books.bentobar.items.CloudClipboardItem.hasAllFilesAccess(com.meridian11.books.bentobar.items.Env.app)) {
+            MainActivity.current?.let { act ->
+                Notice.post("已添加云剪切板 · 上传本地文件需开启文件读取权限", "去开启") {
+                    MainActivity.requestFilePermissions(act)
+                }
+            }
+        }
+    }
+
+    fun always(id: String) = change(id) { it.show(id) }
+
+    /** Visibility's second part: "Only when active" by default, "Behind ‹" with the arrow. */
+    fun below(id: String) = change(id) { c -> if (c.hiddenMode == HiddenMode.SHOW_ALL) c.setWhenActive(id, true) else c.hide(id) }
+
+    /** Behind ‹: whether the item pops out by its rule. */
+    fun popsOut(id: String, on: Boolean) {
+        said = null
+        Undo.change { it.setWhenActive(id, on) }
+    }
+
+    /** Area's choice, a lane's key and a screen reader's "Move to": the item lands in [area], in the part it was in. */
+    fun area(id: String, area: Position) = change(id) { it.landedIn(id, area) }
+
+    /**
+     * Alt with ← or →: the item goes to the lane beside it on that side, and stays at the last one. With one lane on
+     * screen it stays too: the key is a row's either way, so the focus does not wander off with it. False for no row.
+     */
+    fun sideways(id: String, right: Boolean): Boolean {
+        val item = item(id) ?: return false
+        laneBeside(lanes(), item.area, right)?.let { area(id, it) }
+        return true
+    }
+
+    /** Move up or down by one row, across the part line where the item may; where it may not, the reason is [said]. */
+    fun step(id: String, down: Boolean) {
+        val item = item(id) ?: return
+        when (val step = Store.config.value.stepped(id, down)) {
+            is Step.Moved -> change(id) { c -> (c.stepped(id, down) as? Step.Moved)?.config ?: c }
+            is Step.Stays -> said = when (step.why) {
+                Step.Why.NO_RULE -> res.getString(R.string.visibility_no_rule_drop, itemName(res, item))
+                Step.Why.PINNED -> res.getString(R.string.order_pinned_said, res.getString(areaRes(item.area)))
+            }
+            Step.End -> Unit
+        }
+    }
+
+    /**
+     * A drag was let go. Into the bar: the row at its new place, or the library's type in the bar where it was
+     * dropped. On the trash: the row removed, as Remove does it. One change and one step of Undo each; the same place
+     * again changes nothing and keeps nothing. Under a line the item can't go under, the page says why. True if the
+     * layout changed.
+     */
+    fun dropped(c: Carried, drop: Drop): Boolean = when (drop) {
+        is Drop.At -> {
+            said = null
+            if (c.from != From.BAR) landed = c.id
+            val changed = Undo.change(added = c.id.takeIf { c.from != From.BAR }) { it.dropped(c, drop) }
+            if (changed) moved(c.id, focus = false)
+            changed
+        }
+        Drop.Off -> {
+            val before = Store.config.value
+            remove(c.id)
+            Store.config.value !== before
+        }
+        is Drop.Refused -> {
+            val item = item(c.id)
+            said = if (c.from == From.BAR && item != null) res.getString(R.string.visibility_no_rule_drop, itemName(res, item))
+            else Items.of(c.type)?.let { res.getString(R.string.bar_drop_no_rule_add, res.getString(it.titleRes)) }
+            false
+        }
+        Drop.None -> false
+    }
+
+    /**
+     * Remove from the bar: the item is deleted from the layout, and [Undo] has it until the next change. The focus, if
+     * the row had it, goes to the row that takes its place (the one before, at a part's end). The library goes to the
+     * item's type, whose + makes a new one; removed in its options, the panel turns to the library for that, with the
+     * filter emptied so that the type is there.
+     */
+    fun remove(id: String) {
+        val cfg = Store.config.value
+        val item = item(id) ?: return
+        val part = cfg.partOf(item) ?: return
+        val rows = cfg.parts(item.area)[part]
+        val at = rows.indexOfFirst { it.id == id }
+        val next = (rows.getOrNull(at + 1) ?: rows.getOrNull(at - 1))?.id
+        val focus = focusedRow == id
+        said = null
+        if (!Undo.change(removed = id) { it.without(id) }) return
+        if (selected == id) {
+            onSelect(null)
+            side = PanelSide.ADD
+            filter = ""
+        }
+        seek = Seek(Seek.type(item.type), false, ++serial)
+        if (focus && next != null) follow = Follow(next, true, ++serial)
+        else if (focus && fold() != null) focusFold = true
+        announced = res.getString(R.string.bar_removed, itemName(res, item))
+    }
+
+    /** A copy right after the item, selected. */
+    fun duplicate(id: String) {
+        val before = Store.config.value
+        val item = item(id) ?: return
+        if (Items.of(item.type) == null || before.partOf(item) == null) return
+        val focus = focusedRow == id
+        val copy = Store.duplicate(item)
+        if (!Undo.note(before)) return
+        select(copy)
+        moved(copy, focus)
+    }
+
+    /**
+     * Ctrl+Z, Undo in a removed row's place, in a closed lane's slip or in a removed area's note, and the library's Undo.
+     * A row that comes back, to the bar or to its lane, is followed, and of an area that comes back its first; the library's
+     * Undo is gone with what it took back, so the keyboard, if it had it ([focus]), goes to the type's +.
+     */
+    fun undo(focus: Boolean = false): Boolean {
+        said = null
+        val kept = Undo.last.value
+        val back = kept?.removed ?: movedBy(kept) ?: kept?.area?.let { area -> kept.before.parts(area).let { it.upper + it.lower }.firstOrNull()?.id }
+        val row = focusedRow != null || slipFocused
+        val added = kept?.added?.let(::item)
+        if (!Undo.undo()) return false
+        if (back != null) moved(back, row)
+        if (focus && added != null) seek = Seek(Seek.type(added.type), true, ++serial)
+        return true
+    }
+
+    private fun change(id: String, step: (BarConfig) -> BarConfig) {
+        said = null
+        val focus = focusedRow == id
+        if (Undo.change(step = step)) moved(id, focus)
+    }
+
+    private fun moved(id: String, focus: Boolean) {
+        follow = Follow(id, focus, ++serial)
+        val item = item(id) ?: return
+        announced = orderWords(res, Store.config.value, item, lanes().size > 1)?.let { res.getString(R.string.row_moved, itemName(res, item), it) }.orEmpty()
+    }
+
+    /**
+     * The page's keys ([BarKeys]), on the focused row or else the selected item: Alt with ↑ or ↓ moves it by a row,
+     * [AreaKeys] to the lane beside it. Esc does one thing, the nearest first: it cancels a
+     * drag, empties the filter of the library on screen, or lets the item go. Ctrl+F finds from anywhere. While text is
+     * being typed ([typing]) every other key is the field's (in an item's options Esc too); with no field in focus a letter or a digit typed beside the
+     * library starts its filter. While something let go is still on its way (into its place, or back) no key does
+     * anything: the drop is written when it arrives, and a key would act on the layout before it.
+     */
+    fun key(e: KeyEvent, typing: Boolean, reorder: Reorder): Boolean {
+        if (e.type != KeyEventType.KeyDown) return false
+        if (reorder.busy && !reorder.live) return true
+        if (BarKeys.ESC.pressed(e)) {
+            if (reorder.dragging != null) { reorder.cancel(); return true }
+            if (showing == PanelSide.ADD && filter.isNotEmpty()) { filter = ""; return true }
+            // The library's one field is its filter, and an empty filter has no use for Esc: the item goes from there too.
+            if (selected == null || typing && showing != PanelSide.ADD) return false
+            letGo()
+            return true
+        }
+        // No field has a use for Ctrl+F, so it finds from inside one too.
+        if (BarKeys.FIND.pressed(e)) { find(); return true }
+        if (typing) return false
+        val target = focusedRow ?: selected
+        return when {
+            BarKeys.UP.pressed(e) || BarKeys.DOWN.pressed(e) -> target?.let { step(it, down = BarKeys.DOWN.pressed(e)) } != null
+            AreaKeys.side(e) != null -> target?.let { sideways(it, AreaKeys.side(e) == true) } == true
+            e.isAltPressed -> false
+            BarKeys.UNDO.pressed(e) -> { undo(); true }
+            BarKeys.DUPLICATE.pressed(e) -> target?.let { duplicate(it) } != null
+            e.isCtrlPressed || e.isMetaPressed -> false
+            BarKeys.REMOVE.pressed(e) -> target?.let { remove(it) } != null
+            showing == PanelSide.ADD && Character.isLetterOrDigit(e.nativeKeyEvent.unicodeChar) -> {
+                filter += String(Character.toChars(e.nativeKeyEvent.unicodeChar))
+                focusFilter = true
+                true
+            }
+            else -> false
+        }
+    }
+}
+
+private val CARD = RoundedCornerShape(Radius.large)
+/** The switch of three parts where the page is one wide pane: as wide as it needs, not as the page. */
+private val SWITCH_MID = 452.dp
+
+/**
+ * The Bar page: the preview, the bar's one list, and a panel that is the library or the selected item's options. From
+ * 1100 dp the list and the panel stand side by side; below, the list is the panel's first part. [turn] counts the
+ * times the bar's own menu asked for an item's options: each turns the panel to them. Before BentoBar is [running] the
+ * bar can be arranged all the same: only the preview says that it is not in the status bar yet.
+ */
+@Composable
+internal fun BarPage(selected: String?, onSelect: (String?) -> Unit, turn: Int = 0, running: Boolean = true) {
+    val cfg by Store.config.collectAsState()
+    val states by Ticker.states.collectAsState()
+    val layout = LocalWindowLayout.current
+    val wide = layout.kind == WindowClass.WIDE
+    val res = LocalResources.current
+    val view = LocalView.current
+    val sideState = rememberSaveable { mutableStateOf(if (selected != null) PanelSide.OPTIONS else PanelSide.BAR) }
+    val filter = rememberSaveable { mutableStateOf("") }
+    val edit = remember { BarEdit(res, sideState, filter) }
+    val reorder = remember { Reorder() }
+    val scope = rememberCoroutineScope()
+    val density = LocalDensity.current.density
+    val item = cfg.items.firstOrNull { it.id == selected }
+    val kept by Undo.last.collectAsState()
+    val overflow by BarOverflow.ids.collectAsState()
+    val fold = edit.fold(cfg, kept)
+    val lanes = Lanes(edit.lanes(cfg, kept), fold, noRoomAreas(cfg, overflow) { states[it.id]?.active == true })
+    val side = when {
+        edit.side == PanelSide.OPTIONS && item == null -> if (wide) PanelSide.ADD else PanelSide.BAR
+        edit.side == PanelSide.BAR && wide -> PanelSide.ADD
+        else -> edit.side
+    }
+    SideEffect {
+        edit.onSelect = onSelect
+        edit.wide = wide
+        edit.selected = item?.id
+        edit.showing = side
+        reorder.config = cfg
+        reorder.density = density
+        reorder.scope = scope
+        reorder.onDrop = edit::dropped
+        edit.settle(kept, fold, lanes.on.size)
+    }
+    // Only an item in the bar is selected.
+    val left = selected != null && item == null
+    LaunchedEffect(selected, left) { if (left) edit.left() }
+    LaunchedEffect(turn) { if (turn > 0 && selected != null) edit.side = PanelSide.OPTIONS }
+    // A reason is read, then the line is the preview's hint again.
+    LaunchedEffect(edit.said) {
+        if (edit.said == null) return@LaunchedEffect
+        delay(4000)
+        edit.said = null
+    }
+    DisposableEffect(edit, reorder, view) {
+        BarKeys.handler = { native -> edit.key(KeyEvent(native), view.onCheckIsTextEditor(), reorder) }
+        onDispose { BarKeys.handler = null; BarKeys.several = false }
+    }
+    SideEffect { BarKeys.several = lanes.several }
+    // The one drag of the page: its gesture is here, over the preview, the bar's card and the panel, and so is the copy it carries.
+    Box(Modifier.fillMaxSize().onGloballyPositioned { reorder.container = it }.drags(reorder)) {
+        Column(Modifier.fillMaxSize().onKeyEvent { edit.key(it, view.onCheckIsTextEditor(), reorder) }
+            .padding(start = layout.marginDp.dp, end = layout.marginDp.dp, top = PREVIEW_AIR, bottom = Space.xl)) {
+            BarPreview(states, item?.id, edit.said, lanes.noRoom, reorder, lanes.several, off = !running) { id -> if (id != null) edit.select(id) }
+            // What a change came to, for a screen reader; the page draws nothing for it.
+            Box(Modifier.size(1.dp).semantics { liveRegion = LiveRegionMode.Polite; contentDescription = edit.announced })
+            Spacer(Modifier.height(Space.m + 2.dp))
+            if (wide) Row(Modifier.weight(1f)) {
+                BarList(cfg, states, item?.id, edit, reorder, lanes, Modifier.weight(1f).fillMaxHeight())
+                Spacer(Modifier.width(Space.xl))
+                Column(Modifier.width(layout.panelDp.dp)) {
+                    PanelSwitch(side, item, wide, edit)
+                    Spacer(Modifier.height(10.dp))
+                    Panel(side, item, cfg, states, edit, reorder, lanes, Modifier.weight(1f))
+                }
+            } else {
+                PanelSwitch(side, item, wide, edit)
+                Spacer(Modifier.height(10.dp))
+                Panel(side, item, cfg, states, edit, reorder, lanes, Modifier.weight(1f))
+            }
+        }
+        DragCopy(reorder, cfg, states, lanes.several, Modifier.align(AbsoluteAlignment.TopLeft))
+    }
+}
+
+/**
+ * The panel's switch: "Add items", and the selected item by glyph and name ("Select an item", dimmed, with none);
+ * below the width with room for both, "Your bar" first.
+ */
+@Composable
+private fun PanelSwitch(side: PanelSide, item: ItemConfig?, wide: Boolean, edit: BarEdit) {
+    val res = LocalResources.current
+    val sides = if (wide) listOf(PanelSide.ADD, PanelSide.OPTIONS) else PanelSide.entries
+    val parts = sides.map {
+        when (it) {
+            PanelSide.BAR -> SegmentPart(stringResource(R.string.page_bar))
+            PanelSide.ADD -> SegmentPart(stringResource(R.string.page_add), icon = Sym.ADD)
+            PanelSide.OPTIONS ->
+                if (item != null) SegmentPart(itemName(res, item), icon = Items.of(item.type)?.icon ?: Sym.UPDATE)
+                else SegmentPart(stringResource(R.string.panel_select_item), enabled = false)
+        }
+    }
+    Segment(parts, sides.indexOf(side), {
+        when (sides[it]) {
+            PanelSide.BAR -> edit.side = PanelSide.BAR
+            PanelSide.ADD -> edit.toLibrary()
+            PanelSide.OPTIONS -> edit.side = PanelSide.OPTIONS
+        }
+    }, (if (LocalWindowLayout.current.kind == WindowClass.MID) Modifier.width(SWITCH_MID.ofText()) else Modifier.fillMaxWidth()).testTag("panel-switch"), role = Role.Tab)
+}
+
+/** The panel's card. The card stays; only what is in it travels, a short way, when the side changes. */
+@Composable
+private fun Panel(side: PanelSide, item: ItemConfig?, cfg: BarConfig, states: Map<String, ItemState>, edit: BarEdit, reorder: Reorder, lanes: Lanes,
+                  modifier: Modifier) {
+    val shift = with(LocalDensity.current) { Space.l.roundToPx() }
+    // The options on their way out are still the item's that was let go.
+    val last = remember { object { var item: ItemConfig? = null } }
+    if (item != null) last.item = item
+    Box(modifier.fillMaxWidth().clip(CARD).background(Bento.colors.panel).testTag("panel")) {
+        AnimatedContent(side, transitionSpec = {
+            val way = if (targetState.ordinal > initialState.ordinal) 1 else -1
+            (slideInHorizontally(Motion.spec(tween(Motion.SETTLE))) { way * shift } + fadeIn(Motion.spec(tween(Motion.SETTLE)))) togetherWith
+                (slideOutHorizontally(Motion.spec(tween(Motion.SETTLE))) { -way * shift } + fadeOut(Motion.spec(tween(Motion.SETTLE))))
+        }, label = "panel") { shown ->
+            when (shown) {
+                PanelSide.BAR -> BarList(cfg, states, item?.id, edit, reorder, lanes, Modifier.fillMaxSize())
+                PanelSide.ADD -> Library(cfg, edit, lanes, reorder, selected = item != null)
+                PanelSide.OPTIONS -> (item ?: last.item)?.let { of -> key(of.id) { ItemOptions(of, cfg, states[of.id], edit, lanes.several) } }
+            }
+        }
     }
 }

@@ -12,7 +12,6 @@ import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.unit.dp
 import com.meridian11.books.bentobar.R
 import com.meridian11.books.bentobar.data.ItemConfig
-import com.meridian11.books.bentobar.data.Section
 import com.meridian11.books.bentobar.data.Store
 import com.meridian11.books.bentobar.ui.CoreBars
 import com.meridian11.books.bentobar.ui.InfoRow
@@ -57,7 +56,7 @@ object CpuItem : ItemType("cpu", R.string.item_cpu_title, Sym.MEMORY, R.string.i
      * reads what it read then, and nothing more.
      */
     override val samples: Set<String>
-        get() = if (menus > 0 || Store.config.value.items.any { it.type == type && it.section != Section.OFF && CpuRule.alsoHot(it) }) heatSampler else emptySet()
+        get() = if (menus > 0 || Store.config.value.items.any { it.type == type && CpuRule.alsoHot(it) }) heatSampler else emptySet()
 
     override fun state(item: ItemConfig): ItemState {
         val c = Env.cpu

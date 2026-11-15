@@ -7,7 +7,6 @@ import androidx.compose.runtime.Composable
 import com.meridian11.books.bentobar.R
 import com.meridian11.books.bentobar.data.ItemConfig
 import com.meridian11.books.bentobar.data.Online
-import com.meridian11.books.bentobar.data.Section
 import com.meridian11.books.bentobar.data.Store
 import com.meridian11.books.bentobar.items.FlightRules.Tracked
 import com.meridian11.books.bentobar.items.FlightSamples.Staged
@@ -48,14 +47,11 @@ object FlightItem : ItemType("flight", R.string.item_flight_title, Sym.FLIGHT, R
     override val canBeActive = true
     // Which flight someone follows is their own business: the debug hook that prints what an item shows says how long this one's text is, not what it says.
     override val discreet = true
-    override val optionsTitle: Int get() = R.string.flight_key_section
 
     /** How many hours before departure the item comes out. */
     private val before = Threshold("beforeHours", 24, 3..48, step = 3) { Env.plural(R.plurals.common_hours, it, it) }
     override val trigger = Trigger(R.string.trigger_flight, R.string.trigger_flight_short, before)
 
-    /** The Flight items of the layout: whatever is kept under another id belonged to an item that is gone. */
-    private fun ids(): Set<String> = Store.config.value.items.filter { it.type == type }.mapTo(HashSet()) { it.id }
 
     /** What each item follows and what was last heard of it, by the item's id. A restart reads it back; nothing is asked while it is fresh. */
     internal val tracker: Refresher<String, Tracked> = Background.refresher(type, online,
@@ -72,6 +68,16 @@ object FlightItem : ItemType("flight", R.string.item_flight_title, Sym.FLIGHT, R
      * nothing empty between. Main thread.
      */
     private val fresh = HashMap<String, Tracked>()
+
+    /**
+     * The flight an item follows is kept under its id, outside the layout. The item was removed and no Undo can bring
+     * it back: nothing is held for it, and what was kept for it on the device goes.
+     */
+    override fun forgetOwn(id: String) {
+        tracker.forget(id)
+        fresh.remove(id)
+        Background.executor(type).execute { runCatching { FlightLoad.sweep(ids()) } }
+    }
 
     /** What the item [id] follows, as far as that is known: the loader's word, or what was taken a moment ago. Null: not read yet. Main thread. */
     internal fun followed(id: String): Tracked? = tracker.peek(id)?.also { fresh.remove(id) } ?: fresh[id]
@@ -90,7 +96,7 @@ object FlightItem : ItemType("flight", R.string.item_flight_title, Sym.FLIGHT, R
     /** What [item] shows in the real thing's place, if a sample is staged and it is the first Flight item. */
     internal fun stagedFor(item: ItemConfig): Staged? = staged?.takeIf { first()?.id == item.id }
 
-    private fun first(): ItemConfig? = Store.config.value.items.firstOrNull { it.type == type && it.section != Section.OFF }
+    private fun first(): ItemConfig? = Store.config.value.items.firstOrNull { it.type == type }
 
     // ---- the words and the clock for the pure rules
 
@@ -249,6 +255,33 @@ object FlightItem : ItemType("flight", R.string.item_flight_title, Sym.FLIGHT, R
         val bar = FlightText.bar(t, looking, now, hours, voice(), line = item.display.line, shown = plane?.let(places::get))
         if (plane != null) FlightText.flown(bar.route)?.let { drawn(plane, it) }
         return bar
+    }
+
+    override val liveSource = true
+
+    /**
+     * For the Live activity: the first Flight item's flight from boarding until it lands ([LiveRules.flight]), in the words
+     * its bar has as text alone (no line: the words keep their tones). Nothing without a key or with the service off. Woken
+     * with that item hidden, nobody runs [state], so this asks for its flight as [state] does: what is fresh is not asked
+     * for again.
+     */
+    override fun liveNow(now: Long, items: List<ItemConfig>): LiveNow? {
+        val item = items.firstOrNull() ?: return null
+        val t = when (val s = stagedFor(item)) {
+            is Staged.Following -> s.tracked
+            null -> {
+                if (!Online.hasKey(online) || !Online.on(online)) return null
+                tracker.want(item.id)
+                followed(item.id)
+            }
+            else -> null
+        } ?: return null
+        val at = Instant.ofEpochMilli(Now.wall())
+        val f = t.flight ?: return null
+        val since = LiveRules.flight(FlightRules.shown(f, at, t.ended), at) ?: return null
+        val bar = FlightText.bar(t, null, at, before.of(item), voice())
+        val text = bar.text ?: return null
+        return LiveNow(LiveRank.FLIGHT, bar.icon, text, bar.desc, bar.tone, since = now - (at.toEpochMilli() - since.toEpochMilli()).coerceAtLeast(0))
     }
 
     /**
@@ -413,7 +446,7 @@ object FlightItem : ItemType("flight", R.string.item_flight_title, Sym.FLIGHT, R
         for (item in Store.config.value.items) {
             if (item.type != type) continue
             val known = tracker.peek(item.id) ?: continue
-            val waited = item.section != Section.OFF && FlightRules.waitsForKey(known, now)
+            val waited = FlightRules.waitsForKey(known, now)
             // What is known is read back from what is kept, which has lost the old key's count; until then the item shows it without.
             fresh[item.id] = known.copy(left = null)
             reread(item.id)
@@ -443,8 +476,8 @@ object FlightItem : ItemType("flight", R.string.item_flight_title, Sym.FLIGHT, R
 
     /**
      * No Flight item is looked at any more: what was held for items that are gone from the layout is
-     * let go. If that was the last Flight item, what is kept for it on the device goes too, once the
-     * moment to undo the deletion has passed and none is back.
+     * let go. If that was the last Flight item, what is kept for it on the device goes too, a moment
+     * later ([FlightLoad.UNDO_MS]) if none is back.
      */
     override fun onIdle() {
         val items = ids()
@@ -459,13 +492,13 @@ object FlightItem : ItemType("flight", R.string.item_flight_title, Sym.FLIGHT, R
     }
 
     /**
-     * At the app's start: with no Flight item in the layout, nothing stays kept for one. [onIdle] cannot
-     * see every way the last item goes: one deleted while it was in Off never made the type idle, and a
-     * process that ended inside the half minute after a deletion never got to clear. No Undo outlives
-     * the process, so there is nothing to wait for here.
+     * At the app's start: nothing stays kept for an item the layout no longer has. Neither [onIdle] nor
+     * [forgetOwn] sees every way an item goes: a pasted layout tells neither while another Flight
+     * item stays, and a process that ended while Undo still held it, or inside the half minute after
+     * the last item went, never got to clear. No Undo outlives the process, so there is nothing to wait for here.
      */
     internal fun sweepAtStart() {
-        Background.executor(type).execute { runCatching { FlightLoad.clearWithout(ids()) } }
+        Background.executor(type).execute { runCatching { FlightLoad.sweep(ids()) } }
     }
 
     /** The service was switched off or its key removed: the loader and the lookup have forgotten already; this is the rest. */
@@ -479,7 +512,7 @@ object FlightItem : ItemType("flight", R.string.item_flight_title, Sym.FLIGHT, R
 
     override val menu: @Composable (ItemConfig, MenuHost) -> Unit = { item, host -> FlightMenu(item, host) }
 
-    override val options: @Composable (ItemConfig, (ItemConfig) -> Unit) -> Unit = { _, _ -> FlightKey() }
+    override val options: @Composable (ItemConfig, (ItemConfig) -> Unit) -> Unit = { item, _ -> FlightKey(item) }
 
     // ---- for tests on a device (debug builds)
 

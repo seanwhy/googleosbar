@@ -54,7 +54,7 @@ sealed interface Reply {
 }
 
 enum class Why {
-    /** Not asked at all: the service is switched off, no item that uses it is outside Off, nothing shows items, or this is the main thread. */
+    /** Not asked at all: the service is switched off, the layout has no item that uses it, nothing shows items, or this is the main thread. */
     OFF,
     /** No network, no route, no such name, or a connection that isn't the service's own (a public network's sign-in page). */
     OFFLINE,
@@ -79,8 +79,8 @@ fun interface Transport {
  * The one way out of the device. Pure Kotlin (no Android), so its rules are unit-tested on the JVM;
  * the app wires [allowed], [connected], [onMain] and [log] once at start (`Env.init`).
  *
- * A request goes out only if [allowed] says so for its host: the service is switched on, an item
- * that uses it is outside Off, and something that shows items is on screen. Until the app has wired
+ * A request goes out only if [allowed] says so for its host: the service is switched on, the layout
+ * has an item that uses it, and something that shows items is on screen. Until the app has wired
  * it, nothing is allowed. HTTPS only, to the [Host]s; the user agent is [USER_AGENT]; no
  * cookies, no identifiers, no redirects. Nothing of a request but its host and path is ever logged,
  * and nothing at all of a reply.
@@ -137,13 +137,7 @@ object Http {
         // Before anything is counted as sent: the counter must not say requests left when the transport would refuse them.
         if (HttpTransport.address(request) == null) { log("GET $request refused: not a plain path"); return Reply.Failed(Why.REFUSED, sent = false) }
         val service = Online.serviceOf(request.host).ordinal
-        val wait = notBefore.get(service) - clock()
-        if (wait > 0) {
-            // One reply speaks for the whole service: Finnhub says 429 about one symbol, and the other nine are not sent in the same pass.
-            // A held request answers with the status that started the hold: a 503's hold is no answer, not a call to slow down.
-            log("GET $request held: the service asked to wait")
-            return Reply.Failed(Why.STATUS, holdStatus.get(service), retryAfterSec = (wait + 999) / 1000, sent = false)
-        }
+        held(service, request.toString())?.let { return it }
         counts.incrementAndGet(request.host.ordinal)
         val reply = try {
             transport.get(request)
@@ -156,16 +150,32 @@ object Http {
         return reply
     }
 
+    /**
+     * The answer for a request to [service] while that service asked to be left alone, or null: none is under way. One reply
+     * speaks for the whole service: Finnhub says 429 about one symbol, and the other nine are not sent in the same pass. A
+     * held request answers with the status that started the hold: a 503's hold is no answer, not a call to slow down.
+     * [what] is how the log names the request.
+     */
+    private fun held(service: Int, what: String): Reply.Failed? {
+        val wait = notBefore.get(service) - clock()
+        if (wait <= 0) return null
+        log("GET $what held: the service asked to wait")
+        return Reply.Failed(Why.STATUS, holdStatus.get(service), retryAfterSec = (wait + 999) / 1000, sent = false)
+    }
+
     /** What a service asked for, kept for every request to it: at [Reply.Failed.retryAfterSec], or for a 429 that names none, [SLOW_DOWN_SEC]. */
     private fun noteWait(service: Int, reply: Reply.Failed) {
-        val seconds = reply.retryAfterSec ?: if (reply.status == 429) SLOW_DOWN_SEC else return
-        if (seconds <= 0) return
+        val seconds = waitSeconds(reply) ?: return
         synchronized(notBefore) {
             val until = clock() + seconds * 1000
             // The longer wait wins, and so does its status.
             if (until > notBefore.get(service)) { notBefore.set(service, until); holdStatus.set(service, reply.status) }
         }
     }
+
+    /** How long [reply] asks to be left alone, in seconds, or null: it doesn't. */
+    private fun waitSeconds(reply: Reply.Failed): Long? =
+        (reply.retryAfterSec ?: if (reply.status == 429) SLOW_DOWN_SEC else null)?.takeIf { it > 0 }
 
     /** A network that can carry a request: there is one and it isn't a sign-in page's. Validated isn't asked for: Android's own check fails on some working networks. */
     fun usable(hasNetwork: Boolean, captivePortal: Boolean): Boolean = hasNetwork && !captivePortal

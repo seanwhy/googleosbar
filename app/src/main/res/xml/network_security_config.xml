@@ -1,7 +1,6 @@
 <?xml version="1.0" encoding="utf-8"?>
 <!--
-  BentoBar talks to four hosts (net/Http.kt), over HTTPS only: nothing is ever sent or read in clear
-  text, to any host. Certificates are checked against the system's own authorities.
+  BentoBar talks to the hosts net/Http.kt names, over HTTPS only: nothing is ever sent or read in clear text. Certificates are checked against the system's own authorities.
   Debug builds also trust authorities the user installed, so a test can look at the requests through a
   proxy; release builds never do.
 -->

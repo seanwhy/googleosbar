@@ -1,5 +1,6 @@
 package com.meridian11.books.bentobar.items
 
+import java.util.Locale
 import androidx.compose.runtime.Immutable
 import com.meridian11.books.bentobar.data.ItemConfig
 import com.meridian11.books.bentobar.util.Sym
@@ -18,7 +19,6 @@ import java.time.Instant
 import java.time.LocalDate
 import java.time.ZoneId
 import java.time.ZoneOffset
-import java.util.Locale
 import kotlin.math.abs
 import kotlin.math.roundToInt
 
@@ -448,6 +448,17 @@ object WeatherRules {
      */
     fun status(hasPlace: Boolean, on: Boolean, setUp: Boolean, reading: Reading?, now: Long, up: Long = 0, locating: Locate? = null): Status<Reading> =
         Status.of(hasPlace, on, setUp, reading, locating, shows = { it.current != null && !old(it, now, up) }, failure = { it.failure })
+
+    /**
+     * The service's silence, as the settings window says it over the item's options and in its row: which failure, and
+     * when the reading that still shows was fetched (0: nothing shows). Null while the service answers, and with no
+     * connection: that is the device's, and the item's own words say it.
+     */
+    fun silence(status: Status<Reading>): Pair<Failure, Long>? = when (status) {
+        is Status.Missing -> status.failure to 0L
+        is Status.Live -> status.reading.failure?.let { it to status.reading.fetchedAt }
+        else -> null
+    }?.takeIf { it.first != Failure.OFFLINE }
 
     // ---- the city's own time ---------------------------------------------------------------------
 

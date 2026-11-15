@@ -48,7 +48,7 @@ class ItemGuardTest {
         val bar = "src/main/java/com/meridian11/books/bentobar/bar"
         for (name in listOf("BarService.kt", "MenuCoordinator.kt")) {
             val code = SourceScan.code(File("$bar/$name"))
-            for (call in listOf(".onClick(", ".onScroll(", ".onSlide(", ".menuOpening(")) {
+            for (call in listOf(".onClick(", ".onScroll(", ".onSlide(", ".menuOpening(", ".settle(")) {
                 for (line in code.lines().filter { call in it }) assertTrue("$name calls $call bare: $line", "Ticker.guarded(" in line)
             }
         }

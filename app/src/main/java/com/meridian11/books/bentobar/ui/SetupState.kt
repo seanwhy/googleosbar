@@ -7,6 +7,8 @@ import android.content.Context
 import android.content.pm.PackageManager
 import androidx.compose.runtime.Immutable
 import com.meridian11.books.bentobar.data.Uses
+import com.meridian11.books.bentobar.items.Access
+import com.meridian11.books.bentobar.items.Accesses
 import com.meridian11.books.bentobar.items.Env
 import com.meridian11.books.bentobar.items.MediaAccess
 import com.meridian11.books.bentobar.items.Notify
@@ -22,7 +24,7 @@ data class SetupState(
     val calendar: Boolean = false,
     val exactAlarms: Boolean = false,
     val advancedProtection: Boolean = false,
-    /** Optional: Usage access, for the top apps in the Network and Storage menus. */
+    /** Optional: Usage access, for the top apps in the Network and Storage menus and for Screen time. */
     val usageAccess: Boolean = false,
     /** Optional: Android's notification access, which Now playing needs for titles and artwork. */
     val mediaAccess: Boolean = false,
@@ -32,6 +34,8 @@ data class SetupState(
     val fileAccess: Boolean = false,
     /** Installed from a download: Android guards the accessibility and notification access switches until they are allowed in App info. */
     val sideloaded: Boolean = false,
+    /** The accesses the newer items need ([com.meridian11.books.bentobar.items.ItemType.needs]) that Android has given. */
+    val access: Set<Access> = emptySet(),
 )
 
 /**
@@ -62,8 +66,12 @@ object Setup {
             location = app.checkSelfPermission(Manifest.permission.ACCESS_COARSE_LOCATION) == PackageManager.PERMISSION_GRANTED,
             fileAccess = com.meridian11.books.bentobar.items.CloudClipboardItem.hasAllFilesAccess(app),
             sideloaded = Env.sideloaded(),
+            access = Access.entries.filter { Accesses.granted(app, it) }.toSet(),
         )
-        // A running timer's alarm is exact only while exact alarms are allowed and used: follow a change.
-        if (state.value.exactAlarms != before.exactAlarms) com.meridian11.books.bentobar.items.Timers.reschedule()
+        // A running timer's alarm, and a Focus session's, is exact only while exact alarms are allowed and used: follow a change.
+        if (state.value.exactAlarms != before.exactAlarms) {
+            com.meridian11.books.bentobar.items.Timers.reschedule()
+            com.meridian11.books.bentobar.items.FocusItem.rearm()
+        }
     }
 }

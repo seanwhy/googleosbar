@@ -3,7 +3,7 @@
 <resources xmlns:tools="http://schemas.android.com/tools" tools:locale="en">
     <string name="item_air_title">Air quality and UV</string>
     <string name="item_air_desc">US or European AQI, PM2.5 and UV index for a city or where you are</string>
-    <string name="trigger_air">Show when AQI is %1$s or higher, or UV is 6 or higher</string>
+    <string name="trigger_air">while AQI is %1$s or higher, or UV is 6 or higher</string>
     <string name="trigger_air_short">shows from %1$s AQI or UV 6</string>
 
     <string name="air_good">Good</string>

@@ -1,5 +1,8 @@
 package com.meridian11.books.bentobar.items
 
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.setValue
+import com.meridian11.books.bentobar.ui.Bento
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
@@ -18,11 +21,9 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
-import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
-import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -424,15 +425,19 @@ internal fun StatusBadge(text: String, kind: Kind) {
     }
 }
 
-/** The key, in the item's settings: the shared [ServiceKey], with how many lookups it has left where that is known. */
+/**
+ * The key, in the item's settings: the shared [ServiceKey] under its name, with how many lookups it has left where that is
+ * known, and the service's refusal of it (heard for [item]'s flight) as a notice that offers another key.
+ */
 @Composable
-internal fun FlightKey() {
+internal fun FlightKey(item: ItemConfig) {
     rememberTick()
     val online by Online.state.collectAsState()
+    val refused = FlightItem.followed(item.id)?.failure == Failure.REFUSED
     ServiceKey(Online.Service.AIRLABS in online.keyed, FLIGHT_KEY, onSave = { FlightItem.saveKey(it) }, onRemove = { FlightItem.removeKey() },
-        onGetKey = { FlightItem.openSignUp() }) {
-        FlightLoad.left?.let { Text(pluralStringResource(R.plurals.flight_lookups_left, it, it), style = MaterialTheme.typography.bodySmall,
-            color = MaterialTheme.colorScheme.onSurfaceVariant) }
+        onGetKey = { FlightItem.openSignUp() }, heading = stringResource(R.string.flight_key_section),
+        refused = if (refused) stringResource(R.string.flight_err_refused) else null) {
+        FlightLoad.left?.let { Text(pluralStringResource(R.plurals.flight_lookups_left, it, it), style = Bento.type.help, color = Bento.colors.ink2) }
     }
 }
 

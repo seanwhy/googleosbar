@@ -1,0 +1,16 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Brightness: the screen's brightness from the bar. Every name here starts with brightness_ or item_brightness_. -->
+<resources xmlns:tools="http://schemas.android.com/tools" tools:locale="en">
+    <string name="item_brightness_title">Brightness</string>
+    <string name="item_brightness_desc">The screen\'s brightness, with a slider in the bar</string>
+    <!-- %1$s is a percentage ("50%"). -->
+    <string name="brightness_desc">Brightness %1$s</string>
+    <string name="brightness_auto_desc">Brightness %1$s, automatic</string>
+    <string name="brightness_noaccess_desc">Brightness %1$s; setting it needs permission to change system settings</string>
+    <string name="brightness_auto_subtitle">Automatic, %1$s</string>
+    <string name="brightness_auto">Automatic brightness</string>
+    <string name="brightness_note">The built-in screen only. Setting it turns automatic brightness off.</string>
+    <string name="brightness_settings">Display settings</string>
+    <string name="brightness_slider">Slider in the bar</string>
+    <string name="brightness_slider_help">Click or drag it to set the brightness. Off, the bar shows the percent and the wheel still sets it.</string>
+</resources>

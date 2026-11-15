@@ -1,11 +1,28 @@
 package com.meridian11.books.bentobar.ui
 
+import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.background
+import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.heightIn
+import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.SnackbarDuration
 import androidx.compose.material3.SnackbarHostState
 import androidx.compose.material3.SnackbarResult
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.remember
+import androidx.compose.material3.Text
+import androidx.compose.ui.Alignment
+import androidx.compose.ui.Modifier
+import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
+import com.meridian11.books.bentobar.util.Sym
+import com.meridian11.books.bentobar.util.SymIcon
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.cancelAndJoin
 import kotlinx.coroutines.flow.MutableSharedFlow
@@ -50,4 +67,32 @@ fun rememberNotices(): SnackbarHostState {
         }
     }
     return snackbar
+}
+
+/**
+ * A notice that stays in the page where it applies (an area that has no room right now, a permission an item waits
+ * for): amber, with its icon, so it is never told by color alone. [action] is a button at its end, if it has one, or
+ * under the words where they are long ([stacked]).
+ */
+@Composable
+fun NoticeLine(text: String, modifier: Modifier = Modifier, stacked: Boolean = false, action: (@Composable () -> Unit)? = null) {
+    val c = Bento.colors
+    Row(modifier.fillMaxWidth().heightIn(min = Target.control).background(c.warnGround, RoundedCornerShape(Radius.medium))
+        .padding(start = Space.m, top = Space.s, end = Space.s, bottom = Space.s), verticalAlignment = if (stacked) Alignment.Top else Alignment.CenterVertically) {
+        SymIcon(Sym.WARNING, size = 18.sp, color = c.warnInk)
+        Spacer(Modifier.width(10.dp))
+        if (stacked) Column(Modifier.weight(1f)) {
+            Text(text, style = Bento.type.small, color = c.warnInk)
+            if (action != null) {
+                Spacer(Modifier.height(Space.s))
+                action()
+            }
+        } else {
+            Text(text, Modifier.weight(1f), style = Bento.type.small, color = c.warnInk)
+            if (action != null) {
+                Spacer(Modifier.width(Space.s))
+                action()
+            }
+        }
+    }
 }

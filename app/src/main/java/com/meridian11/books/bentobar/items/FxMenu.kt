@@ -1,5 +1,9 @@
 package com.meridian11.books.bentobar.items
 
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.setValue
+import com.meridian11.books.bentobar.data.Store
+import com.meridian11.books.bentobar.ui.Bento
 import android.content.Intent
 import android.net.Uri
 import androidx.compose.foundation.layout.Column
@@ -13,11 +17,9 @@ import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
-import androidx.compose.runtime.getValue
 import androidx.compose.runtime.key
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
-import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.res.stringResource
@@ -29,7 +31,6 @@ import androidx.compose.ui.unit.dp
 import com.meridian11.books.bentobar.R
 import com.meridian11.books.bentobar.data.ItemConfig
 import com.meridian11.books.bentobar.data.Online
-import com.meridian11.books.bentobar.data.Store
 import com.meridian11.books.bentobar.items.FxRules.FxPair
 import com.meridian11.books.bentobar.items.FxRules.PairQuote
 import com.meridian11.books.bentobar.ui.MenuCard
@@ -160,8 +161,8 @@ internal fun FxOptions(item: ItemConfig, set: (ItemConfig) -> Unit) {
     key(item.id) {
         var invalid by remember { mutableStateOf(false) }
         Column(Modifier.fillMaxWidth().padding(vertical = 6.dp)) {
-            Text(stringResource(R.string.fx_section), style = MaterialTheme.typography.labelLarge)
-            Text(stringResource(R.string.fx_consent), style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+            Text(stringResource(R.string.fx_section), style = Bento.type.strong, color = Bento.colors.ink)
+            Text(stringResource(R.string.fx_consent), style = Bento.type.help, color = Bento.colors.ink2)
             if (!on) {
                 Spacer(Modifier.height(4.dp))
                 MenuEntry(Sym.TOGGLE_ON, stringResource(R.string.fx_turn_on)) {

@@ -1,7 +1,6 @@
 package com.meridian11.books.bentobar.items
 
 import com.meridian11.books.bentobar.data.ItemConfig
-import com.meridian11.books.bentobar.data.Section
 import com.meridian11.books.bentobar.data.Store
 import com.meridian11.books.bentobar.net.Reply
 import com.meridian11.books.bentobar.net.Why
@@ -68,13 +67,13 @@ object Pace {
 }
 
 /**
- * A debug build's staged sample of a type: shown by the type's first item outside Off, in place of what the
+ * A debug build's staged sample of a type: shown by the type's first item, in place of what the
  * service said, so that what a failure looks like can be seen on a device without one.
  */
 class Staged<V : Any>(private val type: String) {
     @Volatile var value: V? = null
 
-    private fun first(): ItemConfig? = Store.config.value.items.firstOrNull { it.type == type && it.section != Section.OFF }
+    private fun first(): ItemConfig? = Store.config.value.items.firstOrNull { it.type == type }
 
     /** The sample, if [item] is the one showing it. */
     fun of(item: ItemConfig): V? = value?.takeIf { first()?.id == item.id }

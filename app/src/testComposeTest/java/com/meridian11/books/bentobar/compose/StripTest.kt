@@ -5,10 +5,12 @@ import android.graphics.Rect
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.key
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.LocalLayoutDirection
 import androidx.compose.ui.platform.LocalViewConfiguration
 import androidx.compose.ui.platform.ViewConfiguration
@@ -26,9 +28,11 @@ import androidx.compose.ui.test.onNodeWithContentDescription
 import androidx.compose.ui.test.performSemanticsAction
 import androidx.compose.ui.test.performTouchInput
 import androidx.compose.ui.test.swipeRight
+import androidx.compose.ui.unit.Density
 import androidx.compose.ui.unit.LayoutDirection
 import androidx.compose.ui.unit.dp
 import androidx.test.core.app.ApplicationProvider
+import com.meridian11.books.bentobar.bar.MeasuredStrip
 import com.meridian11.books.bentobar.bar.Strip
 import com.meridian11.books.bentobar.bar.StripEntry
 import com.meridian11.books.bentobar.bar.StripEvents
@@ -104,6 +108,72 @@ class StripTest {
             }
         }
         return { said!!.longPress = it }
+    }
+
+    /**
+     * The first strip of several keeps a ‹'s room whether it draws one or not, and says how wide it is with that room: the
+     * strips behind it stand by that number. So it must be the same number with the ‹ and without, at every text size, and
+     * never less than the strip is wide; a strip with nothing listed says the room of a ‹ alone.
+     */
+    @Test fun aStripsReachIsTheSameWithAndWithoutItsChevronAndNeverLessThanItsWidth() {
+        var chevron by mutableStateOf(false)
+        var size by mutableStateOf(TextSize.SMALL)
+        var items by mutableStateOf(listOf(plain, sliderEntry))
+        var reach = 0; var width = 0; var reserve = 0; var ends = 0
+        rule.setContent {
+            val density = androidx.compose.ui.platform.LocalDensity.current
+            reserve = (30 * density.density).toInt()
+            ends = with(density) { 6.dp.roundToPx() }
+            MeasuredStrip(bias = 1f, onWidth = { width = it }) {
+                Strip(items, emptyList(), showChevron = chevron, chevronAlways = true, chevronReservePx = reserve, expanded = false, chevronOnLeft = true,
+                    look = look.copy(textSize = size), maxWidthPx = 2000, heightDp = 36.dp, events = events, onReach = { reach = it })
+            }
+        }
+        for (each in TextSize.entries) {
+            size = each; chevron = false
+            val (bare, without) = rule.runOnIdle { width to reach }
+            assertEquals("$each: what it keeps, a ‹'s room, its ends", bare + reserve, without)
+            chevron = true
+            rule.runOnIdle {
+                assertEquals("$each: the same with the ‹ drawn", without, reach)
+                assertTrue("$each: the ‹ takes room ($bare, then $width) and no more than is kept for it ($reach)", width in (bare + 1)..reach)
+            }
+        }
+        items = emptyList(); chevron = false
+        rule.runOnIdle { assertEquals(0, width); assertEquals(reserve + 2 * ends, reach) }
+        chevron = true
+        rule.runOnIdle { assertEquals(reserve + 2 * ends, reach); assertTrue("$width in 1..$reach", width in 1..reach) }
+    }
+
+    /**
+     * A ticking number's place and the place of texts that take turns are measured in pixels. A strip outlives a change of
+     * the display's size or of the font size (its window stays), so its places are measured again then: a strip is as wide
+     * after the change as one made after it.
+     */
+    @Test fun aStripThatLivesThroughAChangeOfDisplayOrFontSizeIsAsWideAsOneMadeAfterIt() {
+        val items = listOf(entry("t", ItemState(icon = "X", text = "100%", desc = "Battery", widthKey = "bat")),
+            entry("q", ItemState(icon = "X", text = "AB 1", desc = "Stocks", turns = listOf("AB 1", "ABCD 123.45"))))
+        var density by mutableStateOf(Density(1f, 1f))
+        var made by mutableStateOf(0)
+        var width = 0
+        rule.setContent {
+            CompositionLocalProvider(LocalDensity provides density) {
+                key(made) {
+                    MeasuredStrip(bias = 1f, onWidth = { width = it }) {
+                        Strip(items, emptyList(), showChevron = false, chevronAlways = false, chevronReservePx = 0, expanded = false, chevronOnLeft = true,
+                            look = look, maxWidthPx = 4000, heightDp = 36.dp, events = events)
+                    }
+                }
+            }
+        }
+        // Up and down again, each by display size alone, by font size alone and by both, as a person's settings do.
+        for (next in listOf(Density(3f, 2f), Density(1f, 2f), Density(2f, 1f), Density(2f, 2f), Density(1f, 1f))) {
+            density = next
+            val lived = rule.runOnIdle { width }
+            made++
+            val fresh = rule.runOnIdle { width }
+            assertEquals("at $next", fresh, lived)
+        }
     }
 
     @Test fun aPressOnAnItemIsAClickAndAMoveAlongTheStripIsADrag() {

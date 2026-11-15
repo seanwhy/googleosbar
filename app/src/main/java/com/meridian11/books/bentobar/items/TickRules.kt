@@ -2,7 +2,6 @@ package com.meridian11.books.bentobar.items
 
 import com.meridian11.books.bentobar.data.BarConfig
 import com.meridian11.books.bentobar.data.ItemConfig
-import com.meridian11.books.bentobar.data.Section
 import com.meridian11.books.bentobar.data.couldShow
 
 /** When the ticker computes an item again, and which items it samples. No Android types, so the rules are tested. */
@@ -48,5 +47,5 @@ object TickRules {
      * memory item costs nothing.
      */
     fun needed(cfg: BarConfig, settings: Boolean, revealHidden: Boolean, focusItem: String?, type: (String) -> ItemType? = Items::of): List<ItemConfig> =
-        cfg.items.filter { it.section != Section.OFF && (settings || cfg.couldShow(it, type(it.type)) || revealHidden || it.id == focusItem) }
+        cfg.items.filter { settings || cfg.couldShow(it, type(it.type)) || revealHidden || it.id == focusItem }
 }

@@ -1,0 +1,28 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Screen time. Every name here starts with screentime_, item_screentime_ or trigger_screentime. -->
+<resources xmlns:tools="http://schemas.android.com/tools" tools:locale="en">
+    <string name="item_screentime_title">Screen time</string>
+    <string name="item_screentime_desc">How long the screen was on today, and the apps longest in front</string>
+    <!-- %1$s: a number of hours ("4 hours"). -->
+    <string name="trigger_screentime">while today\'s screen time is at least %1$s</string>
+    <string name="trigger_screentime_short">shows from %1$s</string>
+    <!-- The bar's time: "47 min", "3 h 05" (hours, then minutes in two figures). -->
+    <!-- Spoken and the tooltip: "Screen time today: 3 hours 5 minutes". -->
+    <string name="screentime_desc">Screen time today: %1$s</string>
+    <string name="screentime_desc_no_access">Screen time: needs Usage access</string>
+    <string name="screentime_desc_loading">Screen time: reading</string>
+    <!-- The menu's subtitle: "3 h 05 today". -->
+    <string name="screentime_today">%1$s today</string>
+    <string name="screentime_needs_access">Needs Usage access</string>
+    <string name="screentime_on_today">Screen on today</string>
+    <!-- Under the meter; %1$s: a number of hours ("4 hours"). -->
+    <string name="screentime_warns_from">The bar warns from %1$s.</string>
+    <string name="screentime_top">Longest in front</string>
+    <string name="screentime_none">No app in front yet today</string>
+    <string name="screentime_launcher_only">Only apps with a launcher entry are listed.</string>
+    <string name="screentime_side_by_side">Apps can be in front side by side, so their times can add up to more than the screen\'s.</string>
+    <!-- Without Usage access, as the Network and Storage menus ask for it. -->
+    <string name="screentime_optin">See how long the screen was on today</string>
+    <string name="screentime_explain">Lets BentoBar read when the screen went on and off today and which apps were in front, for this item. It stays on this device.</string>
+    <string name="screentime_usage_settings">Usage access settings</string>
+</resources>

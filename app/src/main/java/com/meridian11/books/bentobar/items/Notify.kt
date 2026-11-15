@@ -187,7 +187,7 @@ object Chips {
         nm.activeNotifications.firstOrNull { it.id == Notify.ID_CHIP }?.notification?.timeoutAfter
 
     private fun meetingChips() =
-        Store.config.value.items.any { it.type == EventItem.type && it.section != com.meridian11.books.bentobar.data.Section.OFF }
+        Store.config.value.items.any { it.type == EventItem.type }
 
     private fun build(context: Context): Notification? {
         val t = Timers.state.value

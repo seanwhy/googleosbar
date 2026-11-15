@@ -3,6 +3,7 @@ package com.meridian11.books.bentobar.bar
 import com.meridian11.books.bentobar.data.BarConfig
 import com.meridian11.books.bentobar.data.Pill
 import com.meridian11.books.bentobar.data.Position
+import com.meridian11.books.bentobar.data.ROOM_ORDER
 import com.meridian11.books.bentobar.data.Section
 
 /**
@@ -92,12 +93,12 @@ internal data class BarDecision(
  */
 internal object BarRules {
     /**
-     * What a change of the layout has to do with the bar: where the strip sits and what it holds. Everything else (a
-     * label typed letter by letter, a colour) the strip draws by itself, and the bar needs no second look for it.
+     * What a change of the layout has to do with the bar: which area each item is in and what the areas hold. Everything
+     * else (a label typed letter by letter, a colour) the strip draws by itself, and the bar needs no second look for it.
      */
-    data class Geometry(val enabled: Boolean, val position: Position, val pill: Pill, val spacing: Int, val items: List<Pair<String, Section>>)
+    data class Geometry(val enabled: Boolean, val pill: Pill, val spacing: Int, val items: List<Triple<String, Section, Position>>)
 
-    fun geometry(cfg: BarConfig) = Geometry(cfg.enabled, cfg.position, cfg.pill, cfg.spacing, cfg.items.map { it.id to it.section })
+    fun geometry(cfg: BarConfig) = Geometry(cfg.enabled, cfg.pill, cfg.spacing, cfg.items.map { Triple(it.id, it.section, it.area) })
 
     /** What asks [decide] for a reading of the bar's colors. */
     enum class Read { NEW_BAR_WINDOW, WINDOWS_MOVED }
@@ -203,6 +204,152 @@ internal object BarRules {
             else -> null
         }
         return BarDecision(show, status, cover, neighbours, read)
+    }
+
+    // ---- room: which areas have a strip, where and how wide ------------------------------------------------
+
+    /**
+     * One area's strip as the controller knows it. [measured] and [empty] are the last known, kept while it has no window.
+     * [reach] is how wide it is with a ‹'s whole room beside the items it keeps, whether it draws a ‹ or not; 0 while that
+     * is not known.
+     */
+    data class AreaState(val measured: Int, val empty: Boolean, val shown: Boolean, val pending: Boolean, val reach: Int = 0)
+
+    /**
+     * Where one strip goes. The gravity is the area's own (Right: top and right; Left: top and left; Middle: top and centred),
+     * and [x] is the window's x under it. [budget] is what the strip may fill: its room less its own two ends.
+     */
+    data class Spot(val area: Position, val x: Int, val width: Int, val budget: Int)
+
+    /** What [arrange] comes to. */
+    data class Arranged(
+        /** The strips to have on screen, in room order. Never empty. */
+        val spots: List<Spot>,
+        /** Areas whose strip is shown now and has no spot: their windows go. */
+        val leave: List<Position>,
+        /** Areas in use with no spot: their items are shown as not fitting. */
+        val owed: Set<Position>,
+        /** The first spot's area: the strip that does what the bar does once. */
+        val carrier: Position,
+        /** No strip was shown before this placing. */
+        val first: Boolean,
+    )
+
+    /**
+     * The order in which [spots] are carried out. [widths] is how wide each area's window is on screen now; an area with
+     * no window is not in it. A strip that gets wider, or comes, takes room, and takes it last: by then whatever it pushes
+     * has moved or narrowed, so it never stands in room a neighbour has not left yet. Room order otherwise.
+     */
+    fun givingWayFirst(spots: List<Spot>, widths: Map<Position, Int>): List<Spot> = spots.sortedBy { it.width > (widths[it.area] ?: 0) }
+
+    /** The room an area may use, from [left] to [right] on the screen: for [arrange], and for the settings preview. */
+    data class Lane(val left: Int, val right: Int) {
+        val max get() = right - left
+    }
+
+    /**
+     * An area's room in the free space from [lo] to [hi]: what the areas asked before it leave. Asked in room order
+     * ([ROOM_ORDER]), Left has all of it, Right what Left leaves and the Middle what both leave. A neighbour costs what it
+     * uses ([usedRight], [usedLeft]; 0 for one not asked yet) and the gap [between]; one that uses nothing costs nothing.
+     */
+    fun lane(area: Position, lo: Int, hi: Int, between: Int, usedRight: Int, usedLeft: Int): Lane {
+        val left = lo + if (usedLeft > 0) usedLeft + between else 0
+        val right = hi - if (usedRight > 0) usedRight + between else 0
+        return when (area) {
+            Position.LEFT -> Lane(lo, right)
+            Position.RIGHT -> Lane(left, hi)
+            Position.CENTER -> Lane(left, right)
+        }
+    }
+
+    /**
+     * Where a Middle strip [width] wide begins, [natural] being where it begins when centred: there, or as near to there as
+     * its [lane] lets it be. It is moved only as far as it must, never centred again in the room that is left (which would
+     * make it jump by tens of pixels when a neighbour grows by one). A strip wider than its lane stays where it is.
+     */
+    fun middleLeft(lane: Lane, width: Int, natural: Int): Int =
+        if (width > lane.max) natural else natural.coerceIn(lane.left, lane.right - width)
+
+    /** An area the controller has no strip for yet: never measured, not on screen. */
+    private val unknown = AreaState(measured = 0, empty = false, shown = false, pending = false)
+
+    /**
+     * The areas that want a strip, in the order they are given room: those in use, and the [home] area as well, so there is
+     * always one. The bar places them ([arrange]) and the settings preview draws one strip for each.
+     */
+    fun wantedAreas(home: Position, inUse: Set<Position>): List<Position> = ROOM_ORDER.filter { it in inUse || it == home }
+
+    /**
+     * Which areas have a strip, where and how wide: the one rule of room, which the controller only carries out. In pixels.
+     * The free area is [freeLeft] to [freeRight] on a screen [screenW] wide; [gap] is kept to its edges, less [out] (what a
+     * strip's own ends may reach into the gap: all of [ends] with no pill, nothing with one); [between] is kept between two
+     * strips; [least] is the room a ‹ needs with its ends. [inUse] are the areas with an item; the [home] area
+     * is wanted as well, so there is always one. [strips] is what is known of each area's strip; an area missing from it
+     * was never measured.
+     *
+     * Room goes to Left first, then Right, then the Middle. The first area there is has the whole free space and is as wide
+     * as it was measured, which is the one strip there was before areas, to the pixel. An area after it is cut to its room,
+     * and with less room than [least] it has no strip: it is owed. A strip that draws nothing, or was never measured, has
+     * its spot and takes no room from the others. With no room for a ‹ at all the home area alone is placed, as the one
+     * strip was: uncut, its ‹ over its neighbours.
+     *
+     * One exception, for the first strip once its reach is known ([AreaState.reach]): the others stand behind its reach,
+     * not its width, and do so when it draws nothing too. Its ‹ comes and goes for the areas that are owed, so room that
+     * followed its width would follow that ‹: an area would get room because it had none and lose it again because it
+     * had some. The reach is the same with and without the ‹, so nothing behind the first strip can tell. With one area
+     * nothing is behind it.
+     */
+    fun arrange(
+        freeLeft: Int, freeRight: Int, screenW: Int, gap: Int, out: Int, ends: Int, between: Int, least: Int,
+        home: Position, inUse: Set<Position>, strips: Map<Position, AreaState>,
+    ): Arranged {
+        val lo = freeLeft + gap - out
+        val hi = freeRight - gap + out
+        val total = maxOf(0, hi - lo)
+        // A centred window's x counts from the middle of the screen: the free area's middle against it.
+        val x0 = ((freeLeft + freeRight) shr 1) - screenW / 2
+        val wanted = wantedAreas(home, inUse)
+        fun state(area: Position) = strips[area] ?: unknown
+        fun budget(max: Int) = maxOf(0, max - 2 * ends)
+        fun x(area: Position, lane: Lane, width: Int, first: Boolean) = when (area) {
+            Position.RIGHT -> screenW - hi
+            Position.LEFT -> lo
+            // A Middle with nothing before it has nothing to clear, and stays where the one centred strip stood: when it
+            // fills its room, rounding can put that a pixel outside the room, and holding it to the room would move it.
+            Position.CENTER -> if (first) x0 else {
+                // Where the window manager puts a centred window's left edge.
+                val natural = (screenW - width) / 2 + x0
+                x0 + (middleLeft(lane, width, natural) - natural)
+            }
+        }
+
+        val spots = ArrayList<Spot>()
+        if (total < least) {
+            val width = maxOf(1, state(home).measured)
+            spots += Spot(home, x(home, Lane(lo, hi), width, first = true), width, budget(total))
+        } else {
+            var usedRight = 0
+            var usedLeft = 0
+            for (area in wanted) {
+                val first = spots.isEmpty()
+                val lane = lane(area, lo, hi, between, usedRight, usedLeft)
+                if (!first && lane.max < least) continue
+                val known = state(area)
+                val width = maxOf(1, if (first) known.measured else minOf(known.measured, lane.max))
+                spots += Spot(area, x(area, lane, width, first), width, budget(lane.max))
+                // Never measured, its width is the one pixel a window must have: no room to keep clear, and no gap.
+                val used = if (first && known.reach > 0) known.reach else if (known.empty || known.measured <= 0) 0 else width
+                if (area == Position.RIGHT) usedRight = used else if (area == Position.LEFT) usedLeft = used
+            }
+        }
+        val placed = spots.map { it.area }
+        return Arranged(
+            spots = spots,
+            leave = ROOM_ORDER.filter { strips[it]?.shown == true && it !in placed },
+            owed = wanted.filter { it !in placed }.toSet(),
+            carrier = placed.first(),
+            first = strips.values.none { it.shown },
+        )
     }
 
     /** The widest horizontal stretch of the bar that no item covers. */

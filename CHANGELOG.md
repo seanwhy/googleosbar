@@ -1,5 +1,90 @@
 # Changelog
 
+## 2.2.1 (2026-11-14)
+
+- **CPU reads the real load** (#53). A core's idle counters grow only when it wakes, so a core that slept through a
+  reading was counted as busy for it, and the reading it woke in, with more sleep than its own second, was clamped
+  at 0: a quiet device read several times its load (36% beside the system's Task Manager's 13%; 17.7% where `/proc/stat` said
+  2.0%). What a reading can't show is now owed to the next ones (`items/CpuLoad.kt`), so the readings add up to the
+  counters (3.8% there). The CPU item, its menu, its "Show when" rule and Heat's CPU row read it.
+- **Addresses in the Network menu** (#47). Under the totals: the IP address, the IPv6 address, the gateway, the DNS
+  servers and Private DNS of the default network (Off, On, or On and its host), shortened to fit a row. Read when the
+  menu opens and followed while a Network item is live; no new permission, nothing online, nothing of an address
+  logged. `./bento debug network stage …` stages one for pictures.
+- Kotlin 2.4.21, coroutines 1.11.0, kotlinx-serialization 1.12.0, Android Gradle Plugin 9.5.1, Gradle 9.9.0 (#55).
+
+## 2.2.0 (2026-11-12)
+
+- **Shelf and Value from a URL are gone.** A layout that has one is read without it, and what they kept on the device
+  (a Shelf's texts and links, the addresses) is deleted at the first start. Five items go online again, each to a
+  service named in the code: no request can go to an address that isn't written there, Setup › Online services has no
+  "Your own addresses", and the strip takes no drops from other apps.
+- **Remove deletes.** An item you remove (the options' button, Delete, a drop on the trash, the bar's right-click
+  menu) is gone from the layout, whatever it was set to, and Undo brings it back as it was. Add items lists the types
+  and nothing else: no remembered setups under a type, no Forget. A layout that is read (stored, pasted, imported)
+  drops what an older version kept in Off, with no new layout version. A Flight's followed flight and a Prompter's
+  notes are deleted once the removal can no longer be undone: at the next change to the bar, or when the settings
+  window is closed, whichever comes first.
+- **A bar starts in Left.** A fresh install has its four items in Left, after the clock. A new item goes to the first
+  area in use of Left, Middle, Right (it was Right, Middle, Left), and when the status bar is short of room Left has
+  it first, then Right, then the Middle (it was Right, Left, Middle). A bar that is already set up stays where it is,
+  every item in the area it had. With items in several areas, what the bar has only once follows the new orders:
+  Presenting's ‹, the empty capsule, the one strip shown when nothing has room and "Add to"'s first choice stand in
+  the first area in use from the left (a bar in Right and Middle has them in the Middle, one in Right and Left in
+  Left; both had them in Right). With items in Left too, the keyboard's "BentoBar menu" opens under Left's strip, and
+  when room is short Left's items keep theirs before Right's do (it was the other way round).
+- **A trash to drop on.** While you drag a row of your bar a strip comes up along the lower edge of the list, "Drop
+  here to remove", at every window width; it turns red under the row, and letting go there removes the item (Undo
+  brings it back). The list scrolls under a dragged row only above the strip. The panel no longer takes a drop:
+  the library and an item's options stay as they are during a drag.
+- **Remove an area.** With items in several areas each area's head ends in a trash: it removes the area and every
+  item in it in one step, says what went ("Removed Left and its 3 items") with Undo, and the other areas take the
+  room.
+- **Notes with Undo stay three seconds.** "Removed…" in a row's place, the note for a closed or a removed area, the
+  library's "Added" and Look's line go by themselves after three seconds, or wait while the pointer or the keyboard
+  is on them. With a screen reader's touch exploration on they stay until the next change, as before. Ctrl+Z still
+  takes the change back afterwards.
+- **Remove is a red button.** "Remove from the bar" in an item's options is red words and a trash on a pale red
+  ground, beside Duplicate and as tall, with no keycap; Delete still removes the selected item. Look's Discard and
+  Setup's Remove key are the same button.
+- From right to left a dragged row hangs under the pointer (it hung mirrored across the window).
+
+## 2.1.0 (2026-11-11)
+
+2.0.0 was only ever a test build; 2.1.0 is the release, without the Crypto and Clipboard items.
+
+- **Left, Middle and Right.** Every item has an area (layout version 4; a version 3 layout moves each item into the
+  area the strip was in). The bar is one bar in up to three windows; room goes to Right first, then Left, then Middle,
+  and an area with no room keeps its items in the first strip's ‹ menu. Popups, the tooltip, the hover, keep awake and
+  the colour reading work across the strips.
+- **Settings, rebuilt.** One Bar page with the preview, the list and a panel that is either the item library or the
+  selected item's options; drag and drop, click and keys for adding, moving and removing. No "off" items: one with a
+  setup becomes a library line when removed, one without is gone. Look, Setup and About on the same controls; the
+  accessibility disclosure is a page under Setup with the same words and two buttons; the bar's right-click menu says
+  "Remove from the bar".
+- **The 1.8 foundation.** Exchange rates moved to Frankfurter's `/v2/rates` and loads again; Hide, Show and Off change
+  an item's section and never its place; a layout from a newer version is refused with a message; Compose tests have
+  their own build type; dependency verification is on.
+- **Sixteen new items.** Camera and mic, Mirror, Prompter, Shelf, Notification icons, Live activity, Focus,
+  Brightness, Keyboard light, Headphones and output, Connection, Screen time, Day progress, Sunset, Break reminder
+  and Value from a URL. Each has its device list in `docs/RELEASING.md`.
+- **Six items go online, where five did.** Value from a URL asks one address you
+  type and nothing else: HTTPS only, no name or password in it, no redirect followed, no reply over 64 KB, never more
+  than once a minute. The address stays on this device, in no layout and no backup, and Setup › Online services has a
+  switch for it, Your own addresses. Until now no request could go to an address that isn't written in the code; this
+  is the one exception.
+- **New access, each optional and each asked for by the item that needs it.** Camera for Mirror; Do Not Disturb access
+  for Focus; Modify system settings for Brightness; and a second entry in Android's Notification access list, BentoBar
+  notification icons, for Notification icons, which reads other apps' notifications while it is on screen and keeps
+  none. Camera and mic's mute uses Modify audio settings, which Android gives without asking.
+- **Usage access reads more with a Screen time item in the bar.** When the screen went on and off today, and, while
+  its menu is open, which apps were in front and for how long. Until now BentoBar read only data use and storage with
+  it. Nothing of it is stored or sent.
+- **About › Privacy says all of it.** Notes for Notification icons, Mirror, Camera and mic, Screen time, Shelf and
+  Prompter, and for Value from a URL; a backup leaves out a Prompter's notes, what a Shelf holds, the
+  addresses of Value from a URL and a Focus session.
+- **The Clipboard item is gone.** A layout that has one is read without it, and its pinned snippets go with it.
+
 ## 1.7.1 (2026-11-03)
 
 - **About, Setup and Add name every online item.** They said three items go online; five do (Weather, Air quality &

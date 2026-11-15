@@ -20,6 +20,7 @@ import com.meridian11.books.bentobar.ui.MenuDivider
 import com.meridian11.books.bentobar.ui.MenuEntry
 import com.meridian11.books.bentobar.ui.MenuNote
 import com.meridian11.books.bentobar.ui.Meter
+import com.meridian11.books.bentobar.ui.SectionLabel
 import com.meridian11.books.bentobar.ui.Sparkline
 import com.meridian11.books.bentobar.ui.rememberTick
 import com.meridian11.books.bentobar.util.Fmt
@@ -32,6 +33,9 @@ object NetworkItem : ItemType("network", R.string.item_network_title, Sym.SWAP_V
     override val canBeActive = true
     private val above = Threshold("activeKBs", 500, 50..5000, step = 50) { Fmt.bytes(it * 1000.0) + "/s" }
     override val trigger = Trigger(R.string.trigger_network, R.string.trigger_network_short, above)
+
+    override fun onLive() = LinkWatch.live()
+    override fun onIdle() = LinkWatch.idle()
 
     override fun state(item: ItemConfig): ItemState {
         val n = Env.net
@@ -57,6 +61,14 @@ object NetworkItem : ItemType("network", R.string.item_network_title, Sym.SWAP_V
             Sparkline(n.downHistory.toList(), second = n.upHistory.toList())
             InfoRow(stringResource(R.string.network_received), Fmt.bytes(n.rxTotal.toDouble()))
             InfoRow(stringResource(R.string.network_sent), Fmt.bytes(n.txTotal.toDouble()))
+            // The link's addresses and resolvers; nothing while there is no network, or none with an address yet.
+            val rows = LinkRules.rows(LinkWatch.current(),
+                LinkRules.Words(stringResource(R.string.common_on), stringResource(R.string.network_link_private_dns_unused)))
+            if (rows.isNotEmpty()) {
+                MenuDivider()
+                SectionLabel(stringResource(R.string.network_link_title))
+                for (row in rows) InfoRow(stringResource(label(row.field)), row.value)
+            }
             TopAppsSection(Usage.data, 10_000, stringResource(R.string.usage_top_data), stringResource(R.string.usage_optin_data),
                 stringResource(R.string.usage_none_data), host)
             MenuDivider()
@@ -70,6 +82,19 @@ object NetworkItem : ItemType("network", R.string.item_network_title, Sym.SWAP_V
             "up" to stringResource(R.string.network_upload), "total" to stringResource(R.string.network_show_total)),
             item.opt("show", "both")) { set(item.with("show", it)) }
     }
+
+    /** An Addresses row's label. No `else`: a new field doesn't compile until it has one. */
+    private fun label(field: LinkRules.Field): Int = when (field) {
+        LinkRules.Field.IPV4 -> R.string.network_link_ipv4
+        LinkRules.Field.IPV6 -> R.string.network_link_ipv6
+        LinkRules.Field.GATEWAY -> R.string.network_link_gateway
+        LinkRules.Field.DNS -> R.string.network_link_dns
+        LinkRules.Field.PRIVATE_DNS -> R.string.network_link_private_dns
+    }
+
+    override val stages = LinkSamples.names.map { "stage $it" }
+
+    override fun debug(args: List<String>): String? = LinkWatch.debug(args)
 }
 
 object MemoryItem : ItemType("memory", R.string.item_memory_title, Sym.MEMORY_ALT, R.string.item_memory_desc) {

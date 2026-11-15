@@ -5,66 +5,51 @@ import android.content.ComponentName
 import android.content.Context
 import android.content.Intent
 import android.content.pm.PackageManager
+import android.content.res.Configuration
 import android.net.Uri
+import android.os.Build
 import android.os.Bundle
 import android.os.SystemClock
 import android.provider.Settings
+import android.view.WindowInsetsController
+import android.view.KeyboardShortcutGroup
+import android.view.KeyboardShortcutInfo
+import android.view.Menu
 import android.view.accessibility.AccessibilityManager
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
-import androidx.compose.foundation.background
-import androidx.compose.foundation.layout.Box
-import androidx.compose.foundation.layout.Column
-import androidx.compose.foundation.layout.Row
-import androidx.compose.foundation.layout.Spacer
-import androidx.compose.foundation.layout.fillMaxHeight
-import androidx.compose.foundation.layout.fillMaxSize
-import androidx.compose.foundation.layout.fillMaxWidth
-import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
-import androidx.compose.foundation.layout.safeDrawingPadding
-import androidx.compose.foundation.layout.size
-import androidx.compose.foundation.layout.width
-import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.NavigationRail
-import androidx.compose.material3.NavigationRailItem
-import androidx.compose.material3.Surface
-import androidx.compose.material3.Switch
-import androidx.compose.material3.Text
 import androidx.compose.material3.SnackbarHost
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.foundation.selection.toggleable
 import androidx.compose.ui.unit.dp
-import androidx.compose.ui.unit.sp
-import androidx.compose.ui.res.stringResource
-import androidx.compose.ui.semantics.heading
-import androidx.compose.ui.semantics.semantics
 import com.meridian11.books.bentobar.R
 import com.meridian11.books.bentobar.bar.BarService
 import com.meridian11.books.bentobar.bar.BarStatus
 import com.meridian11.books.bentobar.data.Store
 import com.meridian11.books.bentobar.items.Chips
 import com.meridian11.books.bentobar.items.Env
-import com.meridian11.books.bentobar.items.Items
 import com.meridian11.books.bentobar.items.Notify
 import com.meridian11.books.bentobar.items.Ticker
-import com.meridian11.books.bentobar.util.Sym
-import com.meridian11.books.bentobar.util.SymIcon
 
-/** The settings window's pages: what the rail shows and what the header says. A new page goes here and in [MainActivity]'s `when`. */
-enum class Page(val icon: String, @androidx.annotation.StringRes val label: Int, @androidx.annotation.StringRes val title: Int) {
-    BAR(Sym.WYSIWYG, R.string.nav_bar, R.string.page_bar),
-    ADD(Sym.ADD, R.string.nav_add, R.string.page_add),
-    LOOK(Sym.PALETTE, R.string.nav_look, R.string.page_look),
-    SETUP(Sym.TUNE, R.string.nav_setup, R.string.page_setup),
-    ABOUT(Sym.INFO, R.string.nav_about, R.string.page_about),
+/**
+ * The settings window's pages: what its tab says ([label]) and what the page is called for a screen reader ([title]).
+ * A new page goes here, in [tabs] and in [MainActivity]'s `when`. A saved window remembers its page by name.
+ */
+enum class Page(@androidx.annotation.StringRes val label: Int, @androidx.annotation.StringRes val title: Int) {
+    BAR(R.string.nav_bar, R.string.page_bar),
+    LOOK(R.string.nav_look, R.string.page_look),
+    SETUP(R.string.nav_setup, R.string.page_setup),
+    ABOUT(R.string.nav_about, R.string.page_about),
 }
 
 class MainActivity : ComponentActivity() {
@@ -72,8 +57,12 @@ class MainActivity : ComponentActivity() {
     private val services = AccessibilityManager.AccessibilityServicesStateChangeListener { Setup.refresh(this) }
     private var page by mutableStateOf(Page.BAR)
     private var selected by mutableStateOf<String?>(null)
+    /** Counts the times an item's options were asked for from outside (the bar's menu): each turns the Bar page's panel to them. */
+    private var turn by mutableIntStateOf(0)
     /** The accessibility disclosure is up ([AccessibilityDisclosure]). */
     private var disclosure by mutableStateOf(false)
+    /** The permissions Android refused without showing its dialog, since this window opened: Setup says so in their rows. */
+    private var wontAsk by mutableStateOf(setOf<String>())
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -81,6 +70,7 @@ class MainActivity : ComponentActivity() {
         Env.init(this)
         Notify.channels(this)
         enableEdgeToEdge()
+        captionInHeaderColor()
         // Recreated (theme, language, text size or density changed): stay where the user was, and
         // don't act on the launch intent again (it could ask for a permission twice).
         if (savedInstanceState == null) {
@@ -88,7 +78,9 @@ class MainActivity : ComponentActivity() {
             // First opening, service still off: the disclosure comes up by itself, in the app's normal
             // use, not behind a page someone has to find. Once answered, only Turn on brings it back.
             disclosure = ConsentRules.asksOnFirstOpening(Store.consent.value, { serviceOn(this) }, { turnedOn(this) }, { Env.advancedProtection() })
-            if (!disclosure && Store.config.value.items.any { it.type == "cloud_clipboard" && it.section != com.meridian11.books.bentobar.data.Section.OFF }) {
+            // The disclosure is a page under the Setup tab: whatever its answer, Setup is what is under it.
+            if (disclosure) page = Page.SETUP
+            else if (Store.config.value.items.any { it.type == "cloud_clipboard" && it.section != com.meridian11.books.bentobar.data.Section.OFF }) {
                 if (!com.meridian11.books.bentobar.items.CloudClipboardItem.hasAllFilesAccess(this)) {
                     val missing = runtimeFilePermissions().filter {
                         runCatching { checkSelfPermission(it) != PackageManager.PERMISSION_GRANTED }.getOrDefault(false)
@@ -101,16 +93,26 @@ class MainActivity : ComponentActivity() {
                 }
             }
         } else {
-            page = Page.entries.getOrElse(savedInstanceState.getInt(STATE_PAGE)) { Page.BAR }; selected = savedInstanceState.getString(STATE_SELECTED)
+            page = savedInstanceState.getString(STATE_PAGE).let { name -> Page.entries.firstOrNull { it.name == name } } ?: Page.BAR
+            selected = savedInstanceState.getString(STATE_SELECTED)
             disclosure = savedInstanceState.getBoolean(STATE_DISCLOSURE)
         }
-        setContent {
-            BentoBarTheme {
-                Surface(Modifier.fillMaxSize(), color = MaterialTheme.colorScheme.surface) {
-                    App()
-                }
-            }
-        }
+        // Before the first frame: what was on is told from what comes on (the window then switches to Bar).
+        Setup.refresh(this)
+        setContent { SettingsTheme { App() } }
+    }
+
+    /**
+     * The system's caption takes the header's color: its own ground goes, [Shell] paints the header's under it, and its
+     * buttons are drawn for a light or a dark ground. Nothing of BentoBar's is placed in the caption. A change of theme
+     * recreates the window, so once is enough.
+     */
+    private fun captionInHeaderColor() {
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.VANILLA_ICE_CREAM) return
+        val light = resources.configuration.uiMode and Configuration.UI_MODE_NIGHT_MASK != Configuration.UI_MODE_NIGHT_YES
+        val ground = WindowInsetsController.APPEARANCE_TRANSPARENT_CAPTION_BAR_BACKGROUND
+        val buttons = WindowInsetsController.APPEARANCE_LIGHT_CAPTION_BARS
+        window.insetsController?.setSystemBarsAppearance(if (light) ground or buttons else ground, ground or buttons)
     }
 
     override fun onNewIntent(intent: Intent) {
@@ -121,7 +123,7 @@ class MainActivity : ComponentActivity() {
 
     override fun onSaveInstanceState(outState: Bundle) {
         super.onSaveInstanceState(outState)
-        outState.putInt(STATE_PAGE, page.ordinal)
+        outState.putString(STATE_PAGE, page.name)
         outState.putString(STATE_SELECTED, selected)
         outState.putBoolean(STATE_DISCLOSURE, disclosure)
     }
@@ -132,17 +134,26 @@ class MainActivity : ComponentActivity() {
      * disclosure, and Agree there opens the settings.
      */
     private fun turnOn() {
-        if (ConsentRules.turnOn(Store.consent.value) == ConsentRules.TurnOn.OPEN_SETTINGS) openAccessibility(this) else disclosure = true
+        when {
+            // Advanced Protection turns the service off anyway: Setup says so where Turn on would be.
+            Setup.state.value.advancedProtection -> page = Page.SETUP
+            ConsentRules.turnOn(Store.consent.value) == ConsentRules.TurnOn.OPEN_SETTINGS -> openAccessibility(this)
+            else -> { page = Page.SETUP; disclosure = true }
+        }
     }
 
     private fun handle(intent: Intent?) {
         intent ?: return
-        intent.getStringExtra(EXTRA_ITEM)?.let { selected = it; page = Page.BAR }
-        if (intent.getBooleanExtra(EXTRA_EDIT, false)) page = Page.BAR
+        // The disclosure is up: it stays the page, under Setup, with its two buttons and no Turn on in the header. The
+        // page an intent names (the launcher's "BentoBar menu", a long press on the tile, any app) is dropped, not kept
+        // for after the answer: Setup is what the answer leaves, as on first opening.
+        val turns = !disclosure
+        if (turns) intent.getStringExtra(EXTRA_ITEM)?.let { selected = it; page = Page.BAR; turn++ }
+        if (turns && intent.getBooleanExtra(EXTRA_EDIT, false)) page = Page.BAR
         // A permission's prompt is asked for in this process ([requestPermission]), never named by an intent: this activity is
         // exported, so any app could send one, and the prompt would be BentoBar's.
         takeAsked()?.let { perm -> if (checkSelfPermission(perm) != PackageManager.PERMISSION_GRANTED) requestPermissions(arrayOf(perm), 1) }
-        if (intent.getBooleanExtra(EXTRA_REQUEST_FILES, false)) {
+        if (turns && intent.getBooleanExtra(EXTRA_REQUEST_FILES, false)) {
             if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.R &&
                 !android.os.Environment.isExternalStorageManager()
             ) {
@@ -158,10 +169,55 @@ class MainActivity : ComponentActivity() {
                 }
             }
         }
-        if (intent.action == "android.service.quicksettings.action.QS_TILE_PREFERENCES") page = Page.LOOK
+        if (turns && intent.action == "android.service.quicksettings.action.QS_TILE_PREFERENCES") page = Page.LOOK
+    }
+
+    // A key no control took (nothing in the window has the focus): the Bar page's keys still act on the selected item.
+    // Escape leaves the disclosure as Back does: a platform's key map need not turn the one into the other.
+    // On Look, Undo's key takes back what Look itself did ("Where BentoBar sits"), which that page shows; a change of the
+    // Bar page's, which Look doesn't show, stays for that page.
+    override fun onKeyDown(keyCode: Int, event: android.view.KeyEvent): Boolean = when {
+        disclosure && keyCode == android.view.KeyEvent.KEYCODE_ESCAPE -> { disclosure = false; true }
+        page == Page.LOOK && lookUndo() && BarKeys.UNDO.pressed(androidx.compose.ui.input.key.KeyEvent(event)) -> Undo.undo()
+        else -> (page == Page.BAR && BarKeys.handler?.invoke(event) == true) || super.onKeyDown(keyCode, event)
+    }
+
+    /** Whether the last change is Look's command and can still be taken back. */
+    private fun lookUndo() = Undo.allTo(Undo.last.value, Store.config.value) != null
+
+    /**
+     * The system's list of shortcuts: the Bar page's bindings themselves ([BarKeys.listed]), while that page is shown,
+     * and on Look its Undo while that has something to take back, so the list and what the window does with a key
+     * cannot disagree.
+     */
+    override fun onProvideKeyboardShortcuts(data: MutableList<KeyboardShortcutGroup>, menu: Menu?, deviceId: Int) {
+        super.onProvideKeyboardShortcuts(data, menu, deviceId)
+        val keys = when {
+            page == Page.BAR -> BarKeys.listed()
+            page == Page.LOOK && lookUndo() -> listOf(BarKeys.UNDO)
+            else -> emptyList()
+        }
+        if (keys.isEmpty()) return
+        data += KeyboardShortcutGroup(getString(page.title), keys.map { KeyboardShortcutInfo(getString(it.does), it.keycode, it.modifiers) })
+    }
+
+    /** This window's end has been seen ([closing]). */
+    private var closed = false
+
+    /**
+     * Undo is this window's, and its reach ends when the window is closed for good ([Undo.end]): asked at each step of
+     * the window's way out, so at the first that knows. Not when it is made again (a rotation, a new size) or only left
+     * for another window: it is not finishing then. A window opened since has Undo by now, with what it may have
+     * changed already; an end that comes that late takes nothing.
+     */
+    private fun closing() {
+        if (closed || !isFinishing) return
+        closed = true
+        if (current === this) Undo.end()
     }
 
     override fun onDestroy() {
+        closing()
         if (current === this) current = null
         super.onDestroy()
     }
@@ -173,6 +229,7 @@ class MainActivity : ComponentActivity() {
 
     override fun onStop() {
         getSystemService(AccessibilityManager::class.java)?.removeAccessibilityServicesStateChangeListener(services)
+        closing()
         super.onStop()
     }
 
@@ -186,6 +243,7 @@ class MainActivity : ComponentActivity() {
     override fun onPause() {
         super.onPause()
         Ticker.stop("settings")
+        closing()
     }
 
     override fun onRequestPermissionsResult(requestCode: Int, permissions: Array<String>, grantResults: IntArray) {
@@ -199,7 +257,10 @@ class MainActivity : ComponentActivity() {
         } else {
             // Refused, and Android won't show its dialog again: say where it can still be allowed.
             permissions.forEachIndexed { i, p ->
-                if (grantResults.getOrNull(i) == PackageManager.PERMISSION_DENIED && !shouldShowRequestPermissionRationale(p))
+                val refused = grantResults.getOrNull(i) == PackageManager.PERMISSION_DENIED && !shouldShowRequestPermissionRationale(p)
+                wontAsk = if (refused) wontAsk + p else wontAsk - p
+                // On Setup the permission's own row says it; elsewhere, the window's message.
+                if (refused && !SetupRules.saidInItsRow(page, p))
                     Notice.post(getString(R.string.setup_denied_settings), getString(R.string.common_open_settings)) { openAppInfo(this) }
             }
         }
@@ -226,81 +287,34 @@ class MainActivity : ComponentActivity() {
         val cfg by Store.config.collectAsState()
         val setup by Setup.state.collectAsState()
         val status by BarStatus.current.collectAsState()
+        val consent by Store.consent.collectAsState()
         val running = setup.serviceOn
-        Row(Modifier.fillMaxSize().safeDrawingPadding()) {
-            NavigationRail(containerColor = MaterialTheme.colorScheme.surfaceContainer, modifier = Modifier.fillMaxHeight()) {
-                Spacer(Modifier.height(12.dp))
-                androidx.compose.material3.Icon(androidx.compose.ui.res.painterResource(com.meridian11.books.bentobar.R.drawable.ic_bentobar), contentDescription = stringResource(R.string.app_name),
-                    tint = MaterialTheme.colorScheme.primary, modifier = Modifier.size(30.dp))
-                Spacer(Modifier.height(20.dp))
-                Page.entries.forEach { p ->
-                    NavigationRailItem(selected = page == p, onClick = { page = p },
-                        icon = { SymIcon(p.icon, size = 22.sp, filled = page == p) }, label = { Text(stringResource(p.label)) })
-                }
-            }
-            Column(Modifier.weight(1f).fillMaxHeight()) {
-                Row(Modifier.fillMaxWidth().padding(start = 28.dp, end = 20.dp, top = 18.dp, bottom = 6.dp), verticalAlignment = Alignment.CenterVertically) {
-                    Column(Modifier.weight(1f)) {
-                        Text(stringResource(page.title),
-                            style = MaterialTheme.typography.headlineSmall, modifier = Modifier.semantics { heading() })
-                        // Says what the strip is actually doing, not just whether the service is on.
-                        Text(stringResource(when {
-                            !running -> if (page == Page.SETUP) R.string.status_service_off_setup else R.string.status_service_off
-                            !cfg.enabled -> R.string.status_hidden
-                            else -> when (status) {
-                                BarStatus.STOPPED -> R.string.status_starting
-                                BarStatus.NO_ROOM -> R.string.status_no_room
-                                BarStatus.EMPTY -> R.string.status_empty
-                                BarStatus.NO_BAR -> R.string.status_no_bar
-                                BarStatus.COVERED -> R.string.status_covered
-                                else -> R.string.status_live
-                            }
-                        }), style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
-                    }
-                    // Only meaningful once the service runs; before that, Setup is the way in.
-                    if (running) {
-                        Row(Modifier.toggleable(cfg.enabled, role = androidx.compose.ui.semantics.Role.Switch) { on -> Store.update { it.copy(enabled = on) } },
-                            verticalAlignment = Alignment.CenterVertically) {
-                            Text(stringResource(R.string.show_in_status_bar), style = MaterialTheme.typography.labelLarge, modifier = Modifier.padding(end = 10.dp))
-                            Switch(checked = cfg.enabled, onCheckedChange = null)
-                        }
-                    }
-                }
-                Box(Modifier.weight(1f).fillMaxWidth()) {
-                    // Before the pages: a message is seen only by someone already listening, and BarPage's Undo posts as it opens.
-                    val snackbar = rememberNotices()
-                    when (page) {
-                        Page.BAR -> BarPage(running, selected, onSelect = { selected = it }, onSetup = { page = Page.SETUP })
-                        // Adding keeps you on Add: a message confirms it, with Undo, instead of jumping pages.
-                        Page.ADD -> AddPage { id ->
-                            val added = Store.config.value.items.firstOrNull { it.id == id }
-                            val type = added?.let { Items.of(it.type) }
-                            val title = type?.title.orEmpty()
-                            // Added to When active, the bar looks as before: the message says when the item will show.
-                            val rule = added?.takeIf { it.whenActive && it.section == com.meridian11.books.bentobar.data.Section.HIDDEN }?.let { type?.trigger?.short(it) }
-                            if (added?.type == "cloud_clipboard" && !com.meridian11.books.bentobar.items.CloudClipboardItem.hasAllFilesAccess(this@MainActivity)) {
-                                Notice.post("已添加云剪切板 · 上传本地文件需开启文件读取权限", "去开启") {
-                                    requestFilePermissions(this@MainActivity)
-                                }
-                            } else {
-                                Notice.post(if (rule != null) getString(R.string.add_added_rule, title, rule) else getString(R.string.add_added, title),
-                                    getString(R.string.bar_undo)) { Store.remove(id) }
-                            }
-                        }
-                        Page.LOOK -> LookPage()
-                        Page.SETUP -> SetupPage(this@MainActivity, setup, onTurnOn = ::turnOn)
-                        Page.ABOUT -> AboutPage()
-                    }
-                    // Last, so it's drawn over the page (in a Box, later children are on top).
-                    SnackbarHost(snackbar, Modifier.align(Alignment.BottomCenter).padding(16.dp))
-                }
-            }
+        // Setup says so: once BentoBar is on, this window shows the bar. A disclosure still up has nothing left to ask.
+        val was = remember { booleanArrayOf(running) }
+        LaunchedEffect(running) {
+            if (running) disclosure = false
+            if (SetupRules.switchesToBar(was[0], running, page)) page = Page.BAR
+            was[0] = running
         }
-        if (disclosure) AccessibilityDisclosure(
-            onAgree = { disclosure = false; Store.setConsent(Store.Consent.AGREED); openAccessibility(this) },
-            onDecline = { disclosure = false; Store.setConsent(Store.Consent.DECLINED) },
-            onDismiss = { disclosure = false },
-        )
+        // A click on a tab leaves the disclosure like Escape does: no answer, nothing recorded.
+        Shell(page, { disclosure = false; page = it }, running, cfg.enabled, status, onEnabled = { on -> Store.update { it.copy(enabled = on) } }, onTurnOn = ::turnOn,
+            presenting = cfg.presenting) {
+            // Before the pages: a message is seen only by someone already listening.
+            val snackbar = rememberNotices()
+            // The disclosure takes Setup's place while it is up: only Agree records consent and opens the system's settings.
+            if (disclosure) AccessibilityDisclosure(
+                onAgree = { disclosure = false; Store.setConsent(Store.Consent.AGREED); openAccessibility(this@MainActivity) },
+                onDecline = { disclosure = false; Store.setConsent(Store.Consent.DECLINED) },
+                onDismiss = { disclosure = false },
+            ) else when (page) {
+                Page.BAR -> BarPage(selected, onSelect = { selected = it }, turn = turn, running = running)
+                Page.LOOK -> LookPage()
+                Page.SETUP -> SetupPage(setup, consent == Store.Consent.DECLINED, wontAsk, onTurnOn = ::turnOn)
+                Page.ABOUT -> AboutPage()
+            }
+            // Last, so it's drawn over the page (in a Box, later children are on top).
+            SnackbarHost(snackbar, Modifier.align(Alignment.BottomCenter).padding(16.dp))
+        }
     }
 
     companion object {

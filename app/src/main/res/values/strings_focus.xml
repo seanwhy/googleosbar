@@ -1,0 +1,32 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Focus: Do Not Disturb for a session, from a click. Every name here starts with focus_, item_focus_ or trigger_focus. -->
+<resources xmlns:tools="http://schemas.android.com/tools" tools:locale="en">
+    <string name="item_focus_title">Focus</string>
+    <string name="item_focus_desc">Do Not Disturb for a while, from a click; it ends by itself</string>
+    <string name="trigger_focus">while a Focus session runs</string>
+    <string name="trigger_focus_short">shows during a session</string>
+    <!-- The mode's name in Android's own list of modes. -->
+    <string name="focus_rule_name">BentoBar Focus</string>
+    <!-- Spoken: %1$s is a length of time in words ("50 minutes"). -->
+    <string name="focus_ready_desc">Focus: click for %1$s of Do Not Disturb</string>
+    <string name="focus_ready_endless_desc">Focus: click for Do Not Disturb until you end it</string>
+    <string name="focus_noaccess_desc">Focus needs Do Not Disturb access</string>
+    <!-- Spoken: %1$s is the time left in words. -->
+    <string name="focus_left_desc">Focus, %1$s left</string>
+    <string name="focus_endless_desc">Focus is on until you end it</string>
+    <string name="focus_ready">Not running</string>
+    <string name="focus_needs_access">Needs Do Not Disturb access</string>
+    <!-- %1$s is the time left as the bar shows it ("24:10"). -->
+    <string name="focus_left">%1$s left</string>
+    <string name="focus_endless">On until you end it</string>
+    <string name="focus_ends">Ends at</string>
+    <string name="focus_start">Start</string>
+    <string name="focus_more">+10 min</string>
+    <string name="focus_end_now">End now</string>
+    <string name="focus_note">Do Not Disturb as the mode BentoBar Focus: what it lets through is set in Android\'s settings.</string>
+    <string name="focus_refused">Android didn\'t turn it on. Check BentoBar Focus in Android\'s modes.</string>
+    <string name="focus_length">Length</string>
+    <string name="focus_until_off">Until you end it</string>
+    <string name="focus_dark">Dark theme during a session</string>
+    <string name="focus_dark_help">Android switches to the dark theme while the session runs.</string>
+</resources>

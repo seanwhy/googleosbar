@@ -3,7 +3,7 @@
 <resources xmlns:tools="http://schemas.android.com/tools" tools:locale="en">
     <string name="item_heat_title">Heat</string>
     <string name="item_heat_desc">Shows when Android slows a hot device; heat level in its menu</string>
-    <string name="trigger_heat">Show when the device is at least %1$s, and for a minute after it cools</string>
+    <string name="trigger_heat">while the device is at least %1$s, and for a minute after it cools</string>
     <string name="trigger_heat_short">shows when %1$s</string>
     <string name="heat_rule_warm">warm</string>
     <string name="heat_rule_hot">hot</string>

@@ -1,7 +1,6 @@
 package com.meridian11.books.bentobar.items
 
 import com.meridian11.books.bentobar.data.ItemConfig
-import com.meridian11.books.bentobar.data.Section
 
 /**
  * What My location knows, as one value: where the device is as Android said it ([fix]) and from when
@@ -104,10 +103,9 @@ object HereRules {
     fun woken(h: Here): Here = if (h.fix == null) h.copy(askedAt = null) else h
 
     /**
-     * Whether where the device is is wanted: for an item of My location outside Off, while the Weather
-     * switch is on. Only then is Android asked and a fix kept; else it is forgotten, with an ask on its
-     * way. An item in Off keeps its choice, and where the device is is found again when it comes back.
+     * Whether where the device is is wanted: for an item of My location, while the Weather switch is
+     * on. Only then is Android asked and a fix kept; else it is forgotten, with an ask on its way.
      */
     fun wanted(items: List<ItemConfig>, on: Boolean): Boolean =
-        on && items.any { Items.of(it.type)?.usesMyLocation == true && it.section != Section.OFF && WeatherRules.here(it) }
+        on && items.any { Items.of(it.type)?.usesMyLocation == true && WeatherRules.here(it) }
 }

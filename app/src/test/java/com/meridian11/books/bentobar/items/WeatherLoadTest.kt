@@ -205,21 +205,18 @@ class WeatherLoadTest {
         assertEquals(setOf(zurich, oslo), WeatherLoad.places(items))
     }
 
-    @Test fun anItemThatIsTurnedOffHasNoPlaceToKeepAReadingFor() {
-        // An item that is off keeps its settings and nothing else. Nothing looks at the layout for a type without a
-        // live item, so a reading that stayed with an item that is off would outlive the item when that is deleted.
-        val off = ItemConfig("d", "weather", section = Section.OFF, options = mapOf("lat" to "59.91", "lon" to "10.75"))
-        assertEquals(emptySet<Place>(), WeatherLoad.places(listOf(off)))
+    @Test fun aRemovedItemHasNoPlaceToKeepAReadingFor() {
+        val gone = ItemConfig("d", "weather", options = mapOf("lat" to "59.91", "lon" to "10.75"))
         val shown = ItemConfig("a", "weather", options = mapOf("lat" to "47.37", "lon" to "8.55"))
-        assertEquals(setOf(zurich), WeatherLoad.places(listOf(off, shown)))
-        // Off, but another item shows the same city: the reading is that item's.
-        assertEquals(setOf(oslo), WeatherLoad.places(listOf(off, off.copy(id = "e", section = Section.SHOWN))))
+        assertEquals(setOf(zurich, oslo), WeatherLoad.places(listOf(gone, shown)))
+        assertEquals(setOf(zurich), WeatherLoad.places(listOf(shown)))
+        // Removed, but another item shows the same city: the reading is that item's.
+        assertEquals(setOf(oslo), WeatherLoad.places(listOf(gone.copy(id = "e", section = Section.HIDDEN))))
     }
 
-    @Test fun anAnswerThatArrivesAfterItsItemWasTurnedOffIsNotKept() = FakeHttp.use { net ->
+    @Test fun anAnswerThatArrivesAfterItsItemWasRemovedIsNotKept() = FakeHttp.use { net ->
         net.reply(Host.OPEN_METEO, "/v1/forecast", forecast)
-        val off = ItemConfig("a", "weather", section = Section.OFF, options = mapOf("lat" to "47.37", "lon" to "8.55"))
-        assertNotNull(WeatherLoad.load(zurich, null, now) { WeatherLoad.places(listOf(off)) })
+        assertNotNull(WeatherLoad.load(zurich, null, now) { WeatherLoad.places(emptyList()) })
         assertEquals(emptySet<String>(), Kept.fetched(OPEN_METEO).names())
     }
 

@@ -1,5 +1,14 @@
 package com.meridian11.books.bentobar.items
 
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.setValue
+import androidx.compose.foundation.layout.offset
+import androidx.compose.ui.semantics.heading
+import com.meridian11.books.bentobar.ui.Hairline
+import com.meridian11.books.bentobar.ui.Space
+import com.meridian11.books.bentobar.ui.Bento
+import com.meridian11.books.bentobar.ui.ButtonKind
+import com.meridian11.books.bentobar.ui.BentoButton
 import android.content.Intent
 import android.provider.AlarmClock
 import android.provider.CalendarContract
@@ -10,22 +19,18 @@ import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxWidth
-import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
-import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
-import androidx.compose.runtime.getValue
 import androidx.compose.runtime.key
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
-import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.focus.FocusDirection
@@ -50,7 +55,6 @@ import com.meridian11.books.bentobar.R
 import com.meridian11.books.bentobar.data.ItemConfig
 import com.meridian11.books.bentobar.data.Store
 import com.meridian11.books.bentobar.data.WorldCity
-import com.meridian11.books.bentobar.ui.Body
 import com.meridian11.books.bentobar.ui.ChoiceRow
 import com.meridian11.books.bentobar.ui.MenuCard
 import com.meridian11.books.bentobar.ui.MenuDivider
@@ -58,7 +62,6 @@ import com.meridian11.books.bentobar.ui.MenuEntry
 import com.meridian11.books.bentobar.ui.MenuNote
 import com.meridian11.books.bentobar.ui.SearchField
 import com.meridian11.books.bentobar.ui.SearchStatus
-import com.meridian11.books.bentobar.ui.SectionLabel
 import com.meridian11.books.bentobar.ui.SmallIconButton
 import com.meridian11.books.bentobar.ui.SwitchRow
 import com.meridian11.books.bentobar.ui.TextRow
@@ -317,10 +320,11 @@ private fun AddCity(cities: List<WorldCity>, places: List<WorldClock.Place>, now
 @Composable
 private fun CitiesInSettings() {
     val cfg by Store.config.collectAsState()
-    Spacer(Modifier.height(4.dp))
-    SectionLabel(stringResource(R.string.clock_cities_section))
-    if (cfg.cities.isEmpty()) { Body(stringResource(R.string.clock_cities_empty)); return }
-    Body(stringResource(R.string.clock_cities_help))
+    Hairline()
+    Text(stringResource(R.string.clock_cities_section), Modifier.semantics { heading() }, style = Bento.type.strong, color = Bento.colors.ink)
+    Text(stringResource(if (cfg.cities.isEmpty()) R.string.clock_cities_empty else R.string.clock_cities_help), Modifier.padding(top = 2.dp, bottom = Space.xs),
+        style = Bento.type.help, color = Bento.colors.ink2)
+    if (cfg.cities.isEmpty()) return
     // The menu's order, worked out when a city comes or goes and not with every letter of a name: among cities of one
     // offset the names decide, and the row being named would move away under the typing.
     val order = remember(cfg.cities.map { it.zone }) { WorldClock.ordered(cfg.cities, Now.wall()).map { it.zone } }
@@ -334,10 +338,8 @@ private fun CitiesInSettings() {
                         Store.update { it.copy(cities = WorldClock.rename(it.cities, city.zone, typed)) }
                     }
                 }
-                TextButton(onClick = { Store.update { it.copy(cities = WorldClock.remove(it.cities, city.zone)) } },
-                    modifier = Modifier.semantics { contentDescription = remove }) {
-                    Text(stringResource(R.string.clock_city_remove), color = MaterialTheme.colorScheme.error)
-                }
+                BentoButton(stringResource(R.string.clock_city_remove), { Store.update { it.copy(cities = WorldClock.remove(it.cities, city.zone)) } },
+                    Modifier.semantics { contentDescription = remove }, kind = ButtonKind.TEXT)
             }
         }
     }
@@ -349,14 +351,14 @@ fun ZonePicker(current: String?, onPick: (String?) -> Unit) {
     var query by remember { mutableStateOf("") }
     Column(Modifier.fillMaxWidth().padding(vertical = 6.dp)) {
         Text(current?.let { stringResource(R.string.clock_zone_named, WorldClock.cityOf(it), it) } ?: stringResource(R.string.clock_zone_device),
-            style = MaterialTheme.typography.labelLarge)
+            style = Bento.type.strong, color = Bento.colors.ink)
         TextRow(stringResource(R.string.clock_zone_find), query, placeholder = stringResource(R.string.clock_zone_find_hint)) { query = it }
         if (query.length >= 2) {
             val q = query.trim().replace(' ', '_').lowercase(Locale.ROOT)
             val hits = ZoneId.getAvailableZoneIds().filter { it.lowercase(Locale.ROOT).contains(q) && it.contains('/') }.sorted().take(8)
             hits.forEach { id -> MenuEntry(Sym.PUBLIC, WorldClock.cityOf(id), id) { onPick(id); query = "" } }
-            if (hits.isEmpty()) Text(stringResource(R.string.clock_zone_none), style = MaterialTheme.typography.bodySmall)
+            if (hits.isEmpty()) Text(stringResource(R.string.clock_zone_none), style = Bento.type.help, color = Bento.colors.ink2)
         }
-        if (current != null) TextButton(onClick = { onPick(null) }) { Text(stringResource(R.string.clock_zone_use_device)) }
+        if (current != null) BentoButton(stringResource(R.string.clock_zone_use_device), { onPick(null) }, Modifier.offset(x = -Space.m), kind = ButtonKind.TEXT)
     }
 }

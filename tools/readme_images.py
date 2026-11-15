@@ -3,7 +3,8 @@
 """Composes the README images from raw captures of a Googlebook.
 
 Raw captures (in RAW, default ~/.cache/bentobar/shots), made with a demo layout so no personal data
-shows:
+shows, and with a staged network (./bento debug network stage wifi; network off afterwards), since the
+Network menu's Addresses section shows the device's own addresses, gateway, DNS and Private DNS host:
   bar_hero.png, bar_now.png, bar_open.png   full-width screenshots, top 41 px (./bento shot F 41)
   win_*.png                                 BentoBar's own windows (./bento winshot TITLE FILE), which
                                             carry their shadow margin and no mouse pointer

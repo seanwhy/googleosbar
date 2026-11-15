@@ -1,0 +1,24 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Mirror. Every name here starts with mirror_, item_mirror_ or trigger_mirror. -->
+<resources xmlns:tools="http://schemas.android.com/tools" tools:locale="en">
+    <string name="item_mirror_title">Mirror</string>
+    <string name="item_mirror_desc">You, from the camera, in a popup: a look before a call</string>
+
+    <string name="mirror_private">Only you see this. Nothing is recorded or sent.</string>
+    <!-- Read out for the camera's picture in the popup. -->
+    <string name="mirror_picture">Your camera\'s picture</string>
+    <string name="mirror_close">Close the mirror</string>
+    <string name="mirror_opening">Opening the camera…</string>
+    <string name="mirror_no_camera">No camera found.</string>
+    <string name="mirror_refused">Android didn\'t let BentoBar use the camera.</string>
+    <string name="mirror_camera_settings">Camera permission</string>
+    <string name="mirror_busy">Another app is using the camera.</string>
+    <string name="mirror_failed">The camera didn\'t start. Close the mirror and open it again.</string>
+
+    <string name="mirror_size">Size</string>
+    <string name="mirror_size_s">Small</string>
+    <string name="mirror_size_m">Medium</string>
+    <string name="mirror_size_l">Large</string>
+    <string name="mirror_flip">Mirrored</string>
+    <string name="mirror_flip_help">Left and right as in a mirror. Off: as others see you.</string>
+</resources>

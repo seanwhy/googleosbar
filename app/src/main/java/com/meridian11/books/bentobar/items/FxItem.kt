@@ -4,7 +4,6 @@ import androidx.compose.runtime.Composable
 import com.meridian11.books.bentobar.R
 import com.meridian11.books.bentobar.data.ItemConfig
 import com.meridian11.books.bentobar.data.Online
-import com.meridian11.books.bentobar.data.Section
 import com.meridian11.books.bentobar.items.FxRules.FxTable
 import com.meridian11.books.bentobar.util.Dates
 import com.meridian11.books.bentobar.util.Now
@@ -45,7 +44,7 @@ object FxItem : ItemType("fx", R.string.item_fx_title, Sym.SWAP_VERT, R.string.i
     }
 
     internal fun opened(item: ItemConfig) {
-        if (isStaged(item) || item.section == Section.OFF || !Online.on(online)) return
+        if (isStaged(item) || !Online.on(online)) return
         rates.menuOpened(Unit, FxRules.MENU_MS) { it.failure != null }
     }
 
@@ -64,7 +63,7 @@ object FxItem : ItemType("fx", R.string.item_fx_title, Sym.SWAP_VERT, R.string.i
             val d = Env.str(R.string.fx_none_yet)
             return ItemState(icon = Sym.SWAP_VERT, filled = false, text = null, desc = d, tooltip = d)
         }
-        val t = table(ask = item.section != Section.OFF)
+        val t = table()
         if (t == null || !t.hasRates) {
             val d = Env.str(if (t?.failure != null) R.string.fx_desc_no_rates else R.string.fx_desc_loading)
             return ItemState(icon = Sym.SWAP_VERT, filled = false, text = null, desc = d, tooltip = d)

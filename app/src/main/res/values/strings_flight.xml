@@ -3,7 +3,7 @@
 <resources xmlns:tools="http://schemas.android.com/tools" tools:locale="en">
     <string name="item_flight_title">Flight</string>
     <string name="item_flight_desc">A flight\'s countdown, gate and delays; needs your own AirLabs key</string>
-    <string name="trigger_flight">Show from %1$s before departure until an hour after landing</string>
+    <string name="trigger_flight">from %1$s before departure until an hour after landing</string>
     <string name="trigger_flight_short">shows from %1$s before departure</string>
     <string name="flight_consent">Flight times come from AirLabs, a flight data service, with a free key of your own. BentoBar sends AirLabs your key and the flight number when you track a flight and while it follows it, nothing else. AirLabs sees your IP address and knows which key asked.</string>
 

@@ -61,6 +61,13 @@ object Online {
         } catch (e: Exception) {
             null
         } ?: Saved()
+        // A service only a retired item asked (Crypto's Kraken, Value from a URL's "Your own addresses") is no service any
+        // more: its switch is read as nothing and the file is written again without it. The directory of what it sent, if
+        // there is one, is deleted, and so is what a retired type kept for its items (a Shelf's texts, the addresses of
+        // Value from a URL): no code is left that would read or delete them.
+        val retired = Retired.services.filter { it in saved.on || it in saved.setUp || it in saved.keys }
+        for (id in Retired.services) runCatching { File(noBackupDir, "fetched/$id").deleteRecursively() }
+        for (name in Retired.kept) runCatching { File(noBackupDir, "kept/$name").deleteRecursively() }
         fun services(ids: List<String>) = Service.entries.filterTo(HashSet()) { it.id in ids }
         for (s in Service.entries) saved.keys[s.id]?.trim()?.takeIf { it.isNotEmpty() }?.let { keys[s] = it }
         val keyed = keys.keys.toSet()
@@ -71,6 +78,7 @@ object Online {
             setUp = services(saved.setUp).filterTo(HashSet()) { !it.needsKey } + keyed + on,
             keyed = keyed,
         )
+        if (retired.isNotEmpty()) save(lost = false)
     }
 
     fun on(service: Service): Boolean = service in current.value.on
@@ -81,6 +89,14 @@ object Online {
     fun hasKey(service: Service): Boolean = service in current.value.keyed
 
     fun serviceOf(host: Host): Service = Service.entries.first { host in it.hosts }
+
+    /**
+     * Whether [service] may be asked right now: it is switched on for this install, something that shows items is on
+     * screen ([running]), and the layout has an item of a type that asks it ([asks], by the item's type). The one rule
+     * behind `Http.allowed`, which the app wires to it.
+     */
+    fun mayAsk(service: Service, running: Boolean, items: List<ItemConfig>, asks: (type: String) -> Service?): Boolean =
+        on(service) && running && items.any { asks(it.type) == service }
 
     /**
      * On, by the user's own act: Search, Use my location or "Turn on" in the item, or Setup's switch for a

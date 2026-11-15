@@ -10,7 +10,7 @@ import android.service.notification.StatusBarNotification
 import java.util.concurrent.atomic.AtomicInteger
 
 /**
- * BentoBar's entry in Android's "Notification access" list, and nothing more. It exists for one
+ * Now playing's entry in Android's "Notification access" list, and nothing more. It exists for one
  * reason: Android tells an app what the media players are playing (their sessions: title, artist,
  * artwork) only if the user has turned that app on in this list. BentoBar wants the sessions and no
  * notifications. So the manifest entry asks for no notification type, marks all four types as never
@@ -22,8 +22,9 @@ import java.util.concurrent.atomic.AtomicInteger
  * never even created. Should a device insist on a running listener, [NowPlaying] asks for it to be
  * bound once ([bind]) and lets it go again when no Now playing item needs it ([release]).
  *
- * Everything about notification access is in this one file: Now playing still works without it (an
- * icon and the media keys), and without the manifest entry [granted] is simply never true.
+ * Everything about Now playing's notification access is in this one file: Now playing still works without it (an
+ * icon and the media keys), and without the manifest entry [granted] is simply never true. Notification icons has an
+ * entry of its own, which does ask for notifications: [NoticeAccess], in its own file.
  */
 class MediaAccess : NotificationListenerService() {
     override fun onListenerConnected() {

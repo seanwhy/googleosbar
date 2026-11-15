@@ -33,8 +33,10 @@ import androidx.compose.ui.layout.onPlaced
 import androidx.compose.ui.layout.layoutId
 import androidx.compose.ui.unit.Constraints
 import androidx.compose.ui.unit.Density
+import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.LayoutDirection
 import androidx.compose.ui.unit.dp
+import kotlin.math.floor
 import kotlin.math.min
 
 /**
@@ -161,6 +163,29 @@ fun Modifier.menuShadow(glass: MenuGlassState, dark: Boolean): Modifier = this.t
                 val contact = Shadows.paint(this, sigmaDp = 1f, alpha = (if (dark) 0.07f else 0.04f) * strength)
                 val y1 = 1.dp.toPx()
                 c.nativeCanvas.drawRoundRect(0f, y1, size.width, h + y1, r, r, contact)
+            }
+        }
+    },
+)
+
+/**
+ * The settings window's one soft shadow, under the preview of the bar: a wide one 10 dp down and, in the light theme,
+ * a contact line. Drawn like a popup's, for the same reason; what wears it is opaque, so nothing is cut out of it.
+ * Its blur reaches further up than the page has air above the bar: nothing of it is drawn more than [above] over
+ * its wearer, so none lies on the header.
+ */
+fun Modifier.softShadow(dark: Boolean, radius: Dp, above: Dp): Modifier = this.then(
+    Modifier.drawBehind {
+        val r = radius.toPx()
+        val far = 1e5f
+        clipRect(-far, -floor(above.toPx()), size.width + far, size.height + far) {
+            drawIntoCanvas { c ->
+                val y = 10.dp.toPx()
+                c.nativeCanvas.drawRoundRect(0f, y, size.width, size.height + y, r, r, Shadows.paint(this, sigmaDp = 14f, alpha = if (dark) 0.45f else 0.10f))
+                if (!dark) {
+                    val y1 = 1.dp.toPx()
+                    c.nativeCanvas.drawRoundRect(0f, y1, size.width, size.height + y1, r, r, Shadows.paint(this, sigmaDp = 1f, alpha = 0.06f))
+                }
             }
         }
     },

@@ -23,14 +23,13 @@ import com.meridian11.books.bentobar.ui.MenuRoom
 /**
  * The strip's popups and its tooltip: which popup is up ([PopupState] decides), opening one under its item, a press
  * outside it, and the small window that names an item under the pointer. The windows themselves are [MenuWindow] and
- * [Overlay]; this says when they come and go.
+ * [Overlay]; this says when they come and go. Every call names the strip it comes from: a popup and a tooltip hang from
+ * that strip, and go with it ([closeFor]).
  */
 internal class MenuCoordinator(
     private val service: Context,
     private val main: Handler,
     private val wm: WindowManager,
-    private val strip: Overlay,
-    private val placed: MutableMap<String, Rect>,
     private val facts: Facts,
 ) {
     /** What the coordinator asks of the strip's controller, each time it needs it. */
@@ -38,6 +37,10 @@ internal class MenuCoordinator(
         val snapshot: BarSnapshot?
         /** Hidden items are out. */
         val expanded: Boolean
+        /** The strip a press at [x], [y] on the screen landed on, of those on view; null for a press on none of them. */
+        fun stripAt(x: Float, y: Float): AreaStrip?
+        /** The strip that drew the item [id], if one did. */
+        fun stripOf(id: String): AreaStrip?
         /** A popup was closed: hidden items the pointer no longer holds out may fold away. */
         fun popupClosed()
     }
@@ -50,37 +53,59 @@ internal class MenuCoordinator(
     // Observable, so the strip's highlight can stay on the item whose popup is open (StripHost).
     var menuKey: MenuKey? by mutableStateOf(null)
         private set
+    /** The strip the open popup hangs from: the highlight stays on the popup's item there, and nowhere else. */
+    var menuStrip: AreaStrip? by mutableStateOf(null)
+        private set
+    /** The strip of the popup that last began to leave: one still folding away stands under it. */
+    private var leavingStrip: AreaStrip? = null
 
-    fun barMenu(at: Rect, everything: Boolean) = toggleMenu(MenuKey.Bar, at, 290) { host ->
+    fun barMenu(strip: AreaStrip, at: Rect, everything: Boolean) = toggleMenu(strip, MenuKey.Bar, at, 290) { host ->
         BentoBarMenu(host, openItem = { item ->
             val type = Items.of(item.type)
             closeMenu(dissolve = true)
-            // From the list of every item, an item's menu opens under the item itself.
-            val anchor = placed[item.id]?.takeIf { everything } ?: at
+            // From the list of every item, an item's menu opens under the item itself, in whichever strip drew it.
+            val owner = PopupRules.itemMenuStrip(strip, everything, facts.stripOf(item.id))
+            val anchor = owner.placed[item.id]?.takeIf { everything } ?: at
             if (type != null && Ticker.guarded(type, "onClick") { type.onClick(item) } == true) Ticker.refresh()
-            else if (type?.menu != null) toggleMenu(MenuKey.Item(item.id), anchor, type.menuWidthDp) { h -> ItemMenu(item.id, h) }
+            else if (type?.menu != null) toggleMenu(owner, MenuKey.Item(item.id), anchor, type.menuWidthDp) { h -> ItemMenu(item.id, h) }
         }, hideBar = { Store.update { it.copy(enabled = false) } }, everything = everything)
     }
 
-    private val host = object : MenuHost {
+    /** What a popup's content can ask of the strip: one for each popup, since what runs as it starts to close is that popup's own. */
+    private fun hostFor(window: MenuWindow) = object : MenuHost {
         override fun close() = closeMenu()
         override fun openItemSettings(id: String) { closeMenu(); MainActivity.open(service, id.ifEmpty { null }) }
         // Once the popup is gone from the screen (a screenshot must not show it): a frame after its window is removed.
         override fun afterClose(action: () -> Unit) { closeMenu(then = { main.postDelayed(action, 50) }) }
+        override fun onClosing(action: () -> Unit) = window.onClosing(action)
+    }
+
+    /** Whether the popup [key] stays when pressed beside: an item's own popup, whose type says so (a mirror, a prompter). */
+    private fun staysOpen(key: MenuKey?): Boolean {
+        val id = (key as? MenuKey.Item)?.id ?: return false
+        val item = Store.config.value.items.firstOrNull { it.id == id } ?: return false
+        return Items.of(item.type)?.staysOpen == true
     }
 
     /**
-     * Opens the popup [key] below [anchor] (strip window coordinates), or closes it if it's open. A popup
-     * open for another item dissolves while this one unfolds; one still folding away turns round.
+     * Opens the popup [key] below [anchor] (coordinates in [strip]'s window), or closes it if it's open. A popup
+     * open for another item dissolves while this one unfolds, under whichever strip each stands; [key]'s own, still
+     * folding away under the same strip, turns round.
      */
-    fun toggleMenu(key: MenuKey, anchor: Rect, widthDp: Int, content: @Composable (MenuHost) -> Unit) {
+    fun toggleMenu(strip: AreaStrip, key: MenuKey, anchor: Rect, widthDp: Int, content: @Composable (MenuHost) -> Unit) {
         val now = SystemClock.uptimeMillis()
         hideTip()
+        // This key's own popup, still folding away under another strip, would turn round there, not under what was
+        // clicked (the ‹ menu has one key in every area, and an item put in another area keeps its key): it goes at once,
+        // and this one opens anew. Another key's goes on leaving where it stands while this one unfolds.
+        if (leavingStrip != null && leavingStrip !== strip) popups.dropLeaving(key)?.let { it.close(now = true); leavingStrip = null }
         when (val step = popups.toggle(key, now)) {
             PopupCommand.Fold -> { closeMenu(); return }
             PopupCommand.Spend -> return
+            PopupCommand.LetKeysGo, PopupCommand.TakeKeys -> return // a click's answer is never one of these
             is PopupCommand.Reopen -> if (step.popup.reopen()) {
                 popups.reopened(step.popup, key)
+                menuStrip = strip
                 menuKey = key
                 focusMenu(key)
                 return
@@ -103,32 +128,39 @@ internal class MenuCoordinator(
         val x = left.coerceIn(side, (bounds.width() - w - side).coerceAtLeast(side))
         val y = s.bar.bottom + (MenuRoom.top.value * density).toInt()
         val maxH = ((bounds.height() - s.bar.bottom) / density - 170).toInt().coerceAtLeast(200)
-        val o = MenuWindow(service, "BentoBar menu", onOutside = { outside(it) }, onEscape = { closeMenu() })
+        val o = MenuWindow(service, "BentoBar menu", onOutside = { outside(it) }, onEscape = { closeMenu() }, onInside = { inside() })
+        val host = hostFor(o)
         if (!o.show(x, y, w, shadow = { MenuShadow(widthDp.dp, o.glass) }) { MenuSurface(widthDp.dp, maxH.dp, o.glass) { content(host) } }) return
         popups.opened(o, key)
+        menuStrip = strip
         menuKey = key
         focusMenu(key)
     }
 
     /**
      * A press outside the open popup. On the popup's own item it folds the popup away and that press's click is
-     * spent; on another item the popup dissolves, and the click opens that item's popup as it unfolds; anywhere
-     * else it folds. (A press on another app's window comes without coordinates: it is "anywhere else".)
+     * spent; on another item, of any strip, the popup dissolves, and the click opens that item's popup as it unfolds;
+     * anywhere else it folds, or, for a popup that stays (a mirror, a prompter), gives the keys back to the app below.
+     * (A press on another app's window comes without coordinates: it is "anywhere else".)
      */
     private fun outside(ev: MotionEvent) {
         if (menuKey == null) return
-        val loc = strip.locationOnScreen()
-        val x = ev.rawX - loc[0]
-        val y = ev.rawY - loc[1]
-        val onStrip = (ev.rawX != 0f || ev.rawY != 0f) && strip.shown &&
-            x >= 0 && x < strip.params.width && y >= 0 && y < (facts.snapshot?.bar?.height() ?: 0)
+        val strip = menuStrip ?: return
+        // On whichever strip it landed: the bar is one, in however many windows.
+        val on = facts.stripAt(ev.rawX, ev.rawY)
         // The same rule as the highlight's: a press in a gap belongs to the item on its side of the gap's middle.
-        val hit = if (onStrip) PopupRules.pressedItem(x, placed.map { (k, r) -> Span(k, r.left.toFloat(), r.right.toFloat()) }) else null
-        when (popups.press(hit, SystemClock.uptimeMillis())) {
+        val item = on?.let { PopupRules.pressedItem(ev.rawX - it.locationOnScreen()[0], it.placed.map { (k, r) -> Span(k, r.left.toFloat(), r.right.toFloat()) }) }
+        when (popups.press(PopupRules.pressedOwner(item, on?.area ?: strip.area, strip.area), SystemClock.uptimeMillis(), stays = staysOpen(menuKey))) {
             PopupCommand.Fold -> closeMenu()
             PopupCommand.Dissolve -> closeMenu(dissolve = true)
+            PopupCommand.LetKeysGo -> menu?.keys(take = false)
             else -> Unit
         }
+    }
+
+    /** A press inside the open popup: one that gave the keys back takes them again. */
+    private fun inside() {
+        if (popups.pressInside() == PopupCommand.TakeKeys) menu?.keys(take = true)
     }
 
     private fun focusMenu(key: MenuKey) {
@@ -138,15 +170,16 @@ internal class MenuCoordinator(
     }
 
     private var tip: Overlay? = null
-    private var tipFor: Pair<ItemConfig, Rect>? = null
-    private val showTip = Runnable { tipFor?.let { (item, at) -> showTooltip(item, at) } }
+    /** The item the tooltip is for, in its strip: the one shown, or the one the pointer is waiting for. */
+    private var tipFor: Triple<AreaStrip, ItemConfig, Rect>? = null
+    private val showTip = Runnable { tipFor?.let { (strip, item, at) -> showTooltip(strip, item, at) } }
 
     /**
      * The item's name below it, after a short hover: icon-only items otherwise give a mouse user
      * nothing to go on. An item whose state has a tooltip of its own (a track's whole title and
      * artist, which flight this is) shows that instead. A no-touch window, so it never takes a click.
      */
-    private fun showTooltip(item: ItemConfig, anchor: Rect) {
+    private fun showTooltip(strip: AreaStrip, item: ItemConfig, anchor: Rect) {
         hideTip()
         val s = facts.snapshot ?: return
         if (menu != null || !strip.shown) return
@@ -188,6 +221,8 @@ internal class MenuCoordinator(
         }
         // An earlier one still leaving goes at once: only one popup is ever folding away.
         popups.leave(then = then != null)?.close(now = true)
+        leavingStrip = menuStrip
+        menuStrip = null
         menuKey = null
         o.close(dissolve = dissolve, now = now) {
             popups.gone(o)
@@ -199,18 +234,34 @@ internal class MenuCoordinator(
         facts.popupClosed()
     }
 
-    /** The pointer is over [item] or has left it: a tooltip after a moment, or the item's own popup with one already open. */
-    fun itemHover(item: ItemConfig, at: Rect, inside: Boolean, sliding: Boolean) {
+    /** The pointer left [strip] for another strip: a tooltip of an item of [strip], shown or waited for, ends with that. */
+    fun hideTip(strip: AreaStrip) { if (tipFor?.first === strip) hideTip() }
+
+    /** [strip] is leaving the screen: a popup that hangs from it, open or still folding away, goes at once, and so does its tooltip. */
+    fun closeFor(strip: AreaStrip) {
+        if (menuStrip === strip) closeMenu(now = true)
+        if (leavingStrip === strip) { popups.dropLeaving()?.close(now = true); leavingStrip = null }
+        if (tipFor?.first === strip) hideTip()
+    }
+
+    /** The pointer is over [item] of [strip] or has left it: a tooltip after a moment, or the item's own popup with one already open. */
+    fun itemHover(strip: AreaStrip, item: ItemConfig, at: Rect, inside: Boolean, sliding: Boolean) {
+        // Each strip's window has its own frames: the item the pointer left can say so after the one it came to, in
+        // another strip, said it is under it. That is not this tooltip's end (the last one went as the pointer came, below).
+        if (!inside && tipFor?.first.let { it != null && it !== strip }) return
         main.removeCallbacks(showTip)
         // "Switch popups on hover": with a popup open, the item pointed at opens its own, as in a menu bar.
         val type = Items.of(item.type)
         if (inside && !sliding && type != null &&
-            PopupRules.hoverOpens(menuKey, item.id, hasPopup = type.menu != null, on = Store.config.value.hoverSwitchesPopups)) {
-            placed[item.id] = at
-            toggleMenu(MenuKey.Item(item.id), at, type.menuWidthDp) { host -> ItemMenu(item.id, host) }
+            PopupRules.hoverOpens(menuKey, item.id, hasPopup = type.menu != null, on = Store.config.value.hoverSwitchesPopups, stays = staysOpen(menuKey))) {
+            strip.placed[item.id] = at
+            toggleMenu(strip, MenuKey.Item(item.id), at, type.menuWidthDp) { host -> ItemMenu(item.id, host) }
             return
         }
-        if (inside && menu == null && !sliding) { tipFor = item to Rect(at); main.postDelayed(showTip, 600) } else hideTip()
+        if (inside && menu == null && !sliding) {
+            if (tipFor?.first !== strip) hideTip() // another strip's, whose item may not have said its end yet
+            tipFor = Triple(strip, item, Rect(at)); main.postDelayed(showTip, 600)
+        } else hideTip()
     }
 
     private companion object {

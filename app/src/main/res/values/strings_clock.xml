@@ -1,7 +1,7 @@
 <?xml version="1.0" encoding="utf-8"?>
 <!-- World clock: more cities, the Clock item's rule, Plan a time. Every name here starts with clock_ or trigger_clock. -->
 <resources xmlns:tools="http://schemas.android.com/tools" tools:locale="en">
-    <string name="trigger_clock">Show when this clock differs from local time</string>
+    <string name="trigger_clock">while this clock differs from local time</string>
     <string name="trigger_clock_short">shows when away</string>
 
     <!-- the menu -->

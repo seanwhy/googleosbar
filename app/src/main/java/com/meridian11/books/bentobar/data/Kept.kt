@@ -66,6 +66,9 @@ class Kept(
     @Synchronized
     fun remove(name: String) { file(name).delete() }
 
+    /** Whether something is kept under [name]. It reads nothing and waits for nobody: this one may be asked from anywhere. */
+    fun has(name: String): Boolean = file(name).isFile
+
     /** The names that have something kept (in their file-safe form, see [safe]). */
     @Synchronized
     fun names(): Set<String> = entries().mapTo(HashSet()) { it.name.removeSuffix(EXT) }

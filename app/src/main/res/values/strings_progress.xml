@@ -1,0 +1,26 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Day progress. Every name here starts with progress_ or item_progress_. -->
+<resources xmlns:tools="http://schemas.android.com/tools" tools:locale="en">
+    <string name="item_progress_title">Day progress</string>
+    <string name="item_progress_desc">How much of the day is gone, or of the workday, the week, the month or the year</string>
+    <!-- What it counts: the option's name and its choices, and the menu's rows. -->
+    <string name="progress_of">Progress of</string>
+    <string name="progress_day">Day</string>
+    <string name="progress_workday">Workday</string>
+    <string name="progress_week">Week</string>
+    <string name="progress_month">Month</string>
+    <string name="progress_year">Year</string>
+    <string name="progress_from">Workday starts</string>
+    <string name="progress_to">Workday ends</string>
+    <string name="progress_midnight">Midnight</string>
+    <!-- What is left: "48 min left", "5 h 12 left" (hours, then minutes in two figures), "212 days left". -->
+    <plurals name="progress_days">
+        <item quantity="one">%1$d day</item>
+        <item quantity="other">%1$d days</item>
+    </plurals>
+    <string name="progress_left">%1$s left</string>
+    <!-- A workday that has ended. -->
+    <string name="progress_over">Over</string>
+    <!-- Spoken: "Day: 62% gone. 9 hours 7 minutes left". -->
+    <string name="progress_desc">%1$s: %2$s gone. %3$s</string>
+</resources>
