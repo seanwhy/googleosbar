@@ -17,7 +17,9 @@ import java.io.OutputStream
 import java.math.BigInteger
 import java.net.DatagramPacket
 import java.net.DatagramSocket
+import java.net.Inet4Address
 import java.net.InetSocketAddress
+import java.net.NetworkInterface
 import java.net.Socket
 import java.net.URI
 import java.nio.charset.StandardCharsets
@@ -25,6 +27,10 @@ import java.security.MessageDigest
 import java.security.SecureRandom
 import java.util.Base64
 import java.util.Locale
+import java.util.concurrent.Callable
+import java.util.concurrent.ExecutorService
+import java.util.concurrent.Future
+import java.util.concurrent.TimeUnit
 import javax.net.ssl.SNIHostName
 import javax.net.ssl.SSLParameters
 import javax.net.ssl.SSLSocket
@@ -2029,41 +2035,50 @@ data class RemoteDeviceSummary(
         }
 
     val lanIpv4Addresses: List<String>
-        get() {
-            val ranked = LinkedHashMap<String, Int>()
-            for (net in inventory.networks) {
-                for (raw in (net.ipv4 + net.addresses)) {
-                    val ip = raw.substringBefore('/').trim()
-                    if (!RemoteKeyboardProtocol.isUsableLanIpv4(ip)) continue
-                    val score = RemoteKeyboardProtocol.rankLanIpv4(ip, net.name)
-                    val prev = ranked[ip]
-                    if (prev == null || score < prev) {
-                        ranked[ip] = score
-                    }
+        get() = rankedLanIpv4Addresses(RemoteKeyboardProtocol.currentLocalLanSubnets())
+
+    fun rankedLanIpv4Addresses(localSubnets: List<LocalInterfaceSubnet>): List<String> {
+        val ranked = LinkedHashMap<String, Int>()
+        for (net in inventory.networks) {
+            for (raw in (net.ipv4 + net.addresses)) {
+                val ip = raw.substringBefore('/').trim()
+                if (!RemoteKeyboardProtocol.isUsableLanIpv4(ip)) continue
+                val score = RemoteKeyboardProtocol.rankLanIpv4(ip, net.name, localSubnets)
+                val prev = ranked[ip]
+                if (prev == null || score < prev) {
+                    ranked[ip] = score
                 }
             }
-            return ranked.entries
-                .sortedBy { it.value }
-                .map { it.key }
         }
+        return ranked.entries
+            .sortedBy { it.value }
+            .map { it.key }
+    }
 
     val candidateDirectEndpoints: List<DirectTargetEndpoint>
-        get() {
-            val port = if (directPort in 1..65535) directPort else RemoteKeyboardProtocol.DEFAULT_DIRECT_PORT
-            val out = ArrayList<DirectTargetEndpoint>()
-            val seen = HashSet<String>()
-            for (ip in lanIpv4Addresses) {
-                if (seen.add("$ip:$port")) {
-                    out.add(DirectTargetEndpoint(ip, port))
-                }
+        get() = candidateDirectEndpointsFor(RemoteKeyboardProtocol.currentLocalLanSubnets())
+
+    fun candidateDirectEndpointsFor(localSubnets: List<LocalInterfaceSubnet>): List<DirectTargetEndpoint> {
+        val port = if (directPort in 1..65535) directPort else RemoteKeyboardProtocol.DEFAULT_DIRECT_PORT
+        val out = ArrayList<DirectTargetEndpoint>()
+        val seen = HashSet<String>()
+        for (ip in rankedLanIpv4Addresses(localSubnets)) {
+            if (seen.add("$ip:$port")) {
+                out.add(DirectTargetEndpoint(ip, port))
             }
-            val src = sourceIp.trim()
-            if (src.isNotEmpty() && !src.startsWith("127.") && seen.add("$src:$port")) {
-                out.add(DirectTargetEndpoint(src, port))
-            }
-            return out
         }
+        val src = sourceIp.trim()
+        if (src.isNotEmpty() && !src.startsWith("127.") && seen.add("$src:$port")) {
+            out.add(DirectTargetEndpoint(src, port))
+        }
+        return out
+    }
 }
+
+data class LocalInterfaceSubnet(
+    val ipv4: String,
+    val prefixLength: Int,
+)
 
 @Serializable
 data class RemoteDeviceListResponse(
@@ -2152,7 +2167,94 @@ object RemoteKeyboardProtocol {
     private val VIRTUAL_IFACE_PREFIXES = listOf(
         "utun", "tun", "tap", "wg", "docker", "veth", "vmnet", "vbox",
         "bridge", "awdl", "llw", "anpi", "tailscale", "clash", "mihomo", "feth",
+        "rmnet", "ccmni", "ppp", "dummy",
     )
+
+    private const val LOCAL_SUBNET_CACHE_TTL_MS = 5_000L
+    @Volatile private var cachedLocalSubnetsAtMs: Long = 0L
+    @Volatile private var cachedLocalSubnets: List<LocalInterfaceSubnet> = emptyList()
+
+    fun invalidateLocalSubnetCache() {
+        cachedLocalSubnetsAtMs = 0L
+    }
+
+    fun currentLocalLanSubnets(forceRefresh: Boolean = false): List<LocalInterfaceSubnet> {
+        val now = System.currentTimeMillis()
+        if (!forceRefresh && cachedLocalSubnetsAtMs > 0L && now - cachedLocalSubnetsAtMs < LOCAL_SUBNET_CACHE_TTL_MS) {
+            return cachedLocalSubnets
+        }
+        val detected = detectLocalLanSubnets()
+        cachedLocalSubnets = detected
+        cachedLocalSubnetsAtMs = now
+        return detected
+    }
+
+    internal fun detectLocalLanSubnets(): List<LocalInterfaceSubnet> {
+        return runCatching {
+            val out = ArrayList<LocalInterfaceSubnet>()
+            val seen = HashSet<String>()
+            val ifaces = NetworkInterface.getNetworkInterfaces() ?: return@runCatching emptyList()
+            while (ifaces.hasMoreElements()) {
+                val iface = ifaces.nextElement()
+                val up = runCatching { iface.isUp && !iface.isLoopback }.getOrDefault(false)
+                if (!up) continue
+                val cleanName = iface.name.orEmpty().trim().lowercase(Locale.ROOT)
+                if (cleanName.isNotEmpty() && VIRTUAL_IFACE_PREFIXES.any { cleanName.startsWith(it) }) {
+                    continue
+                }
+                for (addr in iface.interfaceAddresses) {
+                    val inet = addr.address as? Inet4Address ?: continue
+                    val ip = inet.hostAddress ?: continue
+                    if (!isUsableLanIpv4(ip)) continue
+                    val prefix = addr.networkPrefixLength.toInt().coerceIn(8, 30)
+                    if (seen.add("$ip/$prefix")) {
+                        out.add(LocalInterfaceSubnet(ip, prefix))
+                    }
+                }
+            }
+            out
+        }.getOrDefault(emptyList())
+    }
+
+    private fun ipv4ToInt(ip: String): Int? {
+        val parts = ip.trim().split('.')
+        if (parts.size != 4) return null
+        var acc = 0
+        for (i in 0..3) {
+            val v = parts[i].toIntOrNull() ?: return null
+            if (v !in 0..255) return null
+            acc = (acc shl 8) or v
+        }
+        return acc
+    }
+
+    private fun subnetAffinityBonus(candIp: String, localSubnets: List<LocalInterfaceSubnet>): Int {
+        if (localSubnets.isEmpty()) return 0
+        val candInt = ipv4ToInt(candIp) ?: return 0
+        val candA = (candInt ushr 24) and 0xFF
+        val candB = (candInt ushr 16) and 0xFF
+        var best = 0
+        for (local in localSubnets) {
+            val localInt = ipv4ToInt(local.ipv4) ?: continue
+            val prefix = local.prefixLength.coerceIn(1, 30)
+            val mask = (-1) shl (32 - prefix)
+            if ((candInt and mask) == (localInt and mask)) {
+                return -100
+            }
+            val localA = (localInt ushr 24) and 0xFF
+            val localB = (localInt ushr 16) and 0xFF
+            val bonus = when {
+                candA == localA && candB == localB -> -50
+                candA == 172 && candB in 16..31 && localA == 172 && localB in 16..31 -> -20
+                candA == 10 && localA == 10 -> -20
+                else -> 0
+            }
+            if (bonus < best) {
+                best = bonus
+            }
+        }
+        return best
+    }
 
     fun isUsableLanIpv4(ip: String): Boolean {
         val parts = ip.trim().split('.')
@@ -2171,7 +2273,11 @@ object RemoteKeyboardProtocol {
         return true
     }
 
-    fun rankLanIpv4(ip: String, ifaceName: String = ""): Int {
+    fun rankLanIpv4(
+        ip: String,
+        ifaceName: String = "",
+        localSubnets: List<LocalInterfaceSubnet> = emptyList(),
+    ): Int {
         val parts = ip.trim().split('.')
         val a = parts.getOrNull(0)?.toIntOrNull() ?: 255
         val b = parts.getOrNull(1)?.toIntOrNull() ?: 255
@@ -2184,7 +2290,8 @@ object RemoteKeyboardProtocol {
         }
         val cleanIface = ifaceName.trim().lowercase(Locale.ROOT)
         val isVirtual = cleanIface.isNotEmpty() && VIRTUAL_IFACE_PREFIXES.any { cleanIface.startsWith(it) }
-        return if (isVirtual) subnetRank + 10 else subnetRank
+        val base = if (isVirtual) subnetRank + 10 else subnetRank
+        return base + subnetAffinityBonus(ip, localSubnets)
     }
 
     fun parseDirectEndpoint(raw: String?, defaultPort: Int = DEFAULT_DIRECT_PORT): DirectTargetEndpoint? {
@@ -2469,6 +2576,41 @@ object RemoteKeyboardClient {
                     .thenByDescending { it.keyboardActive }
                     .thenBy { it.displayTitle.lowercase(Locale.ROOT) }
             )
+    }
+
+    fun probeBestDirectEndpoint(
+        candidates: List<DirectTargetEndpoint>,
+        executor: ExecutorService,
+        expectedDeviceId: String = "",
+        timeoutMs: Int = DIRECT_PROBE_TIMEOUT_MS,
+        probeFn: (DirectTargetEndpoint) -> Boolean = { ep ->
+            probeDirectTcpEndpoint(ep, timeoutMs = timeoutMs, expectedDeviceId = expectedDeviceId)
+        },
+    ): DirectTargetEndpoint? {
+        if (candidates.isEmpty()) return null
+        if (candidates.size == 1) {
+            return candidates[0].takeIf { probeFn(it) }
+        }
+        val futures: List<Future<Boolean>> = candidates.map { ep ->
+            executor.submit(Callable {
+                runCatching { probeFn(ep) }.getOrDefault(false)
+            })
+        }
+        // Preserve candidate priority order while running probes in parallel so a higher-priority
+        // dead IP caps total wait at ~timeoutMs instead of stalling N*timeoutMs.
+        val waitBudgetMs = (timeoutMs + 150).toLong()
+        for ((idx, ep) in candidates.withIndex()) {
+            val ok = runCatching {
+                futures[idx].get(waitBudgetMs, TimeUnit.MILLISECONDS)
+            }.getOrDefault(false)
+            if (ok) {
+                for (j in (idx + 1) until futures.size) {
+                    futures[j].cancel(true)
+                }
+                return ep
+            }
+        }
+        return null
     }
 
     fun probeDirectTcpEndpoint(

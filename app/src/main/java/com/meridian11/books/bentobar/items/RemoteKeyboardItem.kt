@@ -104,6 +104,7 @@ object RemoteKeyboardItem : ItemType(
     private val deviceExecutor = Executors.newSingleThreadExecutor()
     private val sendExecutor = Executors.newSingleThreadExecutor()
     private val probeExecutor = Executors.newSingleThreadExecutor()
+    private val probeWorkers = Executors.newCachedThreadPool()
     private val mainHandler by lazy { Handler(Looper.getMainLooper()) }
 
     internal val identityState = MutableStateFlow(NetTransferIdentity())
@@ -350,6 +351,7 @@ object RemoteKeyboardItem : ItemType(
         val id = identityState.value
         val mode = transportModeOf(item)
         val customAddr = customDirectAddressOf(item)
+        RemoteKeyboardProtocol.invalidateLocalSubnetCache()
         if (mode != RemoteKeyboardProtocol.MODE_DIRECT && !id.isRegistered && id.sessionCookie.isBlank()) {
             errorMessageState.value = "请先在设置或云剪切板中完成 VPS 设备注册。"
             toastOnMain("请先注册 VPS 设备凭证")
@@ -439,7 +441,8 @@ object RemoteKeyboardItem : ItemType(
         }
         addUnique(session.verifiedDirectEndpoint)
         addUnique(RemoteKeyboardProtocol.parseDirectEndpoint(session.customDirectAddress, defaultPort))
-        for (ep in session.target.candidateDirectEndpoints) {
+        val localSubnets = RemoteKeyboardProtocol.currentLocalLanSubnets()
+        for (ep in session.target.candidateDirectEndpointsFor(localSubnets)) {
             addUnique(ep)
         }
         return out
@@ -448,37 +451,41 @@ object RemoteKeyboardItem : ItemType(
     private fun probeDirectEndpointsAsync(session: ActiveSession) {
         val sessionId = session.startedAtMs
         probeExecutor.execute {
-            val candidates = directCandidatesFor(session)
-
-            for (ep in candidates) {
-                if (activeSessionState.value?.startedAtMs != sessionId) return@execute
-                if (RemoteKeyboardClient.probeDirectTcpEndpoint(ep, expectedDeviceId = session.target.id)) {
-                    updateActiveSession(sessionId) { cur ->
-                        cur.copy(
-                            verifiedDirectEndpoint = ep,
-                            channelKind = ChannelKind.DIRECT,
-                            activeChannelLabel = "直连 (${ep.host}:${ep.port})",
-                            consecutiveDirectFailures = 0,
-                            targetReceiverReady = true,
-                        )
-                    }
-                    errorMessageState.value = null
-                    Ticker.refresh(type)
-                    return@execute
+            val candidates = directCandidatesFor(session).take(4)
+            if (activeSessionState.value?.startedAtMs != sessionId) return@execute
+            val matched = RemoteKeyboardClient.probeBestDirectEndpoint(
+                candidates = candidates,
+                executor = probeWorkers,
+                expectedDeviceId = session.target.id,
+            )
+            if (activeSessionState.value?.startedAtMs != sessionId) return@execute
+            if (matched != null) {
+                updateActiveSession(sessionId) { cur ->
+                    cur.copy(
+                        verifiedDirectEndpoint = matched,
+                        channelKind = ChannelKind.DIRECT,
+                        activeChannelLabel = "直连 (${matched.host}:${matched.port})",
+                        consecutiveDirectFailures = 0,
+                        targetReceiverReady = true,
+                    )
                 }
+                errorMessageState.value = null
+                Ticker.refresh(type)
+                return@execute
             }
 
             val current = activeSessionState.value ?: return@execute
             if (current.startedAtMs == sessionId && current.verifiedDirectEndpoint == null) {
                 if (current.transportMode == RemoteKeyboardProtocol.MODE_DIRECT) {
+                    val primaryHint = candidates.firstOrNull()?.let { "${it.host}:${it.port}" } ?: "19878"
                     updateActiveSession(sessionId) { cur ->
                         if (cur.verifiedDirectEndpoint != null) cur
                         else cur.copy(
                             channelKind = ChannelKind.PROBING,
-                            activeChannelLabel = "直连未通 (请检查 19878 / 防火墙 / IP)",
+                            activeChannelLabel = "直连未通 ($primaryHint)",
                         )
                     }
-                    errorMessageState.value = "直连探测未通：请检查目标 19878 端口、防火墙或本地网络权限"
+                    errorMessageState.value = "直连探测未通 ($primaryHint)：请检查目标端口、防火墙或同一局域网连接"
                 } else {
                     updateActiveSession(sessionId) { cur ->
                         if (cur.verifiedDirectEndpoint != null) cur
@@ -588,14 +595,15 @@ object RemoteKeyboardItem : ItemType(
                 candidates.take(4)
             }
             var deliveredEp: DirectTargetEndpoint? = null
-            var lastRes: DirectTcpResult? = null
+            val failures = ArrayList<Pair<DirectTargetEndpoint, String>>()
             for (ep in tcpTargets) {
                 val res = RemoteKeyboardClient.sendDirectTcpWithStatus(ep, payloadBytes)
                 if (res.ok) {
                     deliveredEp = ep
                     break
                 }
-                lastRes = res
+                val reason = res.detail.takeIf { it.isNotBlank() } ?: "目标未响应"
+                failures.add(ep to reason)
             }
             if (deliveredEp == null && !isStoppingReleaseAll) {
                 val udpEp = candidates.first()
@@ -616,17 +624,22 @@ object RemoteKeyboardItem : ItemType(
                 }
                 errorMessageState.value = null
             } else {
-                val firstEp = candidates.first()
-                val reason = lastRes?.detail?.takeIf { it.isNotBlank() } ?: "目标未响应"
+                val summary = if (failures.isNotEmpty()) {
+                    failures.take(2).joinToString("；") { (ep, reason) -> "${ep.host}:${ep.port} ($reason)" }
+                } else {
+                    val firstEp = candidates.first()
+                    "${firstEp.host}:${firstEp.port} (目标未响应)"
+                }
+                val firstFailure = failures.firstOrNull()?.second ?: "目标未响应"
                 updateActiveSession(sessionId) { cur ->
                     val switched = cur.channelKind != ChannelKind.PROBING || cur.verifiedDirectEndpoint != null
                     cur.copy(
                         verifiedDirectEndpoint = null,
                         channelKind = ChannelKind.PROBING,
-                        activeChannelLabel = "直连未通 ($reason)",
+                        activeChannelLabel = "直连未通 ($firstFailure)",
                     ).also { if (switched) Ticker.refresh(type) }
                 }
-                errorMessageState.value = "局域网直连失败 (${firstEp.host}:${firstEp.port}): $reason"
+                errorMessageState.value = "局域网直连失败: $summary"
                 Ticker.refresh(type)
             }
             return
