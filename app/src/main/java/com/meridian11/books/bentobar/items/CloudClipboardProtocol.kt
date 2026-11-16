@@ -2030,16 +2030,21 @@ data class RemoteDeviceSummary(
 
     val lanIpv4Addresses: List<String>
         get() {
-            val out = LinkedHashSet<String>()
+            val ranked = LinkedHashMap<String, Int>()
             for (net in inventory.networks) {
                 for (raw in (net.ipv4 + net.addresses)) {
                     val ip = raw.substringBefore('/').trim()
-                    if (ip.isNotEmpty() && !ip.contains(':') && !ip.startsWith("127.") && !ip.startsWith("169.254.")) {
-                        out.add(ip)
+                    if (!RemoteKeyboardProtocol.isUsableLanIpv4(ip)) continue
+                    val score = RemoteKeyboardProtocol.rankLanIpv4(ip, net.name)
+                    val prev = ranked[ip]
+                    if (prev == null || score < prev) {
+                        ranked[ip] = score
                     }
                 }
             }
-            return out.toList()
+            return ranked.entries
+                .sortedBy { it.value }
+                .map { it.key }
         }
 
     val candidateDirectEndpoints: List<DirectTargetEndpoint>
@@ -2090,6 +2095,21 @@ data class RemoteKeyboardSendRequest(
 )
 
 @Serializable
+data class DirectKeyboardPingReply(
+    val ok: Boolean = false,
+    val type: String = "",
+    val deviceId: String = "",
+    val directPort: Int = 0,
+    val error: String = "",
+)
+
+data class DirectTcpResult(
+    val ok: Boolean,
+    val statusCode: Int = 0,
+    val detail: String = "",
+)
+
+@Serializable
 data class RemoteKeyboardSendResponse(
     val accepted: Int = 0,
     val targetOnline: Boolean = false,
@@ -2128,6 +2148,44 @@ object RemoteKeyboardProtocol {
         CloudClipboardShortcut(ctrl = true, alt = true, shift = false, meta = false, keyCode = KeyEvent.KEYCODE_2),
         CloudClipboardShortcut(ctrl = true, alt = true, shift = false, meta = false, keyCode = KeyEvent.KEYCODE_M),
     )
+
+    private val VIRTUAL_IFACE_PREFIXES = listOf(
+        "utun", "tun", "tap", "wg", "docker", "veth", "vmnet", "vbox",
+        "bridge", "awdl", "llw", "anpi", "tailscale", "clash", "mihomo", "feth",
+    )
+
+    fun isUsableLanIpv4(ip: String): Boolean {
+        val parts = ip.trim().split('.')
+        if (parts.size != 4) return false
+        val octets = IntArray(4)
+        for (i in 0..3) {
+            val v = parts[i].toIntOrNull() ?: return false
+            if (v !in 0..255) return false
+            octets[i] = v
+        }
+        val a = octets[0]
+        val b = octets[1]
+        if (a == 0 || a == 127 || a >= 224) return false
+        if (a == 169 && b == 254) return false // IPv4 link-local
+        if (a == 198 && (b == 18 || b == 19)) return false // RFC 2544 / proxy fake-IP TUN
+        return true
+    }
+
+    fun rankLanIpv4(ip: String, ifaceName: String = ""): Int {
+        val parts = ip.trim().split('.')
+        val a = parts.getOrNull(0)?.toIntOrNull() ?: 255
+        val b = parts.getOrNull(1)?.toIntOrNull() ?: 255
+        val subnetRank = when {
+            a == 192 && b == 168 -> 0
+            a == 10 -> 1
+            a == 172 && b in 16..31 -> 2
+            a == 100 && b in 64..127 -> 4
+            else -> 3
+        }
+        val cleanIface = ifaceName.trim().lowercase(Locale.ROOT)
+        val isVirtual = cleanIface.isNotEmpty() && VIRTUAL_IFACE_PREFIXES.any { cleanIface.startsWith(it) }
+        return if (isVirtual) subnetRank + 10 else subnetRank
+    }
 
     fun parseDirectEndpoint(raw: String?, defaultPort: Int = DEFAULT_DIRECT_PORT): DirectTargetEndpoint? {
         if (raw.isNullOrBlank()) return null
@@ -2413,27 +2471,33 @@ object RemoteKeyboardClient {
             )
     }
 
-    fun probeDirectTcpEndpoint(endpoint: DirectTargetEndpoint, timeoutMs: Int = DIRECT_PROBE_TIMEOUT_MS): Boolean {
-        val sock = Socket()
+    fun probeDirectTcpEndpoint(
+        endpoint: DirectTargetEndpoint,
+        timeoutMs: Int = DIRECT_PROBE_TIMEOUT_MS,
+        expectedDeviceId: String = "",
+    ): Boolean {
         return try {
-            sock.tcpNoDelay = true
-            sock.soTimeout = timeoutMs
-            sock.connect(InetSocketAddress(endpoint.host, endpoint.port), timeoutMs)
-            val out = sock.getOutputStream()
-            val req = "GET /api/keyboard/ping HTTP/1.1\r\nHost: ${endpoint.host}:${endpoint.port}\r\nConnection: close\r\n\r\n"
-            out.write(req.toByteArray(StandardCharsets.UTF_8))
-            out.flush()
-            val buf = ByteArray(64)
-            val n = sock.getInputStream().read(buf)
-            n > 0 && String(buf, 0, n, StandardCharsets.ISO_8859_1).contains("200")
+            val resp = CloudClipboardClient.requestStream(
+                url = "http://${endpoint.host}:${endpoint.port}/api/keyboard/ping",
+                method = "GET",
+                splitTlsFirstByte = false,
+                connectTimeoutMs = timeoutMs,
+                readTimeoutMs = timeoutMs,
+            )
+            if (resp.statusCode !in 200..299) return false
+            val expected = expectedDeviceId.trim()
+            if (expected.isEmpty()) return true
+            val reply = runCatching {
+                CloudClipboardProtocol.json.decodeFromString<DirectKeyboardPingReply>(resp.bodyText)
+            }.getOrNull()
+            val reportedId = reply?.deviceId?.trim().orEmpty()
+            reportedId.isEmpty() || reportedId == expected
         } catch (_: Exception) {
             false
-        } finally {
-            runCatching { sock.close() }
         }
     }
 
-    fun sendDirectTcp(endpoint: DirectTargetEndpoint, payloadBytes: ByteArray): Boolean {
+    fun sendDirectTcpWithStatus(endpoint: DirectTargetEndpoint, payloadBytes: ByteArray): DirectTcpResult {
         return try {
             val resp = directTcpConnection.postJson(
                 url = "http://${endpoint.host}:${endpoint.port}/api/keyboard/direct",
@@ -2442,11 +2506,23 @@ object RemoteKeyboardClient {
                     mapOf("Content-Type" to "application/json; charset=utf-8")
                 },
             )
-            resp.statusCode in 200..299
-        } catch (_: Exception) {
-            false
+            if (resp.statusCode in 200..299) {
+                DirectTcpResult(ok = true, statusCode = resp.statusCode)
+            } else {
+                val detail = CloudClipboardProtocol.readErrorDetail(resp.bodyText, resp.statusCode, resp.reasonPhrase)
+                DirectTcpResult(ok = false, statusCode = resp.statusCode, detail = detail)
+            }
+        } catch (e: Exception) {
+            DirectTcpResult(
+                ok = false,
+                statusCode = 0,
+                detail = e.message?.takeIf { it.isNotBlank() } ?: e.javaClass.simpleName,
+            )
         }
     }
+
+    fun sendDirectTcp(endpoint: DirectTargetEndpoint, payloadBytes: ByteArray): Boolean =
+        sendDirectTcpWithStatus(endpoint, payloadBytes).ok
 
     fun sendDirectUdp(endpoint: DirectTargetEndpoint, payloadBytes: ByteArray): Boolean {
         if (payloadBytes.isEmpty() || payloadBytes.size > 60_000) return false
@@ -2458,6 +2534,33 @@ object RemoteKeyboardClient {
             true
         } catch (_: Exception) {
             false
+        }
+    }
+
+    fun sendDirectUdpWithAck(
+        endpoint: DirectTargetEndpoint,
+        payloadBytes: ByteArray,
+        timeoutMs: Int = 250,
+    ): Boolean {
+        if (payloadBytes.isEmpty() || payloadBytes.size > 60_000) return false
+        val sock = DatagramSocket()
+        return try {
+            sock.soTimeout = timeoutMs
+            val addr = InetSocketAddress(endpoint.host, endpoint.port)
+            val pkt = DatagramPacket(payloadBytes, payloadBytes.size, addr.address, addr.port)
+            sock.send(pkt)
+            val buf = ByteArray(1024)
+            val replyPkt = DatagramPacket(buf, buf.size)
+            sock.receive(replyPkt)
+            val body = String(replyPkt.data, replyPkt.offset, replyPkt.length, StandardCharsets.UTF_8)
+            val reply = runCatching {
+                CloudClipboardProtocol.json.decodeFromString<DirectKeyboardPingReply>(body)
+            }.getOrNull()
+            reply?.ok == true
+        } catch (_: Exception) {
+            false
+        } finally {
+            runCatching { sock.close() }
         }
     }
 

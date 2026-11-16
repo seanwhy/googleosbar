@@ -366,7 +366,7 @@ object RemoteKeyboardItem : ItemType(
         consecutiveEscCount = 0
 
         val (initialKind, initialChannel) = when (mode) {
-            RemoteKeyboardProtocol.MODE_DIRECT -> ChannelKind.DIRECT to "局域网直连探测中…"
+            RemoteKeyboardProtocol.MODE_DIRECT -> ChannelKind.PROBING to "局域网直连探测中…"
             RemoteKeyboardProtocol.MODE_RELAY -> ChannelKind.RELAY to "VPS 中转"
             else -> ChannelKind.PROBING to "直连探测 / VPS 中转"
         }
@@ -427,19 +427,32 @@ object RemoteKeyboardItem : ItemType(
         }
     }
 
+    internal fun directCandidatesFor(session: ActiveSession): List<DirectTargetEndpoint> {
+        val out = ArrayList<DirectTargetEndpoint>()
+        val seen = HashSet<String>()
+        val defaultPort = session.target.directPort.takeIf { it in 1..65535 }
+            ?: RemoteKeyboardProtocol.DEFAULT_DIRECT_PORT
+        fun addUnique(ep: DirectTargetEndpoint?) {
+            if (ep != null && seen.add("${ep.host}:${ep.port}")) {
+                out.add(ep)
+            }
+        }
+        addUnique(session.verifiedDirectEndpoint)
+        addUnique(RemoteKeyboardProtocol.parseDirectEndpoint(session.customDirectAddress, defaultPort))
+        for (ep in session.target.candidateDirectEndpoints) {
+            addUnique(ep)
+        }
+        return out
+    }
+
     private fun probeDirectEndpointsAsync(session: ActiveSession) {
         val sessionId = session.startedAtMs
         probeExecutor.execute {
-            val candidates = ArrayList<DirectTargetEndpoint>()
-            RemoteKeyboardProtocol.parseDirectEndpoint(
-                session.customDirectAddress,
-                session.target.directPort.takeIf { it in 1..65535 } ?: RemoteKeyboardProtocol.DEFAULT_DIRECT_PORT,
-            )?.let { candidates.add(it) }
-            candidates.addAll(session.target.candidateDirectEndpoints)
+            val candidates = directCandidatesFor(session)
 
             for (ep in candidates) {
                 if (activeSessionState.value?.startedAtMs != sessionId) return@execute
-                if (RemoteKeyboardClient.probeDirectTcpEndpoint(ep)) {
+                if (RemoteKeyboardClient.probeDirectTcpEndpoint(ep, expectedDeviceId = session.target.id)) {
                     updateActiveSession(sessionId) { cur ->
                         cur.copy(
                             verifiedDirectEndpoint = ep,
@@ -449,6 +462,7 @@ object RemoteKeyboardItem : ItemType(
                             targetReceiverReady = true,
                         )
                     }
+                    errorMessageState.value = null
                     Ticker.refresh(type)
                     return@execute
                 }
@@ -456,14 +470,23 @@ object RemoteKeyboardItem : ItemType(
 
             val current = activeSessionState.value ?: return@execute
             if (current.startedAtMs == sessionId && current.verifiedDirectEndpoint == null) {
-                val (fallbackKind, fallbackLabel) = if (current.transportMode == RemoteKeyboardProtocol.MODE_DIRECT) {
-                    ChannelKind.DIRECT to "直连未响应 (仍尝试直连)"
+                if (current.transportMode == RemoteKeyboardProtocol.MODE_DIRECT) {
+                    updateActiveSession(sessionId) { cur ->
+                        if (cur.verifiedDirectEndpoint != null) cur
+                        else cur.copy(
+                            channelKind = ChannelKind.PROBING,
+                            activeChannelLabel = "直连未通 (请检查 19878 / 防火墙 / IP)",
+                        )
+                    }
+                    errorMessageState.value = "直连探测未通：请检查目标 19878 端口、防火墙或本地网络权限"
                 } else {
-                    ChannelKind.RELAY to "VPS 极速中转"
-                }
-                updateActiveSession(sessionId) { cur ->
-                    if (cur.verifiedDirectEndpoint != null) cur
-                    else cur.copy(channelKind = fallbackKind, activeChannelLabel = fallbackLabel)
+                    updateActiveSession(sessionId) { cur ->
+                        if (cur.verifiedDirectEndpoint != null) cur
+                        else cur.copy(
+                            channelKind = ChannelKind.RELAY,
+                            activeChannelLabel = "VPS 极速中转",
+                        )
+                    }
                 }
                 Ticker.refresh(type)
             }
@@ -552,31 +575,59 @@ object RemoteKeyboardItem : ItemType(
         )
         val payloadBytes = CloudClipboardProtocol.json.encodeToString(req).toByteArray(StandardCharsets.UTF_8)
 
-        // 1. Direct P2P / LAN path (prefer reliable TCP keep-alive over lossy UDP)
-        val directEp = currentSession.verifiedDirectEndpoint
-            ?: RemoteKeyboardProtocol.parseDirectEndpoint(currentSession.customDirectAddress)
-            ?: currentSession.target.candidateDirectEndpoints.firstOrNull()
-
+        // 1. Direct P2P / LAN path (prefer reliable TCP keep-alive; require real ACK in direct mode)
         if (currentSession.transportMode == RemoteKeyboardProtocol.MODE_DIRECT) {
-            if (directEp != null) {
-                val ok = RemoteKeyboardClient.sendDirectTcp(directEp, payloadBytes) ||
-                    RemoteKeyboardClient.sendDirectUdp(directEp, payloadBytes)
-                if (ok) {
-                    updateActiveSession(sessionId) { cur ->
-                        val switched = cur.channelKind != ChannelKind.DIRECT
-                        cur.copy(
-                            ackedKeyCount = cur.ackedKeyCount + batch.size,
-                            channelKind = ChannelKind.DIRECT,
-                            activeChannelLabel = "直连 (${directEp.host}:${directEp.port})",
-                            consecutiveDirectFailures = 0,
-                        ).also { if (switched) Ticker.refresh(type) }
-                    }
-                    errorMessageState.value = null
-                } else {
-                    errorMessageState.value = "局域网直连发送失败 (${directEp.host}:${directEp.port})"
-                }
-            } else {
+            val candidates = directCandidatesFor(currentSession)
+            if (candidates.isEmpty()) {
                 errorMessageState.value = "未找到目标设备的局域网 IP，请填写直连地址或切换为自动模式。"
+                return
+            }
+            val tcpTargets = if (currentSession.verifiedDirectEndpoint != null) {
+                candidates.take(2)
+            } else {
+                candidates.take(4)
+            }
+            var deliveredEp: DirectTargetEndpoint? = null
+            var lastRes: DirectTcpResult? = null
+            for (ep in tcpTargets) {
+                val res = RemoteKeyboardClient.sendDirectTcpWithStatus(ep, payloadBytes)
+                if (res.ok) {
+                    deliveredEp = ep
+                    break
+                }
+                lastRes = res
+            }
+            if (deliveredEp == null && !isStoppingReleaseAll) {
+                val udpEp = candidates.first()
+                if (RemoteKeyboardClient.sendDirectUdpWithAck(udpEp, payloadBytes)) {
+                    deliveredEp = udpEp
+                }
+            }
+            if (deliveredEp != null) {
+                updateActiveSession(sessionId) { cur ->
+                    val switched = cur.channelKind != ChannelKind.DIRECT || cur.verifiedDirectEndpoint != deliveredEp
+                    cur.copy(
+                        verifiedDirectEndpoint = deliveredEp,
+                        ackedKeyCount = cur.ackedKeyCount + batch.size,
+                        channelKind = ChannelKind.DIRECT,
+                        activeChannelLabel = "直连 (${deliveredEp.host}:${deliveredEp.port})",
+                        consecutiveDirectFailures = 0,
+                    ).also { if (switched) Ticker.refresh(type) }
+                }
+                errorMessageState.value = null
+            } else {
+                val firstEp = candidates.first()
+                val reason = lastRes?.detail?.takeIf { it.isNotBlank() } ?: "目标未响应"
+                updateActiveSession(sessionId) { cur ->
+                    val switched = cur.channelKind != ChannelKind.PROBING || cur.verifiedDirectEndpoint != null
+                    cur.copy(
+                        verifiedDirectEndpoint = null,
+                        channelKind = ChannelKind.PROBING,
+                        activeChannelLabel = "直连未通 ($reason)",
+                    ).also { if (switched) Ticker.refresh(type) }
+                }
+                errorMessageState.value = "局域网直连失败 (${firstEp.host}:${firstEp.port}): $reason"
+                Ticker.refresh(type)
             }
             return
         }
