@@ -11,10 +11,14 @@ import androidx.compose.runtime.remember
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.geometry.CornerRadius
 import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.geometry.Rect
 import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.Path
 import androidx.compose.ui.graphics.PathFillType
 import androidx.compose.ui.graphics.StrokeCap
+import androidx.compose.ui.graphics.StrokeJoin
+import androidx.compose.ui.graphics.drawscope.DrawScope
 import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.graphics.drawscope.scale
 import androidx.compose.ui.graphics.vector.PathParser
@@ -244,31 +248,46 @@ fun SymIcon(
                         size = Size(5.6f * s, 4.8f * s),
                         style = Stroke(width = 1.85f * s, cap = StrokeCap.Round),
                     )
-                    // Keyboard rounded chassis
-                    drawRoundRect(
+                    drawRemoteKeyboardChassis(color = color, s = s, filled = filled, chassisTopY = 8.8f, chassisHeight = 12.2f)
+                }
+                "brand:remote_keyboard_direct" -> {
+                    // Bold vector 'D' badge above the keyboard for direct LAN/P2P transport
+                    val dPath = Path().apply {
+                        moveTo(8.8f * s, 1.8f * s)
+                        lineTo(11.6f * s, 1.8f * s)
+                        arcTo(
+                            rect = Rect(8.4f * s, 1.8f * s, 15.4f * s, 8.8f * s),
+                            startAngleDegrees = -90f,
+                            sweepAngleDegrees = 180f,
+                            forceMoveTo = false,
+                        )
+                        lineTo(8.8f * s, 8.8f * s)
+                        close()
+                    }
+                    drawPath(
+                        path = dPath,
                         color = color,
-                        topLeft = Offset(2.2f * s, 8.8f * s),
-                        size = Size(19.6f * s, 12.2f * s),
-                        cornerRadius = androidx.compose.ui.geometry.CornerRadius(2.6f * s, 2.6f * s),
-                        style = Stroke(width = if (filled) 2.2f * s else 1.9f * s),
+                        style = Stroke(width = 2.0f * s, cap = StrokeCap.Round, join = StrokeJoin.Round),
                     )
-                    // Keycap row 1
-                    val keyRadius = 1.05f * s
-                    for (cx in listOf(6.2f, 10.0f, 14.0f, 17.8f)) {
-                        drawCircle(color = color, radius = keyRadius, center = Offset(cx * s, 12.3f * s))
-                    }
-                    // Keycap row 2
-                    for (cx in listOf(6.2f, 10.0f, 14.0f, 17.8f)) {
-                        drawCircle(color = color, radius = keyRadius, center = Offset(cx * s, 15.1f * s))
-                    }
-                    // Spacebar
+                    drawRemoteKeyboardChassis(color = color, s = s, filled = filled, chassisTopY = 10.8f, chassisHeight = 10.8f)
+                }
+                "brand:remote_keyboard_relay" -> {
+                    // Bold vector 'T' badge above the keyboard for VPS tunnel/transfer relay
                     drawLine(
                         color = color,
-                        start = Offset(7.6f * s, 18.0f * s),
-                        end = Offset(16.4f * s, 18.0f * s),
-                        strokeWidth = 2.0f * s,
+                        start = Offset(7.6f * s, 2.1f * s),
+                        end = Offset(16.4f * s, 2.1f * s),
+                        strokeWidth = 2.1f * s,
                         cap = StrokeCap.Round,
                     )
+                    drawLine(
+                        color = color,
+                        start = Offset(12.0f * s, 2.1f * s),
+                        end = Offset(12.0f * s, 8.8f * s),
+                        strokeWidth = 2.1f * s,
+                        cap = StrokeCap.Round,
+                    )
+                    drawRemoteKeyboardChassis(color = color, s = s, filled = filled, chassisTopY = 10.8f, chassisHeight = 10.8f)
                 }
             }
         }
@@ -285,5 +304,39 @@ fun SymIcon(
             textAlign = TextAlign.Center,
         ),
         maxLines = 1,
+    )
+}
+
+private fun DrawScope.drawRemoteKeyboardChassis(
+    color: Color,
+    s: Float,
+    filled: Boolean,
+    chassisTopY: Float,
+    chassisHeight: Float,
+) {
+    drawRoundRect(
+        color = color,
+        topLeft = Offset(2.2f * s, chassisTopY * s),
+        size = Size(19.6f * s, chassisHeight * s),
+        cornerRadius = CornerRadius(2.5f * s, 2.5f * s),
+        style = Stroke(width = if (filled) 2.2f * s else 1.9f * s),
+    )
+    val scaleY = chassisHeight / 12.2f
+    val row1Y = chassisTopY + 3.5f * scaleY
+    val row2Y = chassisTopY + 6.3f * scaleY
+    val spaceY = chassisTopY + 9.2f * scaleY
+    val keyRadius = 1.0f * s
+    for (cx in listOf(6.2f, 10.0f, 14.0f, 17.8f)) {
+        drawCircle(color = color, radius = keyRadius, center = Offset(cx * s, row1Y * s))
+    }
+    for (cx in listOf(6.2f, 10.0f, 14.0f, 17.8f)) {
+        drawCircle(color = color, radius = keyRadius, center = Offset(cx * s, row2Y * s))
+    }
+    drawLine(
+        color = color,
+        start = Offset(7.6f * s, spaceY * s),
+        end = Offset(16.4f * s, spaceY * s),
+        strokeWidth = 2.0f * s,
+        cap = StrokeCap.Round,
     )
 }
