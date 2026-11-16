@@ -1260,28 +1260,15 @@ object CloudClipboardClient {
         val targetPath = if (uri.rawQuery.isNullOrEmpty()) rawPath else "$rawPath?${uri.rawQuery}"
         val hostHeader = if ((isHttps && port == 443) || (!isHttps && port == 80)) host else "$host:$port"
 
-        val tcpSocket = Socket()
+        val activeSocket = createHttpSocket(
+            host = host,
+            port = port,
+            isHttps = isHttps,
+            splitTlsFirstByte = splitTlsFirstByte,
+            connectTimeoutMs = connectTimeoutMs,
+            readTimeoutMs = readTimeoutMs,
+        )
         try {
-            tcpSocket.tcpNoDelay = true
-            tcpSocket.soTimeout = readTimeoutMs
-            tcpSocket.connect(InetSocketAddress(host, port), connectTimeoutMs)
-
-            val activeSocket: Socket = if (isHttps) {
-                val baseSocket = if (splitTlsFirstByte) PanelHandshakeSocket(tcpSocket, 80L) else tcpSocket
-                val sslFactory = SSLSocketFactory.getDefault() as SSLSocketFactory
-                val sslSocket = sslFactory.createSocket(baseSocket, host, port, true) as SSLSocket
-                runCatching {
-                    val params: SSLParameters = sslSocket.sslParameters
-                    params.serverNames = listOf(SNIHostName(host))
-                    sslSocket.sslParameters = params
-                }
-                sslSocket.soTimeout = readTimeoutMs
-                sslSocket.startHandshake()
-                sslSocket
-            } else {
-                tcpSocket
-            }
-
             activeSocket.use { sock ->
                 val out = sock.getOutputStream()
                 val reqBuilder = StringBuilder()
@@ -1318,7 +1305,7 @@ object CloudClipboardClient {
                 return readHttpResponse(input)
             }
         } catch (e: Exception) {
-            runCatching { tcpSocket.close() }
+            runCatching { activeSocket.close() }
             throw e
         }
     }
@@ -1397,6 +1384,149 @@ object CloudClipboardClient {
             else -> input.readBytes()
         }
         return RawHttpResponse(statusCode, reason, headers, bodyBytes)
+    }
+
+    internal fun createHttpSocket(
+        host: String,
+        port: Int,
+        isHttps: Boolean,
+        splitTlsFirstByte: Boolean,
+        connectTimeoutMs: Int,
+        readTimeoutMs: Int,
+    ): Socket {
+        val tcpSocket = Socket()
+        try {
+            tcpSocket.tcpNoDelay = true
+            tcpSocket.keepAlive = true
+            tcpSocket.soTimeout = readTimeoutMs
+            tcpSocket.connect(InetSocketAddress(host, port), connectTimeoutMs)
+
+            if (!isHttps) return tcpSocket
+
+            val baseSocket = if (splitTlsFirstByte) PanelHandshakeSocket(tcpSocket, 80L) else tcpSocket
+            val sslFactory = SSLSocketFactory.getDefault() as SSLSocketFactory
+            val sslSocket = sslFactory.createSocket(baseSocket, host, port, true) as SSLSocket
+            runCatching {
+                val params: SSLParameters = sslSocket.sslParameters
+                params.serverNames = listOf(SNIHostName(host))
+                sslSocket.sslParameters = params
+            }
+            sslSocket.soTimeout = readTimeoutMs
+            sslSocket.startHandshake()
+            return sslSocket
+        } catch (e: Exception) {
+            runCatching { tcpSocket.close() }
+            throw e
+        }
+    }
+
+    /**
+     * Reuses a single HTTP/1.1 Keep-Alive TCP/TLS connection per target host to avoid repeating
+     * TCP handshakes and the 80ms TLS split sleep on every keystroke batch.
+     */
+    internal class PersistentHttpConnection(
+        private val connectTimeoutMs: Int,
+        private val readTimeoutMs: Int,
+        private val splitTlsFirstByte: Boolean,
+        private val maxIdleMs: Long = 20_000L,
+    ) {
+        private var targetKey: String? = null
+        private var socket: Socket? = null
+        private var output: OutputStream? = null
+        private var input: BufferedInputStream? = null
+        private var lastUsedMs: Long = 0L
+
+        @Synchronized
+        fun close() {
+            targetKey = null
+            output = null
+            input = null
+            lastUsedMs = 0L
+            runCatching { socket?.close() }
+            socket = null
+        }
+
+        @Synchronized
+        fun postJson(
+            url: String,
+            bodyBytes: ByteArray,
+            headersFactory: () -> Map<String, String>,
+        ): RawHttpResponse {
+            val uri = URI(url)
+            val scheme = uri.scheme?.lowercase(Locale.ROOT) ?: throw IllegalArgumentException("Missing URI scheme: $url")
+            val isHttps = scheme == "https"
+            require(isHttps || scheme == "http") { "Unsupported URI scheme: $scheme" }
+            val host = uri.host ?: throw IllegalArgumentException("Missing URI host: $url")
+            val port = if (uri.port > 0) uri.port else if (isHttps) 443 else 80
+            val rawPath = uri.rawPath?.takeIf { it.isNotEmpty() } ?: "/"
+            val targetPath = if (uri.rawQuery.isNullOrEmpty()) rawPath else "$rawPath?${uri.rawQuery}"
+            val hostHeader = if ((isHttps && port == 443) || (!isHttps && port == 80)) host else "$host:$port"
+            val key = "$scheme://$host:$port"
+
+            for (attempt in 0..1) {
+                val now = System.currentTimeMillis()
+                val staleOrChanged = targetKey != key ||
+                    socket == null ||
+                    socket!!.isClosed ||
+                    (lastUsedMs > 0L && now - lastUsedMs > maxIdleMs)
+                if (staleOrChanged) {
+                    close()
+                    val opened = createHttpSocket(host, port, isHttps, splitTlsFirstByte, connectTimeoutMs, readTimeoutMs)
+                    targetKey = key
+                    socket = opened
+                    output = opened.getOutputStream()
+                    input = BufferedInputStream(opened.getInputStream())
+                }
+                val reused = !staleOrChanged
+
+                try {
+                    val out = output!!
+                    val inp = input!!
+                    val reqHeaders = headersFactory()
+                    val reqBuilder = StringBuilder()
+                    reqBuilder.append("POST ").append(targetPath).append(" HTTP/1.1\r\n")
+                    reqBuilder.append("Host: ").append(hostHeader).append("\r\n")
+                    reqBuilder.append("Connection: keep-alive\r\n")
+                    var hasAccept = false
+                    for ((k, v) in reqHeaders) {
+                        if (k.equals("Host", ignoreCase = true) ||
+                            k.equals("Connection", ignoreCase = true) ||
+                            k.equals("Content-Length", ignoreCase = true)
+                        ) continue
+                        if (k.equals("Accept", ignoreCase = true)) hasAccept = true
+                        reqBuilder.append(k).append(": ").append(v).append("\r\n")
+                    }
+                    if (!hasAccept) {
+                        reqBuilder.append("Accept: application/json\r\n")
+                    }
+                    reqBuilder.append("Content-Length: ").append(bodyBytes.size).append("\r\n\r\n")
+
+                    out.write(reqBuilder.toString().toByteArray(StandardCharsets.UTF_8))
+                    if (bodyBytes.isNotEmpty()) {
+                        out.write(bodyBytes)
+                    }
+                    out.flush()
+
+                    val resp = readHttpResponse(inp)
+                    val connHeader = resp.headers["connection"].orEmpty()
+                    val hasFramedBody = resp.headers.containsKey("content-length") ||
+                        resp.headers["transfer-encoding"].orEmpty().contains("chunked", ignoreCase = true)
+                    if (connHeader.contains("close", ignoreCase = true) || !hasFramedBody) {
+                        close()
+                    } else {
+                        lastUsedMs = System.currentTimeMillis()
+                    }
+                    return resp
+                } catch (e: IOException) {
+                    close()
+                    if (reused && attempt == 0) {
+                        continue
+                    }
+                    throw e
+                }
+            }
+            throw IOException("Persistent HTTP request failed unexpectedly.")
+        }
     }
 
     fun enroll(
@@ -2184,9 +2314,27 @@ object RemoteKeyboardKeyMapper {
  * - Sends keyboard batches over direct P2P / LAN UDP & HTTP (`19878`) and/or VPS relay (`POST /api/agent/v1/keyboard/send`)
  */
 object RemoteKeyboardClient {
-    private const val DIRECT_TCP_TIMEOUT_MS = 450
+    private const val DIRECT_PROBE_TIMEOUT_MS = 450
+    private const val DIRECT_TCP_CONNECT_TIMEOUT_MS = 600
+    private const val DIRECT_TCP_READ_TIMEOUT_MS = 1_200
     private const val RELAY_CONNECT_TIMEOUT_MS = 4_000
     private const val RELAY_READ_TIMEOUT_MS = 6_000
+
+    private val directTcpConnection = CloudClipboardClient.PersistentHttpConnection(
+        connectTimeoutMs = DIRECT_TCP_CONNECT_TIMEOUT_MS,
+        readTimeoutMs = DIRECT_TCP_READ_TIMEOUT_MS,
+        splitTlsFirstByte = false,
+    )
+    private val relayConnection = CloudClipboardClient.PersistentHttpConnection(
+        connectTimeoutMs = RELAY_CONNECT_TIMEOUT_MS,
+        readTimeoutMs = RELAY_READ_TIMEOUT_MS,
+        splitTlsFirstByte = true,
+    )
+
+    fun closeConnections() {
+        directTcpConnection.close()
+        relayConnection.close()
+    }
 
     @Volatile
     private var udpSocket: DatagramSocket? = null
@@ -2265,7 +2413,7 @@ object RemoteKeyboardClient {
             )
     }
 
-    fun probeDirectTcpEndpoint(endpoint: DirectTargetEndpoint, timeoutMs: Int = DIRECT_TCP_TIMEOUT_MS): Boolean {
+    fun probeDirectTcpEndpoint(endpoint: DirectTargetEndpoint, timeoutMs: Int = DIRECT_PROBE_TIMEOUT_MS): Boolean {
         val sock = Socket()
         return try {
             sock.tcpNoDelay = true
@@ -2285,30 +2433,18 @@ object RemoteKeyboardClient {
         }
     }
 
-    fun sendDirectTcp(endpoint: DirectTargetEndpoint, payloadBytes: ByteArray, timeoutMs: Int = DIRECT_TCP_TIMEOUT_MS): Boolean {
-        val sock = Socket()
+    fun sendDirectTcp(endpoint: DirectTargetEndpoint, payloadBytes: ByteArray): Boolean {
         return try {
-            sock.tcpNoDelay = true
-            sock.soTimeout = timeoutMs
-            sock.connect(InetSocketAddress(endpoint.host, endpoint.port), timeoutMs)
-            val out = sock.getOutputStream()
-            val header = buildString {
-                append("POST /api/keyboard/direct HTTP/1.1\r\n")
-                append("Host: ").append(endpoint.host).append(':').append(endpoint.port).append("\r\n")
-                append("Content-Type: application/json\r\n")
-                append("Content-Length: ").append(payloadBytes.size).append("\r\n")
-                append("Connection: close\r\n\r\n")
-            }.toByteArray(StandardCharsets.UTF_8)
-            out.write(header)
-            out.write(payloadBytes)
-            out.flush()
-            val buf = ByteArray(64)
-            val n = sock.getInputStream().read(buf)
-            n > 0 && String(buf, 0, n, StandardCharsets.ISO_8859_1).contains("200")
+            val resp = directTcpConnection.postJson(
+                url = "http://${endpoint.host}:${endpoint.port}/api/keyboard/direct",
+                bodyBytes = payloadBytes,
+                headersFactory = {
+                    mapOf("Content-Type" to "application/json; charset=utf-8")
+                },
+            )
+            resp.statusCode in 200..299
         } catch (_: Exception) {
             false
-        } finally {
-            runCatching { sock.close() }
         }
     }
 
@@ -2333,18 +2469,15 @@ object RemoteKeyboardClient {
         val bodyBytes = CloudClipboardProtocol.json.encodeToString(request).toByteArray(StandardCharsets.UTF_8)
 
         if (identity.isRegistered) {
-            val headers = LinkedHashMap<String, String>()
-            headers["Content-Type"] = "application/json; charset=utf-8"
-            headers.putAll(CloudClipboardProtocol.buildAgentHeaders(identity, "POST", bodyBytes))
-            val resp = CloudClipboardClient.requestStream(
+            val resp = relayConnection.postJson(
                 url = "$cleanUrl/api/agent/v1/keyboard/send",
-                method = "POST",
-                headers = headers,
-                contentLength = bodyBytes.size.toLong(),
-                bodyWriter = { it.write(bodyBytes) },
-                splitTlsFirstByte = true,
-                connectTimeoutMs = RELAY_CONNECT_TIMEOUT_MS,
-                readTimeoutMs = RELAY_READ_TIMEOUT_MS,
+                bodyBytes = bodyBytes,
+                headersFactory = {
+                    val headers = LinkedHashMap<String, String>()
+                    headers["Content-Type"] = "application/json; charset=utf-8"
+                    headers.putAll(CloudClipboardProtocol.buildAgentHeaders(identity, "POST", bodyBytes))
+                    headers
+                },
             )
             if (resp.statusCode in 200..299) {
                 return runCatching {
@@ -2355,19 +2488,16 @@ object RemoteKeyboardClient {
             throw IllegalStateException("VPS 转发失败：$detail")
         }
 
-        val panelHeaders = LinkedHashMap<String, String>()
-        panelHeaders["Content-Type"] = "application/json; charset=utf-8"
-        val cookie = CloudClipboardProtocol.normalizeSessionCookie(identity.sessionCookie)
-        if (cookie.isNotEmpty()) panelHeaders["Cookie"] = cookie
-        val panelResp = CloudClipboardClient.requestStream(
+        val panelResp = relayConnection.postJson(
             url = "$cleanUrl/api/keyboard/send",
-            method = "POST",
-            headers = panelHeaders,
-            contentLength = bodyBytes.size.toLong(),
-            bodyWriter = { it.write(bodyBytes) },
-            splitTlsFirstByte = true,
-            connectTimeoutMs = RELAY_CONNECT_TIMEOUT_MS,
-            readTimeoutMs = RELAY_READ_TIMEOUT_MS,
+            bodyBytes = bodyBytes,
+            headersFactory = {
+                val panelHeaders = LinkedHashMap<String, String>()
+                panelHeaders["Content-Type"] = "application/json; charset=utf-8"
+                val cookie = CloudClipboardProtocol.normalizeSessionCookie(identity.sessionCookie)
+                if (cookie.isNotEmpty()) panelHeaders["Cookie"] = cookie
+                panelHeaders
+            },
         )
         if (panelResp.statusCode in 200..299) {
             return runCatching {

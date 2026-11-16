@@ -17,6 +17,7 @@ import java.net.ServerSocket
 import java.nio.charset.StandardCharsets
 import java.util.Base64
 import java.util.concurrent.CopyOnWriteArrayList
+import java.util.concurrent.atomic.AtomicInteger
 
 class CloudClipboardTest {
     companion object {
@@ -992,6 +993,133 @@ class CloudClipboardTest {
         assertFalse(winDev.isMac)
         assertEquals("Windows", winDev.platformLabel)
         assertTrue(winDev.isDesktopTarget)
+    }
+
+    @Test
+    fun remoteKeyboardIconReflectsTransportChannel() {
+        val dev = RemoteDeviceSummary(id = "dev-win", name = "WinPC", platform = "windows", os = "windows")
+        assertEquals("brand:remote_keyboard", RemoteKeyboardItem.iconNameForSession(null))
+        assertEquals(
+            "brand:remote_keyboard",
+            RemoteKeyboardItem.iconNameForSession(
+                RemoteKeyboardItem.ActiveSession(
+                    target = dev,
+                    transportMode = RemoteKeyboardProtocol.MODE_AUTO,
+                    channelKind = RemoteKeyboardItem.ChannelKind.PROBING,
+                )
+            ),
+        )
+        assertEquals(
+            "brand:remote_keyboard_direct",
+            RemoteKeyboardItem.iconNameForSession(
+                RemoteKeyboardItem.ActiveSession(
+                    target = dev,
+                    transportMode = RemoteKeyboardProtocol.MODE_AUTO,
+                    channelKind = RemoteKeyboardItem.ChannelKind.DIRECT,
+                )
+            ),
+        )
+        assertEquals(
+            "brand:remote_keyboard_relay",
+            RemoteKeyboardItem.iconNameForSession(
+                RemoteKeyboardItem.ActiveSession(
+                    target = dev,
+                    transportMode = RemoteKeyboardProtocol.MODE_AUTO,
+                    channelKind = RemoteKeyboardItem.ChannelKind.RELAY,
+                )
+            ),
+        )
+    }
+
+    @Test
+    fun remoteKeyboardDirectTcpAndRelayReuseKeepAliveSocket() {
+        RemoteKeyboardClient.closeConnections()
+        val acceptedSockets = AtomicInteger(0)
+        val handledRequests = AtomicInteger(0)
+        ServerSocket(0, 50, InetAddress.getByName("127.0.0.1")).use { server ->
+            val port = server.localPort
+            val serverThread = Thread {
+                while (!server.isClosed) {
+                    val client = try {
+                        server.accept()
+                    } catch (_: Exception) {
+                        break
+                    }
+                    acceptedSockets.incrementAndGet()
+                    Thread {
+                        client.use { sock ->
+                            val reader = BufferedReader(InputStreamReader(sock.getInputStream(), StandardCharsets.ISO_8859_1))
+                            val out = sock.getOutputStream()
+                            while (true) {
+                                val requestLine = reader.readLine() ?: break
+                                handledRequests.incrementAndGet()
+                                var contentLength = 0
+                                while (true) {
+                                    val line = reader.readLine() ?: break
+                                    if (line.isEmpty()) break
+                                    if (line.lowercase().startsWith("content-length:")) {
+                                        contentLength = line.substringAfter(':').trim().toIntOrNull() ?: 0
+                                    }
+                                }
+                                var read = 0
+                                val buf = CharArray(contentLength)
+                                while (read < contentLength) {
+                                    val n = reader.read(buf, read, contentLength - read)
+                                    if (n == -1) break
+                                    read += n
+                                }
+                                val respJson = when {
+                                    requestLine.startsWith("POST /api/keyboard/direct ") -> """{"ok":true,"type":"ack","lastSeq":1}"""
+                                    else -> """{"accepted":1,"targetOnline":true,"targetReceiverReady":true}"""
+                                }
+                                val bodyBytes = respJson.toByteArray(StandardCharsets.UTF_8)
+                                val header = "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: ${bodyBytes.size}\r\nConnection: keep-alive\r\n\r\n"
+                                out.write(header.toByteArray(StandardCharsets.ISO_8859_1))
+                                out.write(bodyBytes)
+                                out.flush()
+                            }
+                        }
+                    }.apply { isDaemon = true; start() }
+                }
+            }.apply { isDaemon = true; start() }
+
+            try {
+                val ep = DirectTargetEndpoint("127.0.0.1", port)
+                val sendReq = RemoteKeyboardSendRequest(
+                    targetDeviceId = "win-1",
+                    sourceDeviceId = "self-book",
+                    sourceName = "Googlebook",
+                    events = listOf(RemoteKeyboardEvent(seq = 1L, action = "down", vkCode = 0x41, keyName = "A")),
+                )
+                val rawBytes = CloudClipboardProtocol.json.encodeToString(
+                    RemoteKeyboardSendRequest.serializer(),
+                    sendReq,
+                ).toByteArray(StandardCharsets.UTF_8)
+
+                repeat(3) {
+                    assertTrue(RemoteKeyboardClient.sendDirectTcp(ep, rawBytes))
+                }
+                assertEquals(3, handledRequests.get())
+                assertEquals(1, acceptedSockets.get())
+
+                val identity = NetTransferIdentity(
+                    vpsUrl = "http://127.0.0.1:$port",
+                    displayName = "Googlebook",
+                    deviceId = "self-book",
+                    privateKey = FIXTURE_KEY,
+                )
+                repeat(3) {
+                    val reply = RemoteKeyboardClient.sendRelay(identity, sendReq)
+                    assertEquals(1, reply.accepted)
+                }
+                assertEquals(6, handledRequests.get())
+                assertEquals(2, acceptedSockets.get())
+            } finally {
+                RemoteKeyboardClient.closeConnections()
+                server.close()
+                serverThread.join(1000)
+            }
+        }
     }
 }
 

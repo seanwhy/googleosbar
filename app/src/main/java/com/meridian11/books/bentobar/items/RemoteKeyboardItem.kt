@@ -63,6 +63,7 @@ import com.meridian11.books.bentobar.ui.TextRow
 import com.meridian11.books.bentobar.ui.rememberTick
 import com.meridian11.books.bentobar.util.Sym
 import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.update
 import java.nio.charset.StandardCharsets
 import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.ConcurrentLinkedQueue
@@ -82,13 +83,18 @@ object RemoteKeyboardItem : ItemType(
     override val discreet = true
     override val trigger = Trigger(R.string.trigger_remote_keyboard, R.string.trigger_remote_keyboard_short)
 
+    enum class ChannelKind { PROBING, DIRECT, RELAY }
+
     data class ActiveSession(
         val target: RemoteDeviceSummary,
         val transportMode: String, // "auto" | "relay" | "direct"
         val customDirectAddress: String = "",
         val startedAtMs: Long = System.currentTimeMillis(),
         val activeChannelLabel: String = "连接中…",
+        val channelKind: ChannelKind = ChannelKind.PROBING,
         val verifiedDirectEndpoint: DirectTargetEndpoint? = null,
+        val consecutiveDirectFailures: Int = 0,
+        val lastDirectProbeMs: Long = 0L,
         val sentKeyCount: Long = 0L,
         val ackedKeyCount: Long = 0L,
         val lastKeyLabel: String = "",
@@ -308,6 +314,21 @@ object RemoteKeyboardItem : ItemType(
             pressedAndroidKeys.add(event.keyCode)
         } else if (event.action == KeyEvent.ACTION_UP) {
             pressedAndroidKeys.remove(event.keyCode)
+        } else if (event.action == KeyEvent.ACTION_MULTIPLE) {
+            val chars = event.characters
+            if (!chars.isNullOrEmpty()) {
+                enqueueEvent(
+                    RemoteKeyboardEvent(
+                        seq = eventSeq.getAndIncrement(),
+                        action = "text",
+                        text = chars,
+                        keyName = "Text(${chars.length})",
+                        sentAtMs = System.currentTimeMillis(),
+                    ),
+                    session,
+                )
+            }
+            return true
         } else {
             return true
         }
@@ -344,18 +365,21 @@ object RemoteKeyboardItem : ItemType(
         pendingEvents.clear()
         consecutiveEscCount = 0
 
-        val initialChannel = when (mode) {
-            RemoteKeyboardProtocol.MODE_DIRECT -> "局域网直连探测中…"
-            RemoteKeyboardProtocol.MODE_RELAY -> "VPS 中转"
-            else -> "VPS 中转 + 直连探测"
+        val (initialKind, initialChannel) = when (mode) {
+            RemoteKeyboardProtocol.MODE_DIRECT -> ChannelKind.DIRECT to "局域网直连探测中…"
+            RemoteKeyboardProtocol.MODE_RELAY -> ChannelKind.RELAY to "VPS 中转"
+            else -> ChannelKind.PROBING to "直连探测 / VPS 中转"
         }
 
+        val nowMs = System.currentTimeMillis()
         val session = ActiveSession(
             target = target,
             transportMode = mode,
             customDirectAddress = customAddr,
-            startedAtMs = System.currentTimeMillis(),
+            startedAtMs = nowMs,
             activeChannelLabel = initialChannel,
+            channelKind = initialKind,
+            lastDirectProbeMs = nowMs,
             targetReceiverReady = target.keyboardActive,
         )
         activeSessionState.value = session
@@ -364,12 +388,12 @@ object RemoteKeyboardItem : ItemType(
         statusMessageState.value = "正在控制 ${target.displayTitle} · 按 $exitHint 退出"
         Ticker.refresh(type)
 
-        toastOnMain("已开启远程键盘映射 → ${target.displayTitle} (按 $exitHint 或点状态栏退出)")
-
         // Probe direct LAN / P2P endpoints in background if mode is AUTO or DIRECT
         if (mode == RemoteKeyboardProtocol.MODE_AUTO || mode == RemoteKeyboardProtocol.MODE_DIRECT) {
             probeDirectEndpointsAsync(session)
         }
+
+        toastOnMain("已开启远程键盘映射 → ${target.displayTitle} (按 $exitHint 或点状态栏退出)")
     }
 
     fun stopMapping(reason: String? = "已停止远程键盘映射", silent: Boolean = false) {
@@ -393,10 +417,18 @@ object RemoteKeyboardItem : ItemType(
             runCatching {
                 dispatchBatch(prev, listOf(releaseEvent))
             }
+            RemoteKeyboardClient.closeConnections()
+        }
+    }
+
+    private fun updateActiveSession(sessionId: Long, transform: (ActiveSession) -> ActiveSession) {
+        activeSessionState.update { cur ->
+            if (cur != null && cur.startedAtMs == sessionId) transform(cur) else cur
         }
     }
 
     private fun probeDirectEndpointsAsync(session: ActiveSession) {
+        val sessionId = session.startedAtMs
         probeExecutor.execute {
             val candidates = ArrayList<DirectTargetEndpoint>()
             RemoteKeyboardProtocol.parseDirectEndpoint(
@@ -406,29 +438,33 @@ object RemoteKeyboardItem : ItemType(
             candidates.addAll(session.target.candidateDirectEndpoints)
 
             for (ep in candidates) {
-                if (activeSessionState.value?.target?.id != session.target.id) return@execute
+                if (activeSessionState.value?.startedAtMs != sessionId) return@execute
                 if (RemoteKeyboardClient.probeDirectTcpEndpoint(ep)) {
-                    val current = activeSessionState.value ?: return@execute
-                    if (current.target.id == session.target.id) {
-                        activeSessionState.value = current.copy(
+                    updateActiveSession(sessionId) { cur ->
+                        cur.copy(
                             verifiedDirectEndpoint = ep,
+                            channelKind = ChannelKind.DIRECT,
                             activeChannelLabel = "直连 (${ep.host}:${ep.port})",
+                            consecutiveDirectFailures = 0,
                             targetReceiverReady = true,
                         )
-                        Ticker.refresh(type)
                     }
+                    Ticker.refresh(type)
                     return@execute
                 }
             }
 
             val current = activeSessionState.value ?: return@execute
-            if (current.target.id == session.target.id && current.verifiedDirectEndpoint == null) {
-                val fallbackLabel = if (current.transportMode == RemoteKeyboardProtocol.MODE_DIRECT) {
-                    "直连未响应 (仍尝试 UDP)"
+            if (current.startedAtMs == sessionId && current.verifiedDirectEndpoint == null) {
+                val (fallbackKind, fallbackLabel) = if (current.transportMode == RemoteKeyboardProtocol.MODE_DIRECT) {
+                    ChannelKind.DIRECT to "直连未响应 (仍尝试直连)"
                 } else {
-                    "VPS 极速中转"
+                    ChannelKind.RELAY to "VPS 极速中转"
                 }
-                activeSessionState.value = current.copy(activeChannelLabel = fallbackLabel)
+                updateActiveSession(sessionId) { cur ->
+                    if (cur.verifiedDirectEndpoint != null) cur
+                    else cur.copy(channelKind = fallbackKind, activeChannelLabel = fallbackLabel)
+                }
                 Ticker.refresh(type)
             }
         }
@@ -436,13 +472,16 @@ object RemoteKeyboardItem : ItemType(
 
     private fun enqueueEvent(event: RemoteKeyboardEvent, session: ActiveSession) {
         pendingEvents.add(event)
-        activeSessionState.value?.let { cur ->
-            if (cur.target.id == session.target.id) {
-                activeSessionState.value = cur.copy(
-                    sentKeyCount = cur.sentKeyCount + 1L,
-                    lastKeyLabel = "${event.keyName} (${if (event.action == "down") "↓" else "↑"})",
-                )
+        updateActiveSession(session.startedAtMs) { cur ->
+            val arrow = when (event.action) {
+                "down" -> "↓"
+                "up" -> "↑"
+                else -> "文本"
             }
+            cur.copy(
+                sentKeyCount = cur.sentKeyCount + 1L,
+                lastKeyLabel = "${event.keyName} ($arrow)",
+            )
         }
         scheduleFlush()
     }
@@ -470,34 +509,67 @@ object RemoteKeyboardItem : ItemType(
         }
     }
 
+    private fun sendRelayWithRetry(
+        identity: NetTransferIdentity,
+        request: RemoteKeyboardSendRequest,
+        sessionId: Long,
+        allowAbortCheck: Boolean = true,
+    ): RemoteKeyboardSendResponse {
+        var lastErr: Throwable? = null
+        val delays = longArrayOf(80L, 200L)
+        for (attempt in 0..delays.size) {
+            if (allowAbortCheck && attempt > 0 && activeSessionState.value?.startedAtMs != sessionId) {
+                break
+            }
+            try {
+                return RemoteKeyboardClient.sendRelay(identity, request)
+            } catch (t: Throwable) {
+                lastErr = t
+                if (attempt < delays.size) {
+                    try {
+                        Thread.sleep(delays[attempt])
+                    } catch (_: InterruptedException) {
+                        Thread.currentThread().interrupt()
+                        break
+                    }
+                }
+            }
+        }
+        throw lastErr ?: IllegalStateException("VPS 转发失败")
+    }
+
     private fun dispatchBatch(session: ActiveSession, batch: List<RemoteKeyboardEvent>) {
         if (batch.isEmpty()) return
+        val sessionId = session.startedAtMs
+        val currentSession = activeSessionState.value?.takeIf { it.startedAtMs == sessionId } ?: session
+        val isStoppingReleaseAll = batch.size == 1 && batch[0].action == "release_all" && activeSessionState.value == null
         val id = identityState.value
         val req = RemoteKeyboardSendRequest(
-            targetDeviceId = session.target.id,
+            targetDeviceId = currentSession.target.id,
             sourceDeviceId = id.deviceId,
             sourceName = id.displayName.ifBlank { "Googlebook" },
             events = batch,
         )
         val payloadBytes = CloudClipboardProtocol.json.encodeToString(req).toByteArray(StandardCharsets.UTF_8)
 
-        // 1. Direct P2P / LAN path
-        val directEp = session.verifiedDirectEndpoint
-            ?: RemoteKeyboardProtocol.parseDirectEndpoint(session.customDirectAddress)
-            ?: session.target.candidateDirectEndpoints.firstOrNull()
+        // 1. Direct P2P / LAN path (prefer reliable TCP keep-alive over lossy UDP)
+        val directEp = currentSession.verifiedDirectEndpoint
+            ?: RemoteKeyboardProtocol.parseDirectEndpoint(currentSession.customDirectAddress)
+            ?: currentSession.target.candidateDirectEndpoints.firstOrNull()
 
-        if (session.transportMode == RemoteKeyboardProtocol.MODE_DIRECT) {
+        if (currentSession.transportMode == RemoteKeyboardProtocol.MODE_DIRECT) {
             if (directEp != null) {
-                val ok = RemoteKeyboardClient.sendDirectUdp(directEp, payloadBytes) ||
-                    RemoteKeyboardClient.sendDirectTcp(directEp, payloadBytes)
+                val ok = RemoteKeyboardClient.sendDirectTcp(directEp, payloadBytes) ||
+                    RemoteKeyboardClient.sendDirectUdp(directEp, payloadBytes)
                 if (ok) {
-                    activeSessionState.value?.let { cur ->
-                        if (cur.target.id == session.target.id) {
-                            activeSessionState.value = cur.copy(
-                                ackedKeyCount = cur.ackedKeyCount + batch.size,
-                                activeChannelLabel = "直连 (${directEp.host}:${directEp.port})",
-                            )
-                        }
+                    updateActiveSession(sessionId) { cur ->
+                        val switched = cur.channelKind != ChannelKind.DIRECT
+                        cur.copy(
+                            ackedKeyCount = cur.ackedKeyCount + batch.size,
+                            channelKind = ChannelKind.DIRECT,
+                            activeChannelLabel = "直连 (${directEp.host}:${directEp.port})",
+                            consecutiveDirectFailures = 0,
+                        ).also { if (switched) Ticker.refresh(type) }
                     }
                     errorMessageState.value = null
                 } else {
@@ -509,52 +581,66 @@ object RemoteKeyboardItem : ItemType(
             return
         }
 
-        // In AUTO mode, if we have a verified direct endpoint, send via UDP + TCP direct immediately;
-        // if TCP direct fails, fall through to VPS relay seamlessly.
-        if (session.transportMode == RemoteKeyboardProtocol.MODE_AUTO && directEp != null) {
-            // Fire UDP packet immediately for sub-millisecond delivery when on same LAN / tunnel
-            RemoteKeyboardClient.sendDirectUdp(directEp, payloadBytes)
-            if (session.verifiedDirectEndpoint != null) {
-                if (RemoteKeyboardClient.sendDirectTcp(directEp, payloadBytes)) {
-                    activeSessionState.value?.let { cur ->
-                        if (cur.target.id == session.target.id) {
-                            activeSessionState.value = cur.copy(
-                                ackedKeyCount = cur.ackedKeyCount + batch.size,
-                            )
-                        }
+        // In AUTO mode, use persistent direct TCP when verified (no duplicate UDP/Relay race).
+        if (currentSession.transportMode == RemoteKeyboardProtocol.MODE_AUTO) {
+            val verified = currentSession.verifiedDirectEndpoint
+            if (verified != null) {
+                if (RemoteKeyboardClient.sendDirectTcp(verified, payloadBytes)) {
+                    updateActiveSession(sessionId) { cur ->
+                        val switched = cur.channelKind != ChannelKind.DIRECT
+                        cur.copy(
+                            ackedKeyCount = cur.ackedKeyCount + batch.size,
+                            channelKind = ChannelKind.DIRECT,
+                            consecutiveDirectFailures = 0,
+                        ).also { if (switched) Ticker.refresh(type) }
                     }
+                    errorMessageState.value = null
                     return
                 }
-                // Direct TCP dropped: clear verified endpoint and fall back to VPS relay
-                activeSessionState.value?.let { cur ->
-                    if (cur.target.id == session.target.id) {
-                        activeSessionState.value = cur.copy(
+                val newFailures = currentSession.consecutiveDirectFailures + 1
+                if (newFailures >= 2) {
+                    updateActiveSession(sessionId) { cur ->
+                        cur.copy(
                             verifiedDirectEndpoint = null,
+                            channelKind = ChannelKind.RELAY,
                             activeChannelLabel = "VPS 极速中转",
+                            consecutiveDirectFailures = 0,
                         )
                     }
+                    Ticker.refresh(type)
+                } else {
+                    updateActiveSession(sessionId) { cur ->
+                        cur.copy(consecutiveDirectFailures = newFailures)
+                    }
+                }
+            } else {
+                val nowMs = System.currentTimeMillis()
+                if (!isStoppingReleaseAll && nowMs - currentSession.lastDirectProbeMs >= 15_000L) {
+                    updateActiveSession(sessionId) { cur -> cur.copy(lastDirectProbeMs = nowMs) }
+                    probeDirectEndpointsAsync(currentSession)
                 }
             }
         }
 
-        // 2. VPS Relay path (works across any NAT / network)
+        // 2. VPS Relay path (works across any NAT / network; reuses TLS Keep-Alive + retries on hiccups)
         runCatching {
-            val reply = RemoteKeyboardClient.sendRelay(id, req)
-            activeSessionState.value?.let { cur ->
-                if (cur.target.id == session.target.id) {
-                    val label = if (cur.verifiedDirectEndpoint != null) {
-                        cur.activeChannelLabel
-                    } else if (reply.targetReceiverReady) {
-                        "VPS 极速中转 (对端已连接)"
-                    } else {
-                        "VPS 中转 (等待对端轮询)"
-                    }
-                    activeSessionState.value = cur.copy(
-                        activeChannelLabel = label,
-                        ackedKeyCount = cur.ackedKeyCount + (reply.accepted.takeIf { it > 0 } ?: batch.size),
-                        targetReceiverReady = reply.targetReceiverReady,
-                    )
+            val reply = sendRelayWithRetry(id, req, sessionId, allowAbortCheck = !isStoppingReleaseAll)
+            updateActiveSession(sessionId) { cur ->
+                val targetKind = if (cur.verifiedDirectEndpoint != null) cur.channelKind else ChannelKind.RELAY
+                val switched = cur.channelKind != targetKind
+                val label = if (cur.verifiedDirectEndpoint != null) {
+                    cur.activeChannelLabel
+                } else if (reply.targetReceiverReady) {
+                    "VPS 极速中转 (对端已连接)"
+                } else {
+                    "VPS 中转 (等待对端轮询)"
                 }
+                cur.copy(
+                    channelKind = targetKind,
+                    activeChannelLabel = label,
+                    ackedKeyCount = cur.ackedKeyCount + (reply.accepted.takeIf { it > 0 } ?: batch.size),
+                    targetReceiverReady = reply.targetReceiverReady,
+                ).also { if (switched) Ticker.refresh(type) }
             }
             errorMessageState.value = null
         }.onFailure { e ->
@@ -633,6 +719,12 @@ object RemoteKeyboardItem : ItemType(
         }
     }
 
+    internal fun iconNameForSession(session: ActiveSession?): String = when (session?.channelKind) {
+        ChannelKind.DIRECT -> "brand:remote_keyboard_direct"
+        ChannelKind.RELAY -> "brand:remote_keyboard_relay"
+        else -> "brand:remote_keyboard"
+    }
+
     override fun state(item: ItemConfig): ItemState {
         ensureInitialized()
         val session = activeSessionState.value
@@ -640,6 +732,7 @@ object RemoteKeyboardItem : ItemType(
         val error = errorMessageState.value
         val exitShortcut = exitShortcutOf(item)
         val showTextInBar = item.optBool("showActiveText", true)
+        val iconName = iconNameForSession(session)
 
         val barText = if (session != null && showTextInBar) {
             session.target.displayTitle.take(10)
@@ -659,7 +752,7 @@ object RemoteKeyboardItem : ItemType(
         }
 
         return ItemState(
-            icon = "brand:remote_keyboard",
+            icon = iconName,
             filled = session != null,
             text = barText,
             label = session?.target?.displayTitle ?: stringResourceSafe(R.string.item_remote_keyboard_title, "远程键盘映射"),
@@ -709,7 +802,7 @@ object RemoteKeyboardItem : ItemType(
         }
 
         MenuCard(
-            icon = "brand:remote_keyboard",
+            icon = iconNameForSession(session),
             title = stringResource(R.string.item_remote_keyboard_title),
             subtitle = subtitle,
             subtitleColor = when {
