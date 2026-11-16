@@ -12,6 +12,8 @@ import org.junit.Test
 import java.io.BufferedReader
 import java.io.ByteArrayOutputStream
 import java.io.InputStreamReader
+import java.net.DatagramPacket
+import java.net.DatagramSocket
 import java.net.InetAddress
 import java.net.ServerSocket
 import java.nio.charset.StandardCharsets
@@ -1119,6 +1121,124 @@ class CloudClipboardTest {
                 server.close()
                 serverThread.join(1000)
             }
+        }
+    }
+
+    @Test
+    fun remoteKeyboardLanOrderingFiltersFakeIpAndPrioritizesPhysicalLan() {
+        val mac = RemoteDeviceSummary(
+            id = "mac-1",
+            name = "MacBook",
+            platform = "darwin",
+            directPort = 20001,
+            sourceIp = "203.0.113.5",
+            inventory = RemoteDeviceInventory(
+                os = "darwin",
+                networks = listOf(
+                    RemoteDeviceNetwork(name = "utun3", addresses = listOf("198.18.0.1", "100.80.1.2")),
+                    RemoteDeviceNetwork(name = "bridge100", addresses = listOf("192.168.64.1", "169.254.1.2")),
+                    RemoteDeviceNetwork(name = "en0", addresses = listOf("192.168.1.50/24")),
+                ),
+            ),
+        )
+        assertEquals(
+            listOf("192.168.1.50", "192.168.64.1", "100.80.1.2"),
+            mac.lanIpv4Addresses,
+        )
+        val session = RemoteKeyboardItem.ActiveSession(
+            target = mac,
+            transportMode = RemoteKeyboardProtocol.MODE_DIRECT,
+            customDirectAddress = "10.0.0.2",
+        )
+        val candidates = RemoteKeyboardItem.directCandidatesFor(session)
+        assertEquals(
+            listOf(
+                DirectTargetEndpoint("10.0.0.2", 20001),
+                DirectTargetEndpoint("192.168.1.50", 20001),
+                DirectTargetEndpoint("192.168.64.1", 20001),
+                DirectTargetEndpoint("100.80.1.2", 20001),
+                DirectTargetEndpoint("203.0.113.5", 20001),
+            ),
+            candidates,
+        )
+    }
+
+    @Test
+    fun remoteKeyboardDirectProbeChecksDeviceIdAndUdpRequiresAck() {
+        RemoteKeyboardClient.closeConnections()
+        ServerSocket(0, 50, InetAddress.getByName("127.0.0.1")).use { server ->
+            val port = server.localPort
+            val serverThread = Thread {
+                while (!server.isClosed) {
+                    val client = try {
+                        server.accept()
+                    } catch (_: Exception) {
+                        break
+                    }
+                    client.use { sock ->
+                        val reader = BufferedReader(InputStreamReader(sock.getInputStream(), StandardCharsets.ISO_8859_1))
+                        val requestLine = reader.readLine() ?: return@use
+                        var contentLength = 0
+                        while (true) {
+                            val line = reader.readLine() ?: break
+                            if (line.isEmpty()) break
+                            if (line.lowercase().startsWith("content-length:")) {
+                                contentLength = line.substringAfter(':').trim().toIntOrNull() ?: 0
+                            }
+                        }
+                        var read = 0
+                        val buf = CharArray(contentLength)
+                        while (read < contentLength) {
+                            val n = reader.read(buf, read, contentLength - read)
+                            if (n == -1) break
+                            read += n
+                        }
+                        val (status, body) = when {
+                            requestLine.startsWith("GET /api/keyboard/ping ") ->
+                                "200 OK" to """{"ok":true,"type":"pong","deviceId":"other-mac"}"""
+                            else ->
+                                "403 Forbidden" to """{"error":"device mismatch"}"""
+                        }
+                        val bodyBytes = body.toByteArray(StandardCharsets.UTF_8)
+                        val header = "HTTP/1.1 $status\r\nContent-Type: application/json\r\nContent-Length: ${bodyBytes.size}\r\nConnection: close\r\n\r\n"
+                        val out = sock.getOutputStream()
+                        out.write(header.toByteArray(StandardCharsets.ISO_8859_1))
+                        out.write(bodyBytes)
+                        out.flush()
+                    }
+                }
+            }.apply { isDaemon = true; start() }
+
+            try {
+                val ep = DirectTargetEndpoint("127.0.0.1", port)
+                assertTrue(RemoteKeyboardClient.probeDirectTcpEndpoint(ep))
+                assertFalse(RemoteKeyboardClient.probeDirectTcpEndpoint(ep, expectedDeviceId = "mac-1"))
+                val res = RemoteKeyboardClient.sendDirectTcpWithStatus(ep, """{"events":[]}""".toByteArray(StandardCharsets.UTF_8))
+                assertFalse(res.ok)
+                assertEquals(403, res.statusCode)
+            } finally {
+                RemoteKeyboardClient.closeConnections()
+                server.close()
+                serverThread.join(1000)
+            }
+        }
+
+        // Silent UDP receiver must NOT be treated as ACKed; responsive UDP receiver returns true.
+        DatagramSocket(0, InetAddress.getByName("127.0.0.1")).use { silentSock ->
+            val ep = DirectTargetEndpoint("127.0.0.1", silentSock.localPort)
+            assertFalse(RemoteKeyboardClient.sendDirectUdpWithAck(ep, """{"events":[]}""".toByteArray(), timeoutMs = 80))
+        }
+        DatagramSocket(0, InetAddress.getByName("127.0.0.1")).use { ackSock ->
+            val t = Thread {
+                val rx = ByteArray(1024)
+                val pkt = DatagramPacket(rx, rx.size)
+                ackSock.receive(pkt)
+                val reply = """{"ok":true,"type":"ack","lastSeq":1}""".toByteArray(StandardCharsets.UTF_8)
+                ackSock.send(DatagramPacket(reply, reply.size, pkt.address, pkt.port))
+            }.apply { isDaemon = true; start() }
+            val ep = DirectTargetEndpoint("127.0.0.1", ackSock.localPort)
+            assertTrue(RemoteKeyboardClient.sendDirectUdpWithAck(ep, """{"events":[]}""".toByteArray(), timeoutMs = 500))
+            t.join(1000)
         }
     }
 }
