@@ -19,6 +19,7 @@ import java.net.ServerSocket
 import java.nio.charset.StandardCharsets
 import java.util.Base64
 import java.util.concurrent.CopyOnWriteArrayList
+import java.util.concurrent.Executors
 import java.util.concurrent.atomic.AtomicInteger
 
 class CloudClipboardTest {
@@ -1239,6 +1240,69 @@ class CloudClipboardTest {
             val ep = DirectTargetEndpoint("127.0.0.1", ackSock.localPort)
             assertTrue(RemoteKeyboardClient.sendDirectUdpWithAck(ep, """{"events":[]}""".toByteArray(), timeoutMs = 500))
             t.join(1000)
+        }
+    }
+
+    @Test
+    fun rankedLanIpv4AddressesPrefersMatchingLocalSubnetOver192168() {
+        val mac = RemoteDeviceSummary(
+            id = "mac-mini-1",
+            platform = "darwin",
+            os = "macOS",
+            sourceIp = "203.0.113.9",
+            directPort = 19878,
+            inventory = RemoteDeviceInventory(
+                networks = listOf(
+                    RemoteDeviceNetwork(name = "en0", addresses = listOf("192.168.1.222")),
+                    RemoteDeviceNetwork(name = "en1", addresses = listOf("172.17.51.184")),
+                )
+            ),
+        )
+
+        // Without local subnet info, 192.168 still comes before 172.17
+        assertEquals(listOf("192.168.1.222", "172.17.51.184"), mac.rankedLanIpv4Addresses(emptyList()))
+
+        // When local device is on 172.17.50.x/24 (same /16) or 172.17.51.x/24 (same /24), 172.17.51.184 must come first
+        val sameSlash16 = listOf(LocalInterfaceSubnet("172.17.50.10", 24))
+        assertEquals(listOf("172.17.51.184", "192.168.1.222"), mac.rankedLanIpv4Addresses(sameSlash16))
+        assertEquals(
+            listOf(
+                DirectTargetEndpoint("172.17.51.184", 19878),
+                DirectTargetEndpoint("192.168.1.222", 19878),
+                DirectTargetEndpoint("203.0.113.9", 19878),
+            ),
+            mac.candidateDirectEndpointsFor(sameSlash16),
+        )
+
+        val exactSubnet = listOf(LocalInterfaceSubnet("172.17.51.99", 24))
+        assertEquals(listOf("172.17.51.184", "192.168.1.222"), mac.rankedLanIpv4Addresses(exactSubnet))
+    }
+
+    @Test
+    fun probeBestDirectEndpointPicksReachableEndpointInParallelEvenWhenFirstHangs() {
+        val pool = Executors.newCachedThreadPool()
+        try {
+            val dead = DirectTargetEndpoint("192.168.1.222", 19878)
+            val reachable = DirectTargetEndpoint("172.17.51.184", 19878)
+            val fallback = DirectTargetEndpoint("203.0.113.9", 19878)
+
+            val chosen = RemoteKeyboardClient.probeBestDirectEndpoint(
+                candidates = listOf(dead, reachable, fallback),
+                executor = pool,
+                timeoutMs = 150,
+            ) { ep ->
+                when (ep) {
+                    dead -> {
+                        Thread.sleep(220)
+                        false
+                    }
+                    reachable -> true
+                    else -> true
+                }
+            }
+            assertEquals(reachable, chosen)
+        } finally {
+            pool.shutdownNow()
         }
     }
 }
