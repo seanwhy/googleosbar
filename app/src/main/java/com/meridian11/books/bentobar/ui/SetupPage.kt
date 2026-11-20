@@ -20,11 +20,20 @@ import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.DisposableEffect
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableIntStateOf
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberUpdatedState
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.testTag
+import androidx.compose.ui.res.pluralStringResource
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
@@ -32,19 +41,25 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.meridian11.books.bentobar.R
+import com.meridian11.books.bentobar.data.MeetingChoices
 import com.meridian11.books.bentobar.data.Online
 import com.meridian11.books.bentobar.data.Store
 import com.meridian11.books.bentobar.data.Uses
 import com.meridian11.books.bentobar.items.Access
 import com.meridian11.books.bentobar.items.Accesses
+import com.meridian11.books.bentobar.items.Calendar
 import com.meridian11.books.bentobar.items.Env
 import com.meridian11.books.bentobar.items.ItemType
 import com.meridian11.books.bentobar.items.Items
 import com.meridian11.books.bentobar.items.MediaAccess
+import com.meridian11.books.bentobar.items.Meetings
 import com.meridian11.books.bentobar.items.Ticker
 import com.meridian11.books.bentobar.items.Usage
 import com.meridian11.books.bentobar.util.Sym
 import com.meridian11.books.bentobar.util.SymIcon
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.delay
+import kotlinx.coroutines.withContext
 
 /** The request codes of the two permissions Setup asks Android for. */
 private const val ASK_NOTIFICATIONS = 3
@@ -74,7 +89,7 @@ internal fun accessRows(types: List<ItemType>): List<Access> = Access.entries.fi
 
 /**
  * Setup, from [setup] (observed, so a row changes the moment something does): turning BentoBar on, then the
- * permissions some items use, then the online services. Before BentoBar is on, Turn on is the page's one filled
+ * permissions some items use, which calendar events count as meetings, then the online services. Before BentoBar is on, Turn on is the page's one filled
  * button and the rest is "Later, for some items".
  *
  * [declined]: the answer to the disclosure was No thanks, which Turn on asks about again. [wontAsk]: the permissions
@@ -157,6 +172,11 @@ fun SetupPage(setup: SetupState, declined: Boolean, wontAsk: Set<String>, types:
                 onManage = { MainActivity.openAllFilesAccess(activity) })
         }
 
+        // Which events count as meetings: the install's choices, whether or not a Next meeting item is in the bar.
+        val choices by MeetingChoices.state.collectAsState()
+        val read = shownCalendars(setup.calendar)
+        CalendarEventsCard(setup.calendar || !read.isNullOrEmpty(), read.orEmpty(), choices, reading = read == null) { next -> MeetingChoices.update { next } }
+
         // Observed where it is kept: an item's menu can change it while this page is open.
         val online by Online.state.collectAsState()
         PageSection(stringResource(R.string.setup_online_title))
@@ -173,6 +193,93 @@ fun SetupPage(setup: SetupState, declined: Boolean, wontAsk: Set<String>, types:
             }
             RowLine()
             Text(stringResource(R.string.setup_online_off_note), Modifier.padding(vertical = Space.m), style = Bento.type.help, color = Bento.colors.ink3)
+        }
+    }
+}
+
+/** How long the calendars are left to settle after the provider told of a change: a sync tells of many in a row. */
+private const val CALENDARS_SETTLE_MS = 300L
+
+/**
+ * The provider's calendars for Setup's list, observed while the list is composed ("Settings state is observed, not read
+ * while drawing"): read off the main thread when it is composed, when calendar access changes, when the window comes back
+ * ([Setup.returns]: the calendars may have been changed in another window), and when the provider's calendars change.
+ * Null until the first read is back.
+ */
+@Composable
+private fun shownCalendars(access: Boolean): List<Meetings.Cal>? {
+    var calendars by remember { mutableStateOf<List<Meetings.Cal>?>(null) }
+    var changes by remember { mutableIntStateOf(0) }
+    val returns by Setup.returns.collectAsState()
+    // Told only while the list is shown, and only with access: Android refuses an observer without it.
+    DisposableEffect(access) {
+        val stop = if (access) Calendar.watchCalendars { changes++ } else null
+        onDispose { stop?.invoke() }
+    }
+    LaunchedEffect(access, returns, changes) {
+        if (calendars != null) delay(CALENDARS_SETTLE_MS)
+        calendars = withContext(Dispatchers.IO) { Calendar.calendars() }
+    }
+    return calendars
+}
+
+/**
+ * Setup's "Calendar events": which events count as meetings, for every Next meeting item, the Live Update chip and Live
+ * activity ([MeetingChoices]). [allowed]: the calendars can be read; [calendars]: all of them, of which only those the user
+ * can change are listed (the others never count); [reading]: the first read of them is on its way. [onChange] gets the
+ * choices as they are to be.
+ */
+@Composable
+internal fun CalendarEventsCard(allowed: Boolean, calendars: List<Meetings.Cal>, choices: MeetingChoices.State, reading: Boolean = false,
+                                onChange: (MeetingChoices.State) -> Unit) {
+    val c = Bento.colors
+    PageSection(stringResource(R.string.events_title), stringResource(R.string.events_sub))
+    PageCard(Modifier.testTag("calendar-events")) {
+        WideSettingRow(stringResource(R.string.events_calendars), help = stringResource(R.string.events_calendars_help)) {
+            val listed = calendars.filter { it.editable }
+            when {
+                // The first read is on its way: saying "none" for a moment would be untrue.
+                reading -> Spacer(Modifier.height(36.dp))
+                !allowed -> Text(stringResource(R.string.events_calendars_need_access), Modifier.padding(top = Space.s), style = Bento.type.small, color = c.ink2)
+                listed.isEmpty() -> Text(stringResource(R.string.events_calendars_none), Modifier.padding(top = Space.s), style = Bento.type.small, color = c.ink2)
+                else -> {
+                    // Each account's calendars under its name, but with one account no name at all; its primary calendar first.
+                    val accounts = listed.groupBy { it.accountName }.toSortedMap(String.CASE_INSENSITIVE_ORDER)
+                    val groups = accounts.map { (account, cals) ->
+                        (if (accounts.size > 1) account else null) to cals.sortedWith(compareByDescending<Meetings.Cal> { it.own && it.flagPrimary }
+                            .thenByDescending { it.own }.thenBy(String.CASE_INSENSITIVE_ORDER) { it.name }).map { cal ->
+                            val name = cal.name.ifBlank { cal.owner }
+                            CheckItem(cal.ident, name, Color(cal.color or 0xFF000000.toInt()), stringResource(R.string.events_calendar_said, name, account))
+                        }
+                    }
+                    CheckList(groups, { it !in choices.calendarsOff },
+                        { ident, on -> onChange(choices.copy(calendarsOff = if (on) choices.calendarsOff - ident else choices.calendarsOff + ident)) },
+                        Modifier.fillMaxWidth().testTag("calendar-list"))
+                }
+            }
+        }
+        RowLine()
+        ChoiceSetting(stringResource(R.string.events_only_me), listOf(
+            MeetingChoices.OnlyMe.NEVER to stringResource(R.string.events_only_me_never),
+            MeetingChoices.OnlyMe.CALL to stringResource(R.string.events_only_me_call),
+            MeetingChoices.OnlyMe.ALWAYS to stringResource(R.string.events_only_me_always),
+        ), choices.onlyMe, help = stringResource(R.string.events_only_me_help)) { onChange(choices.copy(onlyMe = it)) }
+        RowLine()
+        SwitchSetting(stringResource(R.string.events_unanswered), choices.unanswered, help = stringResource(R.string.events_unanswered_help)) {
+            onChange(choices.copy(unanswered = it))
+        }
+        RowLine()
+        SwitchSetting(stringResource(R.string.events_free), choices.free, help = stringResource(R.string.events_free_help)) {
+            onChange(choices.copy(free = it))
+        }
+        RowLine()
+        // Saved after a pause or when the focus goes: the choices as they are then, not as they were at the first key.
+        val latest by rememberUpdatedState(choices)
+        val limits = pluralStringResource(R.plurals.events_words_limits, Meetings.MAX_WORDS, Meetings.MAX_WORDS, Meetings.WORD_CHARS)
+        TextSetting(stringResource(R.string.events_words), choices.words.joinToString(", "), Modifier.testTag("calendar-words"),
+            help = stringResource(R.string.events_words_help) + " " + limits, placeholder = stringResource(R.string.events_words_hint),
+            maxLength = Meetings.MAX_WORDS * (Meetings.WORD_CHARS + 2)) {
+            onChange(latest.copy(words = Meetings.words(it)))
         }
     }
 }

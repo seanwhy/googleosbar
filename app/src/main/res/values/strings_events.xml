@@ -1,0 +1,38 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Calendar events: Setup's card and Next meeting's options. Every name here starts with events_. No word here is spelled
+     otherwise in British English, so there is no values-en-rGB copy: keep it so. -->
+<resources xmlns:tools="http://schemas.android.com/tools" tools:locale="en">
+    <string name="events_title">Calendar events</string>
+    <string name="events_sub">Which events count as meetings, for Next meeting, the Live Update chip and Live activity. These choices stay on this device and are no part of your layout.</string>
+    <string name="events_calendars">Calendars</string>
+    <string name="events_calendars_help">Meetings come from the calendars you tick. Calendars you can only read, such as holidays, never count.</string>
+    <string name="events_calendars_need_access">Allow calendar access above to choose calendars.</string>
+    <string name="events_calendars_none">No calendar you can change on this device.</string>
+    <string name="events_calendar_said">%1$s, %2$s</string>
+    <string name="events_only_me">Events with only you</string>
+    <string name="events_only_me_help">Events with no one else invited. A booked room is not someone else.</string>
+    <string name="events_only_me_never">Never count</string>
+    <string name="events_only_me_call">Count with a call link</string>
+    <string name="events_only_me_always">Always count</string>
+    <string name="events_unanswered">Invitations you haven\'t answered</string>
+    <string name="events_unanswered_help">Off: an invitation counts once you answer Yes or Maybe.</string>
+    <string name="events_free">Events marked as free</string>
+    <string name="events_free_help">Events that don\'t show you as busy.</string>
+    <string name="events_words">Leave out titles with</string>
+    <string name="events_words_help">Words or phrases, separated by commas. An event with one of them in its title never counts.</string>
+    <plurals name="events_words_limits">
+        <item quantity="one">Up to %1$d, of up to %2$d characters.</item>
+        <item quantity="other">Up to %1$d, each of up to %2$d characters.</item>
+    </plurals>
+    <string name="events_words_hint">Hold, Lunch, Commute</string>
+    <string name="events_show">In the bar</string>
+    <string name="events_show_both">Title and time</string>
+    <string name="events_show_time">Time</string>
+    <string name="events_ahead">Looks ahead</string>
+    <string name="events_ahead_today">Today</string>
+    <string name="events_ahead_any">Any day</string>
+    <string name="events_left">%1$s left</string>
+    <string name="events_none_ahead">No meetings ahead</string>
+    <string name="events_options_note">Which events count as meetings is set in Setup, under Calendar events.</string>
+    <string name="events_options_open">Open Setup</string>
+</resources>

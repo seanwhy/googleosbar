@@ -19,6 +19,14 @@ import androidx.compose.ui.semantics.SemanticsActions
 import androidx.compose.ui.semantics.SemanticsProperties
 import androidx.compose.ui.test.SemanticsMatcher
 import androidx.compose.ui.test.assertCountEquals
+import androidx.compose.ui.test.performTextInput
+import androidx.compose.ui.test.onNodeWithText
+import androidx.compose.ui.test.onNodeWithTag
+import androidx.compose.ui.test.hasSetTextAction
+import androidx.compose.ui.test.assert
+import androidx.compose.ui.test.assertIsSelected
+import androidx.compose.ui.test.assertIsOn
+import androidx.compose.ui.test.assertIsOff
 import androidx.compose.ui.test.hasAnyAncestor
 import androidx.compose.ui.test.hasClickAction
 import androidx.compose.ui.test.hasContentDescription
@@ -32,20 +40,25 @@ import androidx.test.core.app.ApplicationProvider
 import com.meridian11.books.bentobar.R
 import com.meridian11.books.bentobar.bar.BarStatus
 import com.meridian11.books.bentobar.data.ItemConfig
+import com.meridian11.books.bentobar.data.MeetingChoices
 import com.meridian11.books.bentobar.data.Online
 import com.meridian11.books.bentobar.items.Access
 import com.meridian11.books.bentobar.items.Env
 import com.meridian11.books.bentobar.items.ItemGroup
 import com.meridian11.books.bentobar.items.ItemState
 import com.meridian11.books.bentobar.items.ItemType
+import com.meridian11.books.bentobar.items.Meetings
 import com.meridian11.books.bentobar.ui.AboutPage
 import com.meridian11.books.bentobar.ui.AccessibilityDisclosure
+import com.meridian11.books.bentobar.ui.CalendarEventsCard
 import com.meridian11.books.bentobar.ui.DANGER_VEIL
 import com.meridian11.books.bentobar.ui.Page
+import com.meridian11.books.bentobar.ui.PageColumn
 import com.meridian11.books.bentobar.ui.Palette
 import com.meridian11.books.bentobar.ui.SettingsTheme
 import com.meridian11.books.bentobar.ui.SetupPage
 import com.meridian11.books.bentobar.ui.SetupState
+import com.meridian11.books.bentobar.ui.TEXT_SAVE_PAUSE_MS
 import com.meridian11.books.bentobar.ui.Shell
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
@@ -110,6 +123,167 @@ class SetupPageTest {
 
     private fun disclosure() = window(Page.SETUP, running = false) {
         AccessibilityDisclosure(onAgree = { answers += "agree" }, onDecline = { answers += "decline" }, onDismiss = { answers += "dismiss" })
+    }
+
+    // ---- Calendar events
+
+    private val you = "you@example.com"
+    private val home = "you.home@example.com"
+    private val work = Meetings.Cal(1, you, "com.google", you, "Work", 0xFF3F7EDB.toInt(), 700, visible = true, flagPrimary = true)
+    private val team = Meetings.Cal(2, you, "com.google", "team@example.com", "Team", 0xFFE08A1E.toInt(), 600, visible = true, flagPrimary = false)
+    private val personal = Meetings.Cal(3, home, "com.google", home, "Personal", 0xFF2E9E6B.toInt(), 700, visible = true, flagPrimary = true)
+    private val holidays = Meetings.Cal(4, you, "com.google", "holidays@example.com", "Holidays", 0xFF8E63CE.toInt(), 200, visible = true, flagPrimary = false)
+    private var choices by mutableStateOf(MeetingChoices.State())
+
+    private fun card(allowed: Boolean, calendars: List<Meetings.Cal>) =
+        window(Page.SETUP, running = true) { PageColumn { CalendarEventsCard(allowed, calendars, choices) { choices = it } } }
+
+    private val checkbox = role(Role.Checkbox)
+
+    @Test fun theCalendarsYouCanChangeAreTickedUnderTheirAccounts() {
+        choices = MeetingChoices.State()
+        card(true, listOf(holidays, team, personal, work))
+        rule.onAllNodes(checkbox).assertCountEquals(3)
+        rule.onNode(hasText("Holidays", substring = true)).assertDoesNotExist()
+        // Two accounts: each account's name over its calendars.
+        rule.onNode(hasText(you) and within("calendar-list"), useUnmergedTree = true).assertExists()
+        rule.onNode(hasText(home) and within("calendar-list"), useUnmergedTree = true).assertExists()
+        for (cal in listOf(work, team, personal)) rule.onNode(checkbox and hasContentDescription(str(R.string.events_calendar_said, cal.name, cal.accountName))).assertIsOn()
+        // The primary calendar stands first in its account.
+        val tops = listOf(work, team).map { cal -> rule.onNode(checkbox and hasContentDescription("${cal.name}, $you")).fetchSemanticsNode().boundsInRoot.top }
+        assertTrue(tops[0] < tops[1])
+        rule.onNode(checkbox and hasContentDescription("Team, $you")).performClick()
+        rule.waitForIdle()
+        assertEquals(setOf(team.ident), choices.calendarsOff)
+        rule.onNode(checkbox and hasContentDescription("Team, $you")).assertIsOff()
+        rule.onNode(checkbox and hasContentDescription("Team, $you")).performClick()
+        rule.waitForIdle()
+        assertEquals(emptySet<String>(), choices.calendarsOff)
+        picture("setup-calendar-events")
+    }
+
+    /** Narrow, dark and at twice the text size: the list goes under its name and every row still says it all. */
+    @Config(qualifiers = "w640dp-h1500dp-mdpi")
+    @Test fun theCardNarrowDarkAndAtTwiceTheTextSize() {
+        choices = MeetingChoices.State(words = listOf("Hold", "Commute"))
+        dark = true
+        rule.setContent {
+            view = LocalView.current
+            androidx.compose.runtime.CompositionLocalProvider(androidx.compose.ui.platform.LocalDensity provides
+                androidx.compose.ui.unit.Density(androidx.compose.ui.platform.LocalDensity.current.density, 2f)) {
+                SettingsTheme(dark) {
+                    Shell(Page.SETUP, {}, running = true, enabled = true, status = BarStatus.SHOWN, onEnabled = {}, onTurnOn = {}, insets = WindowInsets(top = 36.dp)) {
+                        PageColumn { CalendarEventsCard(true, listOf(work, team, personal), choices) { choices = it } }
+                    }
+                }
+            }
+        }
+        rule.waitForIdle()
+        rule.onAllNodes(checkbox).assertCountEquals(3)
+        rule.onNode(hasText("Hold, Commute") and within("calendar-words")).assertExists()
+        picture("setup-calendar-events-narrow-large-dark")
+    }
+
+    @Test fun withOneAccountNoAccountNameStandsOverTheList() {
+        choices = MeetingChoices.State()
+        card(true, listOf(work, team))
+        rule.onAllNodes(checkbox).assertCountEquals(2)
+        rule.onNode(hasText(you) and within("calendar-list"), useUnmergedTree = true).assertDoesNotExist()
+    }
+
+    @Test fun theChoicesOfWhichEventsCount() {
+        choices = MeetingChoices.State()
+        card(true, listOf(work))
+        rule.onNode(hasText(str(R.string.events_only_me_call))).assertIsSelected()
+        rule.onNode(hasText(str(R.string.events_only_me_never))).performClick()
+        rule.waitForIdle()
+        assertEquals(MeetingChoices.OnlyMe.NEVER, choices.onlyMe)
+        rule.onNode(hasText(str(R.string.events_only_me_never))).assertIsSelected()
+        rule.onNode(hasText(str(R.string.events_unanswered), substring = true)).assertIsOn().performClick()
+        rule.onNode(hasText(str(R.string.events_free), substring = true)).assertIsOff().performClick()
+        rule.waitForIdle()
+        assertFalse(choices.unanswered)
+        assertTrue(choices.free)
+        rule.onNode(hasSetTextAction() and within("calendar-words")).performTextInput("Hold, hold, Out of office, ")
+        // Saved once typing pauses.
+        rule.mainClock.advanceTimeBy(TEXT_SAVE_PAUSE_MS + 100)
+        rule.waitForIdle()
+        assertEquals("the words as they are kept", listOf("Hold", "Out of office"), choices.words)
+    }
+
+    private lateinit var focus: androidx.compose.ui.focus.FocusManager
+
+    private fun wordsField() = rule.onNode(hasSetTextAction() and within("calendar-words"))
+
+    private fun cardWithFocus() = window(Page.SETUP, running = true) {
+        focus = androidx.compose.ui.platform.LocalFocusManager.current
+        PageColumn { CalendarEventsCard(true, listOf(work), choices) { choices = it } }
+    }
+
+    /** "1" on the way to "1:1s" is never saved: the words are saved once typing pauses, and the calendar judged once. */
+    @Test fun theWordsAreSavedWhenTypingPausesNotAtEachKey() {
+        choices = MeetingChoices.State()
+        var saves = 0
+        window(Page.SETUP, running = true) { PageColumn { CalendarEventsCard(true, listOf(work), choices) { saves++; choices = it } } }
+        rule.mainClock.autoAdvance = false
+        wordsField().performTextInput("1")
+        rule.mainClock.advanceTimeBy(500)
+        wordsField().performTextInput(":1s")
+        rule.mainClock.advanceTimeBy(TEXT_SAVE_PAUSE_MS - 200)
+        assertEquals("half typed: nothing saved", emptyList<String>(), choices.words)
+        assertEquals(0, saves)
+        rule.mainClock.advanceTimeBy(400)
+        assertEquals(listOf("1:1s"), choices.words)
+        assertEquals("saved once", 1, saves)
+        // What is typed stays as it is while the field has the focus.
+        wordsField().assert(hasText("1:1s"))
+    }
+
+    @Test fun theWordsAreSavedAtOnceWhenTheFocusGoes() {
+        choices = MeetingChoices.State(words = listOf("Lunch"))
+        cardWithFocus()
+        rule.mainClock.autoAdvance = false
+        wordsField().performTextInput(", Hold,, ")
+        rule.mainClock.advanceTimeBy(100)
+        assertEquals(listOf("Lunch"), choices.words)
+        rule.runOnIdle { focus.clearFocus() }
+        rule.mainClock.advanceTimeBy(100)
+        assertEquals(listOf("Lunch", "Hold"), choices.words)
+        // And then the words as they are kept.
+        wordsField().assert(hasText("Lunch, Hold"))
+    }
+
+    @Test fun theWordsHelpSaysTheLimits() {
+        choices = MeetingChoices.State()
+        card(true, listOf(work))
+        val limits = app.resources.getQuantityString(R.plurals.events_words_limits, Meetings.MAX_WORDS, Meetings.MAX_WORDS, Meetings.WORD_CHARS)
+        assertTrue(limits, limits.contains("${Meetings.MAX_WORDS}") && limits.contains("${Meetings.WORD_CHARS}"))
+        rule.onNode(hasText(limits, substring = true)).assertExists()
+    }
+
+    @Test fun withoutCalendarAccessTheListSaysWhereToAllowIt() {
+        choices = MeetingChoices.State()
+        card(false, emptyList())
+        rule.onNodeWithText(str(R.string.events_calendars_need_access)).assertExists()
+        rule.onAllNodes(checkbox).assertCountEquals(0)
+        // The rows that need no access work all the same.
+        rule.onNode(hasText(str(R.string.events_only_me_always))).performClick()
+        rule.waitForIdle()
+        assertEquals(MeetingChoices.OnlyMe.ALWAYS, choices.onlyMe)
+    }
+
+    @Test fun withAccessAndOnlyCalendarsYouCanReadTheListSaysSo() {
+        choices = MeetingChoices.State()
+        card(true, listOf(holidays))
+        rule.onNodeWithText(str(R.string.events_calendars_none)).assertExists()
+    }
+
+    @Test fun theCardIsOnSetupBetweenThePermissionsAndTheOnlineServices() {
+        setup(SetupState(serviceOn = true))
+        val card = rule.onNodeWithTag("calendar-events").fetchSemanticsNode().positionInRoot.y
+        val calendar = rule.onNodeWithTag("permission:calendar").fetchSemanticsNode().positionInRoot.y
+        val online = rule.onNode(hasText(str(R.string.setup_online_title)) and heading).fetchSemanticsNode().positionInRoot.y
+        assertTrue("$calendar < $card < $online", calendar < card && card < online)
     }
 
     /** One kind, one look: a service's "remove the key" is the red button, under that service's switch and in line with its name. */

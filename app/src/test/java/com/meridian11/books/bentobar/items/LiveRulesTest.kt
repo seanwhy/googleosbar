@@ -252,6 +252,20 @@ class LiveRulesTest {
     private fun meeting(title: String, begin: Long, end: Long) = Calendar.Event(begin, title, begin, end, allDay = false, color = 0, location = "",
         editable = true, meeting = true, link = null)
 
+    @Test fun aMeetingInsideALongOneIsLiveFromTenMinutesBeforeItAndTheLongOneIsNot() {
+        val t = 1_000_000 * minute
+        val workshop = meeting("Workshop", t, t + 240 * minute)
+        val standup = meeting("Stand-up", t + 60 * minute, t + 75 * minute)
+        val list = listOf(workshop, standup)
+        assertNull("the workshop is no news an hour in", LiveRules.meeting(list, t + 49 * minute))
+        assertEquals(standup, LiveRules.meeting(list, t + 50 * minute))
+        assertEquals(standup, LiveRules.meeting(list, t + 69 * minute))
+        assertNull(LiveRules.meeting(list, t + 70 * minute))
+        // While the workshop is still news, the one nearer its start wins.
+        val early = meeting("Early", t + 5 * minute, t + 20 * minute)
+        assertEquals(early, LiveRules.meeting(listOf(workshop, early), t + 3 * minute))
+    }
+
     @Test fun aMeetingIsLiveFromTenMinutesBeforeToTenAfter() {
         assertTrue(EventItem.liveSource)
         val t = wall

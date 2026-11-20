@@ -3,6 +3,10 @@ package com.meridian11.books.bentobar.compose
 import android.app.Application
 import android.graphics.Rect
 import androidx.compose.runtime.CompositionLocalProvider
+import androidx.compose.ui.test.assertCountEquals
+import androidx.compose.ui.test.assertIsOff
+import com.meridian11.books.bentobar.ui.CheckItem
+import com.meridian11.books.bentobar.ui.CheckList
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
@@ -103,6 +107,19 @@ class ScreenReaderTest {
         rule.onNodeWithText("Text").assertIsSelected()
         rule.onNodeWithText("✓ ").assertDoesNotExist()
         rule.onNodeWithText("✓", substring = true).assertDoesNotExist()
+    }
+
+    @Test fun aCalendarsRowSaysItsNameItsAccountAndWhetherItIsTicked() {
+        rule.setContent {
+            CheckList(listOf("you@example.com" to listOf(CheckItem("a", "Work", androidx.compose.ui.graphics.Color.Blue, "Work, you@example.com"),
+                CheckItem("b", "Team", androidx.compose.ui.graphics.Color.Red, "Team, you@example.com"))), { it == "a" }, { _, _ -> })
+        }
+        rule.onNode(SemanticsMatcher.expectValue(SemanticsProperties.Role, androidx.compose.ui.semantics.Role.Checkbox) and
+            hasContentDescription("Work, you@example.com")).assertIsOn()
+        rule.onNode(hasContentDescription("Team, you@example.com")).assertIsOff()
+        // The name is said once, by the row: its text says nothing of its own.
+        rule.onAllNodes(hasText("Work")).assertCountEquals(0)
+        assertEquals(emptyList<String>(), arrowSigns())
     }
 
     @Test fun aSliderSaysItsValueInItsOwnUnit() {

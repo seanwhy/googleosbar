@@ -99,6 +99,27 @@ class PrivateTextTest {
         }
     }
 
+    /**
+     * What is read of the calendar (titles, addresses, calendar names) is never logged: in the files that hold it, the only
+     * log lines are the two failures, by their kind.
+     */
+    @Test fun noLogLineInTheCalendarsFilesButTheTwoFailuresByTheirKind() {
+        val names = listOf("Calendar.kt", "Meetings.kt", "EventText.kt", "EventSamples.kt", "MeetingChoices.kt")
+        val files = SourceScan.sources.filter { it.name in names }
+        assertEquals(names.sorted(), files.map { it.name }.sorted())
+        val allowed = listOf("""Log.w(TAG, "calendar query failed: ${'$'}{e.javaClass.simpleName}")""",
+            """Log.w(TAG, "attendee query failed: ${'$'}{e.javaClass.simpleName}")""")
+        for (f in files) {
+            var code = SourceScan.code(f)
+            for (a in allowed) code = code.replace(a, "")
+            for (call in listOf("Log.", "println(", "printStackTrace", "System.out", "System.err")) assertFalse("${f.name} calls $call", call in code)
+        }
+        val calendar = SourceScan.code(files.single { it.name == "Calendar.kt" })
+        for (a in allowed) assertTrue(a, a in calendar)
+        // Next meeting's text is a title: the debug hooks print its length, and a failure is logged by its kind.
+        assertTrue(EventItem.discreet)
+    }
+
     @Test fun noDebugLineSaysTheText() {
         PrompterItem.edit("p", script)
         for (line in listOfNotNull(PrompterItem.debug(emptyList()))) assertFalse(line, script.take(20) in line)

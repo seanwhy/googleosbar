@@ -41,8 +41,12 @@ connect() { # the device's serial, see "Which device" above; anything but exactl
   echo "$found"
 }
 A() { local s; s=$(connect) || exit 1; adb -s "$s" "$@"; }
+# A hook's answer is the last "debug …" line in the log, with the lines of the same message after it (`event check` has several).
 dbg() { A shell "am broadcast --user current -a $PKG.DEBUG -p $PKG --es c '$*'" >/dev/null; sleep 0.4
-  A shell "logcat -d -s BentoBar:I" | grep "debug $1" | tail -1 | sed 's/.*-> //'; }
+  A shell "logcat -d -v threadtime -s BentoBar:I" | awk -v k="debug $1" '
+    index($0, k) { head = substr($0, 1, index($0, ": ") + 1); n = 0 }
+    head != "" && substr($0, 1, length(head)) == head { line[++n] = substr($0, length(head) + 1) }
+    END { for (i = 1; i <= n; i++) print line[i] }' | sed '1s/.*-> //'; }
 
 winshot() { # BentoBar's own window as a PNG: winshot TITLE|app FILE (debug builds; written to the app's cache)
   local r; r=$(A shell "am broadcast --user current -a $PKG.DEBUG -p $PKG --es c 'winshot $1'" | sed -n 's/.*data="\([^"]*\)".*/\1/p')

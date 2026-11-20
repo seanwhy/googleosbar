@@ -61,15 +61,20 @@ import androidx.compose.ui.res.pluralStringResource
 import androidx.compose.ui.res.stringResource
 import com.meridian11.books.bentobar.R
 import com.meridian11.books.bentobar.data.ItemConfig
+import com.meridian11.books.bentobar.ui.BentoButton
+import com.meridian11.books.bentobar.ui.ButtonKind
 import com.meridian11.books.bentobar.ui.ChipRow
 import com.meridian11.books.bentobar.ui.ChoiceRow
 import com.meridian11.books.bentobar.ui.InfoRow
 import com.meridian11.books.bentobar.ui.LocalPreviewClock
+import com.meridian11.books.bentobar.ui.LocalTurnTo
 import com.meridian11.books.bentobar.ui.MainActivity
 import com.meridian11.books.bentobar.ui.MenuCard
 import com.meridian11.books.bentobar.ui.MenuDivider
 import com.meridian11.books.bentobar.ui.MenuEntry
 import com.meridian11.books.bentobar.ui.Meter
+import com.meridian11.books.bentobar.ui.OptionHelp
+import com.meridian11.books.bentobar.ui.Page
 import com.meridian11.books.bentobar.ui.SectionLabel
 import com.meridian11.books.bentobar.ui.SliderRow
 import com.meridian11.books.bentobar.ui.SmallIconButton
@@ -117,6 +122,10 @@ object CalendarItem : ItemType("calendar", R.string.item_calendar_title, Sym.CAL
 
     override val menu: @Composable (ItemConfig, MenuHost) -> Unit = { item, host -> MonthMenu(item, host) }
 
+    /** The same hooks as Next meeting's: both read the one calendar ([Calendar.debug]). */
+    override fun debug(args: List<String>): String? = Calendar.debug(args)
+    override val stages = listOf("stage demo", "stage allday")
+
     override val options: @Composable (ItemConfig, (ItemConfig) -> Unit) -> Unit = { item, set ->
         // Each pattern is shown with today's date, as the header's preview and the bar say it: a fixed sample beside them read as a mistake.
         val today = LocalPreviewClock.current().toLocalDate()
@@ -161,8 +170,7 @@ private fun MonthMenu(item: ItemConfig, host: MenuHost) {
     fun eventsOn(d: LocalDate): List<Calendar.Event> {
         val s = d.atStartOfDay(zone).toInstant().toEpochMilli()
         val e = d.plusDays(1).atStartOfDay(zone).toInstant().toEpochMilli()
-        // Meetings have their own item (Next meeting); the calendar shows everything else.
-        return Calendar.on(s, e, d.atStartOfDay(ZoneOffset.UTC).toInstant().toEpochMilli()).filterNot { it.meeting }
+        return Calendar.on(s, e, d.atStartOfDay(ZoneOffset.UTC).toInstant().toEpochMilli())
     }
     val weekOf = WeekFields.of(Locale.getDefault()).weekOfWeekBasedYear()
     MenuCard(Sym.CALENDAR_MONTH, Dates.format("EEEEdMMMM", today),
@@ -286,9 +294,11 @@ fun EventRow(e: Calendar.Event, close: () -> Unit) {
 }
 
 /**
- * Next meeting: the next meeting before 03:00 tomorrow ([Meetings]) and a countdown ("Standup in 12m",
- * "Standup · 24m left"), accented from "Show when" minutes before it until it ends. With no meeting
- * left in that horizon, just the icon. The menu lists the horizon's meetings.
+ * Next meeting: the meeting the bar stands on ([Meetings.pick]: the one on now, or the next, and one that starts inside a
+ * long one from "Show when" minutes before it) and a countdown ("Standup in 12m", "Standup · 24m left", [EventText]),
+ * accented from "Show when" minutes before it until it ends. It looks at today (to 03:00 tomorrow) or, with "Any day",
+ * further. Which events are meetings is the install's choice ([com.meridian11.books.bentobar.data.MeetingChoices], Setup's
+ * Calendar events), not the item's. With no meeting, just the icon. The menu lists the day's meetings.
  */
 object EventItem : ItemType("event", R.string.item_event_title, Sym.GROUPS, R.string.item_event_desc) {
     override val group = ItemGroup.TIME
@@ -298,61 +308,80 @@ object EventItem : ItemType("event", R.string.item_event_title, Sym.GROUPS, R.st
     override val menuWidthDp = 340
     override val canBeActive = true
     override val permissions = listOf(Manifest.permission.READ_CALENDAR)
-    /** How long before a meeting the item pops out (with "Show when") and turns the accent color. */
+    /** What it shows is the user's calendar: debug output says how long the text is, and a failure only its kind. */
+    override val discreet = true
+    /** How long before a meeting the item pops out (with "Show when") and turns the accent color; and the lead of [Meetings.pick]. */
     val before = Threshold("soonMin", 15, 1..60) { Env.plural(R.plurals.common_minutes_short, it, it) }
     override val trigger = Trigger(R.string.trigger_event, R.string.trigger_event_short, before)
     /** How many characters of a title the bar shows. */
     val chars = IntOpt("chars", 20, 8..40)
+    /** "In the bar": the title and the time, or the time alone. */
+    val show = Opt.oneOf("show", SHOW_BOTH, SHOW_BOTH, SHOW_TIME)
+    /** "Looks ahead": today (to 03:00 tomorrow), or any day. */
+    val ahead = Opt.oneOf("ahead", AHEAD_TODAY, AHEAD_TODAY, AHEAD_ANY)
+    const val SHOW_BOTH = "both"
+    const val SHOW_TIME = "time"
+    const val AHEAD_TODAY = "today"
+    const val AHEAD_ANY = "any"
 
     override fun onLive() = Calendar.hold(type)
     override fun onIdle() = Calendar.release(type)
 
     override val liveSource = true
 
+    /** The words of [EventText], from the app's text. */
+    private val words = EventText.Words { w ->
+        Env.str(when (w) {
+            EventText.Word.NOW_TEXT -> R.string.event_now_text
+            EventText.Word.LEFT -> R.string.events_left
+            EventText.Word.IN -> R.string.event_in
+            EventText.Word.NEXT_TEXT -> R.string.event_next_text
+            EventText.Word.NOW_DESC -> R.string.event_now_desc
+            EventText.Word.NEXT_DESC -> R.string.event_next_desc
+        })
+    }
+
+    /** A moment as the system and the locale write it. */
+    private val clock = EventText.Clock(
+        time = ::shortTime,
+        dayTime = { Dates.format("EEE" + Dates.timeSkeleton(DateFormat.is24HourFormat(Env.app)), it) },
+        date = { Dates.format("MMMd", it) },
+        dayTimeSaid = { Dates.format("EEEE" + Dates.timeSkeleton(DateFormat.is24HourFormat(Env.app)), it) },
+        dateSaid = { Dates.format("MMMMd", it) },
+    )
+
     /**
      * For the Live activity: a meeting from ten minutes before it starts until ten minutes in ([LiveRules.meeting]), in the
-     * words of [state], its title cut so that the countdown stays whole. Woken with no item of its own, nobody runs [state],
-     * so this asks for the calendar's refresh as [state] does (it reads again only what has grown old). Without calendar
-     * access, nothing.
+     * words of [state] as the first Next meeting item has them ([EventText.live]: its "Longest title", and with "In the bar"
+     * Time no title). Woken with no item of its own, nobody runs [state], so this asks for the calendar's refresh as [state]
+     * does (it reads again only what has grown old). Without calendar access, nothing.
      */
     override fun liveNow(now: Long, items: List<ItemConfig>): LiveNow? {
         if (!Calendar.allowed()) return null
         Calendar.refresh()
         val wall = System.currentTimeMillis()
-        val e = LiveRules.meeting(Calendar.meetings(wall), wall) ?: return null
-        val max = items.firstOrNull()?.let(chars::of) ?: chars.default
+        val e = LiveRules.meeting(Calendar.upcomingMeetings(wall), wall) ?: return null
+        val first = items.firstOrNull()
+        val said = EventText.live(e, wall, timeOnly = first?.let(show::of) == SHOW_TIME, chars = first?.let(chars::of) ?: chars.default, words)
         val since = now - (wall - (e.begin - LiveRules.MEETING_MS)).coerceAtLeast(0)
-        if (e.begin <= wall) {
-            val left = Fmt.duration(e.end - wall)
-            return LiveNow(LiveRank.MEETING, Sym.GROUPS, LiveRules.around(e.title, max) { Env.str(R.string.event_now_text, it, left) },
-                Env.str(R.string.event_now_desc, e.title, Fmt.spokenMinutes(e.end - wall)), Tone.ACCENT, since, open = { Calendar.open(e) })
-        }
-        val until = (e.begin - wall).coerceAtLeast(60_000)
-        val whenText = Env.str(R.string.event_in, Fmt.duration(until))
-        return LiveNow(LiveRank.MEETING, Sym.GROUPS, LiveRules.around(e.title, max) { Env.str(R.string.event_next_text, it, whenText) },
-            Env.str(R.string.event_next_desc, e.title, Env.str(R.string.event_in, Fmt.spokenMinutes(until))), Tone.ACCENT, since, open = { Calendar.open(e) })
+        return LiveNow(LiveRank.MEETING, Sym.GROUPS, said.text, said.desc, Tone.ACCENT, since, open = { Calendar.open(e) })
     }
 
     override fun state(item: ItemConfig): ItemState {
         if (!Calendar.allowed()) return ItemState(icon = Sym.GROUPS, desc = Env.str(R.string.event_access_needed))
         Calendar.refresh()
         val now = System.currentTimeMillis()
-        val max = chars.of(item)
-        Calendar.current(now)?.let { e ->
-            val left = Fmt.duration(e.end - now)
-            return ItemState(icon = Sym.GROUPS, text = Env.str(R.string.event_now_text, TextRules.short(e.title, max), left), label = e.title, active = true,
-                tone = Tone.ACCENT, desc = Env.str(R.string.event_now_desc, e.title, Fmt.spokenMinutes(e.end - now)))
-        }
-        val next = Calendar.next(now) ?: return ItemState(icon = Sym.GROUPS, desc = Env.str(R.string.event_no_more))
-        val until = next.begin - now
-        val near = until <= before.of(item) * 60_000L
-        val whenText = if (until < 60 * 60_000L) Env.str(R.string.event_in, Fmt.duration(until.coerceAtLeast(60_000))) else shortTime(next.begin)
-        val whenSaid = if (until < 60 * 60_000L) Env.str(R.string.event_in, Fmt.spokenMinutes(until.coerceAtLeast(60_000))) else whenText
-        return ItemState(icon = Sym.GROUPS, text = Env.str(R.string.event_next_text, TextRules.short(next.title, max), whenText), label = next.title, active = near,
-            tone = if (near) Tone.ACCENT else Tone.NORMAL, desc = Env.str(R.string.event_next_desc, next.title, whenSaid))
+        val any = ahead.of(item) == AHEAD_ANY
+        val soon = before.of(item) * 60_000L
+        val e = Meetings.pick(if (any) Calendar.upcomingMeetings(now) else Calendar.meetings(now), now, soon)
+            ?: return ItemState(icon = Sym.GROUPS, desc = Env.str(if (any) R.string.events_none_ahead else R.string.event_no_more))
+        val zone = ZoneId.systemDefault()
+        val bar = EventText.bar(e, now, Meetings.horizon(now, zone), zone, show.of(item) == SHOW_TIME, chars.of(item), soon, words, clock)
+        return ItemState(icon = Sym.GROUPS, text = bar.text, label = bar.label, active = bar.active,
+            tone = if (bar.active) Tone.ACCENT else Tone.NORMAL, desc = bar.desc)
     }
 
-    override val menu: @Composable (ItemConfig, MenuHost) -> Unit = { _, host ->
+    override val menu: @Composable (ItemConfig, MenuHost) -> Unit = { item, host ->
         rememberTick()
         if (!Calendar.allowed()) {
             MenuCard(Sym.GROUPS, stringResource(R.string.event_today), stringResource(R.string.event_needs_calendar)) {
@@ -361,15 +390,18 @@ object EventItem : ItemType("event", R.string.item_event_title, Sym.GROUPS, R.st
         } else {
             Calendar.refresh()
             val now = System.currentTimeMillis()
+            val zone = ZoneId.systemDefault()
             val today = LocalDate.now()
+            val any = ahead.of(item) == AHEAD_ANY
             MenuCard(Sym.GROUPS, stringResource(R.string.event_today), Dates.format("EEEEdMMMM", today)) {
-                val list = Calendar.meetings(now)
-                if (list.isEmpty()) Text(stringResource(R.string.event_no_more), style = MaterialTheme.typography.bodyMedium,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant)
+                // Today's; with "Any day" and none left today, the first later day that has one, under that day's name.
+                val list = Meetings.listed(Calendar.upcomingMeetings(now), now, Meetings.horizon(now, zone), zone, any)
+                if (list.isEmpty()) Text(stringResource(if (any) R.string.events_none_ahead else R.string.event_no_more),
+                    style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
                 var lastDay = today
                 list.forEach { e ->
-                    // A meeting after midnight (the horizon runs to 03:00) gets its day above it.
-                    val d = Instant.ofEpochMilli(e.begin).atZone(ZoneId.systemDefault()).toLocalDate()
+                    // A meeting after midnight (the horizon runs to 03:00), or on a later day, gets its day above it.
+                    val d = Instant.ofEpochMilli(e.begin).atZone(zone).toLocalDate()
                     if (d > lastDay) {
                         Text(Dates.format("EEEEdMMM", d), style = MaterialTheme.typography.labelMedium,
                             color = MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.padding(top = 6.dp))
@@ -385,9 +417,24 @@ object EventItem : ItemType("event", R.string.item_event_title, Sym.GROUPS, R.st
 
     override val options: @Composable (ItemConfig, (ItemConfig) -> Unit) -> Unit = { item, set ->
         val res = androidx.compose.ui.platform.LocalResources.current
-        SliderRow(stringResource(R.string.event_longest_title), chars.of(item), chars.range,
+        ChoiceRow(stringResource(R.string.events_show), listOf(SHOW_BOTH to stringResource(R.string.events_show_both),
+            SHOW_TIME to stringResource(R.string.events_show_time)), show.of(item)) { set(show.set(item, it)) }
+        // The longest title is nothing to choose while the bar shows no title.
+        if (show.of(item) == SHOW_BOTH) SliderRow(stringResource(R.string.event_longest_title), chars.of(item), chars.range,
             { res.getQuantityString(R.plurals.event_characters, it, it) }) { set(chars.set(item, it)) }
+        ChoiceRow(stringResource(R.string.events_ahead), listOf(AHEAD_TODAY to stringResource(R.string.events_ahead_today),
+            AHEAD_ANY to stringResource(R.string.events_ahead_any)), ahead.of(item)) { set(ahead.set(item, it)) }
+        // Which events are meetings is the install's, in Setup: said here, with the way there (in this window, never by an intent).
+        OptionHelp(stringResource(R.string.events_options_note))
+        val turnTo = LocalTurnTo.current
+        BentoButton(stringResource(R.string.events_options_open), { turnTo(Page.SETUP) }, kind = ButtonKind.TEXT)
     }
+
+    /** `./bento debug event …`: the calendar's own hooks ([Calendar.debug]), shared with Date and calendar. */
+    override fun debug(args: List<String>): String? = Calendar.debug(args)
+
+    /** Each draws another menu than the one before it, with the choices as they come. */
+    override val stages = listOf("demo", "solo", "shared", "workshop", "link", "unanswered").map { "stage $it" }
 }
 
 object TimerItem : ItemType("timer", R.string.item_timer_title, Sym.TIMER, R.string.item_timer_desc) {

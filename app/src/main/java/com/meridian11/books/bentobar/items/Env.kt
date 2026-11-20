@@ -23,6 +23,7 @@ import androidx.annotation.StringRes
 import com.meridian11.books.bentobar.BuildConfig
 import com.meridian11.books.bentobar.R
 import com.meridian11.books.bentobar.bar.BarService
+import com.meridian11.books.bentobar.data.MeetingChoices
 import com.meridian11.books.bentobar.data.Online
 import com.meridian11.books.bentobar.data.Store
 import com.meridian11.books.bentobar.net.Http
@@ -72,6 +73,10 @@ object Env {
         // The switches for the three online services and the user's keys: in the no-backup directory, which
         // Android leaves out of backups and device transfers. Then the rules for going online at all.
         Online.init(app.noBackupFilesDir)
+        // Which calendar events count as meetings: the install's, beside the switches and no part of the layout.
+        MeetingChoices.init(app.noBackupFilesDir)
+        MeetingChoices.writer = Background.executor("choices")
+        MeetingChoices.onChange = { Background.onMain { Calendar.choicesChanged() } }
         wireOnline()
         FlightItem.sweepAtStart()
         NowPlaying.init(app)

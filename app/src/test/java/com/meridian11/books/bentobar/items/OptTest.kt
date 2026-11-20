@@ -70,6 +70,16 @@ class OptTest {
         assertEquals("…", TextRules.short("Standup", 0))
     }
 
+    @Test fun nextMeetingsShowAndLooksAheadReadAnythingUnknownAsTheirDefault() {
+        fun event(vararg o: Pair<String, String>) = ItemConfig("e", "event", options = mapOf(*o))
+        assertEquals("both", EventItem.show.of(event()))
+        assertEquals("both", EventItem.show.of(event("show" to "title")))
+        assertEquals("time", EventItem.show.of(event("show" to "time")))
+        assertEquals("today", EventItem.ahead.of(event()))
+        assertEquals("today", EventItem.ahead.of(event("ahead" to "tomorrow")))
+        assertEquals("any", EventItem.ahead.of(event("ahead" to "any")))
+    }
+
     @Test fun theLabelsTheBarShowsAreDeclaredWithTheirLimits() {
         assertEquals("Home", ClockItem.label.of(ItemConfig("c", "clock", options = mapOf("label" to "⁦Home⁩"))))
         assertEquals("0123456789abcdef", CountdownItem.label.of(ItemConfig("c", "countdown", options = mapOf("label" to "0123456789abcdefXYZ"))))
