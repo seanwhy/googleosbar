@@ -368,16 +368,15 @@ class StripTest {
             com.meridian11.books.bentobar.items.GrokBotItem,
         )
         com.meridian11.books.bentobar.data.Store.init(androidx.test.core.app.ApplicationProvider.getApplicationContext())
+        val before = com.meridian11.books.bentobar.data.Store.config.value
+        val items = types.map {
+            ItemConfig("test-${it.type}", it.type, com.meridian11.books.bentobar.data.Section.SHOWN)
+        }
+        // Staged.of(item) only supplies staged snapshots for the first configured item of each type.
+        com.meridian11.books.bentobar.data.Store.update { before.copy(items = items) }
         com.meridian11.books.bentobar.items.AiUsageReader.clearCacheForTesting()
         try {
-            for (type in types) {
-                val item = com.meridian11.books.bentobar.data.Store.config.value.items.firstOrNull {
-                    it.type == type.type && it.section != com.meridian11.books.bentobar.data.Section.OFF
-                } ?: com.meridian11.books.bentobar.data.ItemConfig(
-                    "test-${type.type}",
-                    type.type,
-                    com.meridian11.books.bentobar.data.Section.SHOWN
-                )
+            for ((type, item) in types.zip(items)) {
                 org.junit.Assert.assertNull(type.debug(listOf("stage", "no-such-state")))
                 for (mode in listOf("timeout", "timeout-cached")) {
                     org.junit.Assert.assertNotNull(type.debug(listOf("stage", mode)))
@@ -395,6 +394,7 @@ class StripTest {
         } finally {
             types.forEach { it.debug(listOf("off")) }
             com.meridian11.books.bentobar.items.AiUsageReader.clearCacheForTesting()
+            com.meridian11.books.bentobar.data.Store.update { before }
         }
     }
 }
