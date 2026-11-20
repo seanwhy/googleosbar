@@ -28,6 +28,7 @@ import androidx.compose.ui.test.hasText
 import androidx.compose.ui.test.junit4.v2.createComposeRule
 import androidx.compose.ui.test.onNodeWithTag
 import androidx.compose.ui.test.performClick
+import androidx.compose.ui.test.performScrollTo
 import androidx.test.core.app.ApplicationProvider
 import com.meridian11.books.bentobar.R
 import com.meridian11.books.bentobar.data.BarConfig
@@ -40,6 +41,8 @@ import com.meridian11.books.bentobar.data.Store
 import com.meridian11.books.bentobar.items.Env
 import com.meridian11.books.bentobar.items.Items
 import com.meridian11.books.bentobar.ui.BarPage
+import com.meridian11.books.bentobar.ui.LocalTurnTo
+import com.meridian11.books.bentobar.ui.Page
 import com.meridian11.books.bentobar.ui.SettingsTheme
 import com.meridian11.books.bentobar.ui.Undo
 import org.junit.After
@@ -97,6 +100,33 @@ class ItemOptionsTest {
         node.config[SemanticsActions.GetTextLayoutResult].action!!.invoke(results)
         val layout = results.single()
         return (0 until layout.lineCount).map { layout.getLineRight(it) - layout.getLineLeft(it) } to layout.layoutInput.style.lineBreak
+    }
+
+    /** Next meeting's own options: two segments, the title's length only while the bar shows a title, and the way to Setup. */
+    @Test fun nextMeetingsOptionsAndTheWayToWhichEventsCount() {
+        var turned: Page? = null
+        Store.update { BarConfig(items = listOf(item("e", "event"), item("c", "clock")), position = Position.RIGHT) }
+        selected = "e"
+        rule.setContent {
+            SettingsTheme(dark = false) {
+                CompositionLocalProvider(LocalTurnTo provides { turned = it }) { BarPage(selected, onSelect = { selected = it }) }
+            }
+        }
+        rule.waitForIdle()
+        rule.onNode(hasText(str(R.string.events_show_both)) and inTag("options")).assertIsSelected()
+        rule.onNode(hasText(str(R.string.events_ahead_today)) and inTag("options")).assertIsSelected()
+        val withTitle = sliders.fetchSemanticsNodes().size
+        rule.onNode(hasText(str(R.string.events_show_time)) and inTag("options")).performClick()
+        rule.waitForIdle()
+        assertEquals("time", now("e").options["show"])
+        assertEquals("the longest title is gone", withTitle - 1, sliders.fetchSemanticsNodes().size)
+        rule.onNode(hasText(str(R.string.events_ahead_any)) and inTag("options")).performClick()
+        rule.waitForIdle()
+        assertEquals("any", now("e").options["ahead"])
+        rule.onNode(hasText(str(R.string.events_options_note)) and inTag("options")).assertExists()
+        rule.onNode(hasText(str(R.string.events_options_open)) and hasClickAction() and inTag("options")).performScrollTo().performClick()
+        rule.waitForIdle()
+        assertEquals(Page.SETUP, turned)
     }
 
     @Test fun theRulesSentenceBreaksIntoLinesOfLikeLength() {

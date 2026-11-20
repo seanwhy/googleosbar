@@ -2,29 +2,50 @@
 # SPDX-License-Identifier: MIT
 """Composes the README images from raw captures of a Googlebook.
 
-Raw captures (in RAW, default ~/.cache/bentobar/shots), made with a demo layout so no personal data
-shows, and with a staged network (./bento debug network stage wifi; network off afterwards), since the
-Network menu's Addresses section shows the device's own addresses, gateway, DNS and Private DNS host:
-  bar_hero.png, bar_now.png, bar_open.png   full-width screenshots, top 41 px (./bento shot F 41)
-  win_*.png                                 BentoBar's own windows (./bento winshot TITLE FILE), which
-                                            carry their shadow margin and no mouse pointer
-  app_*.png                                 the settings window (./bento winshot app FILE)
-  cpu_frame.txt                             "cpu menu frame: x1 y1 x2 y2" of the CPU menu window
-  wallpaper.png                             optional: the wallpaper at screen size, for the hero image
-                                            under an opaque status bar (else it's continued from the bar)
+Capture with a demo layout, so that no personal data shows (./bento debug cfg to save the user's, ./bento debug import
+<base64> to load the demo and later restore theirs), and with everything that shows data staged: event stage demo,
+weather stage clear, media stage playing, flight show air, network stage wifi (each turned off afterwards). Maximize
+BentoBar's settings window (the bar is then solid, so no wallpaper shows in it). For the menus, open the debug build's
+plain grey window over it (adb shell am start -n com.meridian11.books.bentobar/.util.BarFlipActivity --ez dark false: it
+opens in the settings window's task, so it is maximized too, and --ez close true ends both): what the glass lets through
+of a plain ground is the same everywhere, and from it each menu is drawn as over the settings window's light ground.
 
-Writes docs/images/hero.png, bar.png, menus.png, settings.png and settings-pages.png.
+Raw captures in RAW (default ~/.cache/bentobar/shots):
+  ground.png                    a screenshot over the grey window with no menu open
+  hero.png                      a screenshot with one menu open, under an item of the Left area
+  hero.txt                      that menu window's frame, "frame: x1 y1 x2 y2" (from dumpsys window)
+  hero_win.png                  that menu window (./bento winshot "BentoBar menu" FILE): the window's own pixels,
+                                premultiplied, and its shape; a window capture has the glass's veil but no blur behind it
+  bar_folded.png, bar_open.png  screenshots with hidden items behind ‹ (Look: Behind ‹, on click), folded and revealed
+                                (./bento debug chevron right), with nothing in the Middle area
+  menu_NAME.png, .txt, _win.png as hero, one menu each: weather, calendar, event, ctx, cpu, tools (the screenshot
+                                must not have the mouse pointer inside the menu's frame: move the item or the pointer)
+  app_bar.png                   the Bar page with an item's options (./bento winshot app FILE: no caption, no pointer)
+  app_add.png                   the Bar page with Add items
+  app_look.png                  the Look page
+
+The crops are in the pixels of a 2560 × 1600 screen at 240 dpi, and everything is then scaled to a 1920 px wide screen,
+so the images keep the size they always had. Writes docs/images/hero.png, bar.png, menus.png, settings.png and
+settings-pages.png.
 
     python3 tools/readme_images.py [RAW]
 """
 import pathlib
 import sys
 
-from PIL import Image, ImageChops, ImageDraw, ImageFilter
+from PIL import Image, ImageChops, ImageDraw, ImageFilter, ImageMath
 
 ROOT = pathlib.Path(__file__).resolve().parent.parent
 RAW = pathlib.Path(sys.argv[1] if len(sys.argv) > 1 else pathlib.Path.home() / ".cache/bentobar/shots")
 OUT = ROOT / "docs/images"
+
+BAR_H = 54          # the status bar's height
+HERO_RIGHT = 1500   # the hero shows the bar from the left edge to here: the clock, the Left area and the Middle one
+BAR_LEFT = 990      # bar.png starts here: room for the Right area's hidden items when they are revealed
+HEADER_TOP = 58     # in a settings window capture, where the header row begins (above it the caption window sits)
+HEADER_END = 138    # and where the page below the header begins
+PANEL = (1886, 316, 2530, 1432)  # the Bar page's panel (Add items) in a maximized window
+LOOK = (690, HEADER_END, 1870, 1436)  # the Look page's column, to the end of its Hidden items card
 
 
 def rounded(im, r):
@@ -35,8 +56,14 @@ def rounded(im, r):
     return im
 
 
-def shadowed(im, blur=18, offset=(0, 8), alpha=90, pad=40):
-    """[im] on a transparent canvas with a soft drop shadow."""
+def margin(blur, offset):
+    """How far a shadow reaches beyond its image: a canvas any smaller cuts it off with a hard edge."""
+    return 3 * blur + max(abs(o) for o in offset)
+
+
+def shadowed(im, blur=18, offset=(0, 8), alpha=90):
+    """[im] on a transparent canvas with a soft drop shadow; the image stands at (margin, margin) of it."""
+    pad = margin(blur, offset)
     w, h = im.size
     canvas = Image.new("RGBA", (w + 2 * pad, h + 2 * pad), (0, 0, 0, 0))
     shadow = Image.new("RGBA", canvas.size, (0, 0, 0, 0))
@@ -47,105 +74,118 @@ def shadowed(im, blur=18, offset=(0, 8), alpha=90, pad=40):
     return canvas
 
 
-def card(win):
-    """A menu window capture reduced to its card (the window keeps a 12 dp margin around it)."""
-    bbox = win.getchannel("A").point(lambda v: 255 if v > 200 else 0).getbbox()
-    return rounded(win.crop(bbox), 22)
+def frame(name):
+    return [int(v) for v in (RAW / f"{name}.txt").read_text().split(":")[1].split()]
 
 
-def wallpaper(bar, height):
-    """Continues the status bar's wallpaper below it: per-column colours without the glyphs, smoothed."""
-    px = bar.convert("RGB").load()
-    cols = []
-    for x in range(bar.width):
-        vals = [px[x, y] for y in range(bar.height) if sum(px[x, y]) < 600]  # skip white glyph pixels
-        cols.append(tuple(sum(c[i] for c in vals) // len(vals) for i in range(3)) if vals else cols[-1] if cols else (90, 120, 140))
-    k = 60
-    smooth = [tuple(sum(cols[j][i] for j in range(max(0, x - k), min(len(cols), x + k))) // (min(len(cols), x + k) - max(0, x - k))
-                    for i in range(3)) for x in range(len(cols))]
-    bg = Image.new("RGB", (bar.width, height))
-    d = bg.load()
-    for y in range(height):
-        f = 1 - 0.28 * y / height  # a little darker downwards
-        for x in range(bar.width):
-            r, g, b = smooth[x]
-            d[x, y] = (int(r * f), int(g * f), int(b * f))
-    return bg.filter(ImageFilter.GaussianBlur(6))
+def light():
+    """The settings window's ground in light mode, beside the Look page's column: what the menus are drawn over."""
+    return Image.open(RAW / "app_look.png").convert("RGB").getpixel((20, 700))
 
 
-# Captures from any Googlebook are scaled to the HP's 1920 px wide screen (its density), so the
-# images keep one size whichever device they came from; SCALE is set from bar_hero.png in main().
-SCALE = 1.0
+def glass(name):
+    """
+    A menu as it shows over the settings window's light ground, cut to the card (the window capture's alpha is the card's
+    shape). On screen the glass is the window's own pixels (the window capture, which holds them premultiplied) plus the
+    blurred ground behind times what the glass lets through there. Over the plain grey window (ground.png) the blurred
+    ground is that grey, so what it lets through is (screen - window capture) / grey, pixel by pixel, and the light ground
+    takes the grey's place. Where the two captures differ in what the window drew (a live number or chart, a moment
+    apart), the screen is kept, lifted by what the glass lets through of the difference between the two grounds.
+    """
+    x1, y1, x2, y2 = frame(name)
+    screen = Image.open(RAW / f"{name}.png").convert("RGB").crop((x1, y1, x2, y2))
+    behind = Image.open(RAW / "ground.png").convert("RGB").crop((x1, y1, x2, y2))
+    win = Image.open(RAW / f"{name}_win.png").convert("RGBA")
+    own = win.convert("RGB")
+    inside = win.getchannel("A").point(lambda v: 255 if v > 250 else 0)
+    share = ImageChops.subtract(screen, own)
+    changed = ImageChops.subtract(own, screen).convert("L").point(lambda v: 255 if v > 3 else 0)
+    bands, fallback = [], []
+    for p, s, g, scr, to in zip(own.split(), share.split(), behind.split(), screen.split(), light()):
+        changed = ImageChops.lighter(changed, ImageChops.subtract(s, g).point(lambda v: 255 if v > 3 else 0))
+        hist = s.histogram(inside)
+        plain = max(range(256), key=lambda v: hist[v]) / max(1, g.getpixel((g.width // 2, g.height // 2)))
+        bands.append(ImageMath.lambda_eval(
+            lambda a: a["convert"](a["p"] + a["min"](a["s"] / a["max"](a["g"], 1.0), 1.0) * to, "L"),
+            p=p.convert("F"), s=s.convert("F"), g=g.convert("F")))
+        fallback.append(ImageMath.lambda_eval(lambda a: a["convert"](a["scr"] + (to - a["g"]) * plain, "L"),
+                                              scr=scr.convert("F"), g=g.convert("F")))
+    card = Image.composite(Image.merge("RGB", fallback), Image.merge("RGB", bands), changed.filter(ImageFilter.MaxFilter(3)))
+    card = card.convert("RGBA")
+    card.putalpha(win.getchannel("A"))
+    return card
 
 
-def load(name):
-    im = Image.open(RAW / name).convert("RGBA")
-    if SCALE != 1.0:
-        im = im.resize((round(im.width * SCALE), round(im.height * SCALE)), Image.LANCZOS)
-    return im
+SCALE = 1920 / 2560
+
+
+def scaled(im):
+    return im.resize((round(im.width * SCALE), round(im.height * SCALE)), Image.LANCZOS)
+
+
+def save(im, name):
+    im.save(OUT / name, optimize=True)
+
+
+def sheet(columns, gap, blur, offset, alpha):
+    """Columns of images, each one under the other, side by side with their shadows, on a transparent canvas."""
+    pad = margin(blur, offset)
+    W = sum(max(c.width for c in col) for col in columns) + gap * (len(columns) - 1) + 2 * pad
+    H = max(sum(c.height for c in col) + gap * (len(col) - 1) for col in columns) + 2 * pad
+    out = Image.new("RGBA", (W, H), (0, 0, 0, 0))
+    x = pad
+    for col in columns:
+        y = pad
+        for c in col:
+            out.alpha_composite(shadowed(c, blur=blur, offset=offset, alpha=alpha), (x - pad, y - pad))
+            y += c.height + gap
+        x += max(c.width for c in col) + gap
+    return out
 
 
 def main():
-    global SCALE
     OUT.mkdir(parents=True, exist_ok=True)
-    SCALE = 1920 / Image.open(RAW / "bar_hero.png").width
 
-    # Hero: the right part of the status bar with the CPU menu open under its item.
-    full = load("bar_hero.png")
-    bar_h = full.height
-    frame = [round(int(v) * SCALE) for v in (RAW / "cpu_frame.txt").read_text().split(":")[1].split()]
-    x0 = min(820, max(0, frame[0] - 80))
-    bar = full.crop((x0, 0, 1920, bar_h))
-    menu = load("win_cpu.png")
-    h = frame[1] + menu.height + 36
-    if (RAW / "wallpaper.png").exists():
-        # The wallpaper itself (screen-sized, as the screen shows it) below the bar, rather than the
-        # bar's colours continued: needed under an opaque bar (the Acer's, while an app is maximized).
-        hero = load("wallpaper.png").crop((x0, 0, 1920, h))
-    else:
-        hero = wallpaper(bar, h).convert("RGBA")
-    hero.alpha_composite(bar, (0, 0))
-    hero.alpha_composite(menu, (frame[0] - x0, frame[1]))  # the window capture keeps its own shadow
-    hero = rounded(hero, 20)
-    if (RAW / "wallpaper.png").exists():  # a photo compresses badly as PNG: 256 colours, dithered (~1.1 MB -> ~170 KB)
-        hero = hero.quantize(256, method=Image.Quantize.FASTOCTREE, dither=Image.Dither.FLOYDSTEINBERG)
-    hero.save(OUT / "hero.png", optimize=True)
+    # Hero: the bar from the clock to the Middle area, with the Weather menu open under its item, over the settings
+    # window's light ground.
+    shot = Image.open(RAW / "hero.png").convert("RGBA")
+    x1, y1, x2, y2 = frame("hero")
+    blur, offset = 22, (0, 10)
+    hero = Image.new("RGBA", (HERO_RIGHT, y2 + margin(blur, offset)), light())
+    hero.alpha_composite(shot.crop((0, 0, HERO_RIGHT, BAR_H)), (0, 0))
+    pad = margin(blur, offset)
+    hero.alpha_composite(shadowed(glass("hero"), blur=blur, offset=offset, alpha=70), (x1 - pad, y1 - pad))
+    save(rounded(scaled(hero), 18), "hero.png")
 
-    # The bar folded and with hidden items revealed.
-    x0 = 560
-    rows = [load(n).crop((x0, 0, 1920, bar_h)) for n in ("bar_now.png", "bar_open.png")]
+    # The bar folded and with its hidden items revealed.
+    rows = [Image.open(RAW / n).convert("RGBA").crop((BAR_LEFT, 0, 2560, BAR_H)) for n in ("bar_folded.png", "bar_open.png")]
+    rows = [rounded(scaled(r), 10) for r in rows]
     gap = 10
-    both = Image.new("RGBA", (rows[0].width, bar_h * 2 + gap), (0, 0, 0, 0))
-    both.alpha_composite(rounded(rows[0], 12), (0, 0))
-    both.alpha_composite(rounded(rows[1], 12), (0, bar_h + gap))
-    both.save(OUT / "bar.png", optimize=True)
+    both = Image.new("RGBA", (rows[0].width, rows[0].height * 2 + gap), (0, 0, 0, 0))
+    both.alpha_composite(rows[0], (0, 0))
+    both.alpha_composite(rows[1], (0, rows[0].height + gap))
+    save(both, "bar.png")
 
-    # Menus side by side.
-    cards = [card(load(f"win_{n}.png")) for n in ("network", "timer", "ctx", "tools", "bentobar")
-             if (RAW / f"win_{n}.png").exists()]
-    pad, gap = 30, 28
-    W = sum(c.width for c in cards) + gap * (len(cards) - 1) + 2 * pad
-    H = max(c.height for c in cards) + 2 * pad
-    sheet = Image.new("RGBA", (W, H), (0, 0, 0, 0))
-    x = pad
-    for c in cards:
-        s = shadowed(c, blur=14, alpha=70, pad=pad)
-        sheet.alpha_composite(s, (x - pad, 0))
-        x += c.width + gap
-    sheet.save(OUT / "menus.png", optimize=True)
+    # Menus in columns: Weather, the month, Next meeting over the right-click menu, CPU, Tools.
+    columns = [["menu_weather"], ["menu_calendar"], ["menu_event", "menu_ctx"], ["menu_cpu"], ["menu_tools"]]
+    columns = [[scaled(glass(n)) for n in col if (RAW / f"{n}.png").exists()] for col in columns]
+    save(sheet([c for c in columns if c], gap=24, blur=14, offset=(0, 6), alpha=60), "menus.png")
 
-    # Settings: the Bar page, and Add + Look side by side at half size.
-    top = 44  # where the (separate) caption window sits
-    main_page = rounded(load("app_bar.png").crop((0, top, 1382, 864)), 18)
-    shadowed(main_page, blur=20, alpha=80, pad=36).save(OUT / "settings.png", optimize=True)
-    pages = [rounded(load(f"app_{n}.png").crop((0, top, 1382, 864)), 18) for n in ("add", "look")]
-    half = [p.resize((p.width // 2, p.height // 2), Image.LANCZOS) for p in pages]
-    combo = Image.new("RGBA", (half[0].width * 2 + 24 + 2 * 24, half[0].height + 2 * 24), (0, 0, 0, 0))
-    combo.alpha_composite(shadowed(half[0], blur=12, alpha=70, pad=24), (0, 0))
-    combo.alpha_composite(shadowed(half[1], blur=12, alpha=70, pad=24), (half[0].width + 24, 0))
-    combo.save(OUT / "settings-pages.png", optimize=True)
-    for f in sorted(OUT.glob("*.png")):
-        print(f.relative_to(ROOT), Image.open(f).size, f.stat().st_size // 1024, "KB")
+    # Settings: the Bar page with an item's options, the whole window below the caption.
+    app = Image.open(RAW / "app_bar.png").convert("RGBA")
+    page = rounded(scaled(app.crop((0, HEADER_TOP, app.width, app.height))), 16)
+    save(sheet([[page]], gap=0, blur=16, offset=(0, 8), alpha=70), "settings.png")
+
+    # Adding items (the Bar page's panel) and the Look page's column, side by side at one height.
+    add = Image.open(RAW / "app_add.png").convert("RGBA").crop(PANEL)
+    look = Image.open(RAW / "app_look.png").convert("RGBA").crop(LOOK)
+    h = round(1060 * SCALE)
+    parts = [rounded(p.resize((round(p.width * h / p.height), h), Image.LANCZOS), 14) for p in (add, look)]
+    save(sheet([[p] for p in parts], gap=28, blur=12, offset=(0, 6), alpha=60), "settings-pages.png")
+
+    for f in ("hero.png", "bar.png", "menus.png", "settings.png", "settings-pages.png"):
+        p = OUT / f
+        print(p.relative_to(ROOT), Image.open(p).size, p.stat().st_size // 1024, "KB")
 
 
 if __name__ == "__main__":

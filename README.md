@@ -27,7 +27,7 @@
 Not affiliated with or endorsed by any employer (<a href="#about-this-project">more</a>).</sub></p>
 
 <p align="center">
-  <img src="docs/images/hero.png" width="880" alt="BentoBar's items in the Googlebook status bar, with the CPU menu open under the CPU item">
+  <img src="docs/images/hero.png" width="880" alt="BentoBar's items in the Googlebook status bar, in its Left and Middle areas (the next meeting with a countdown, the weather, what plays, a flight's route line), with the Weather menu open under its item">
 </p>
 
 ## What it does
@@ -67,8 +67,8 @@ hides when an app goes full screen or the screen locks.
 | **Memory** | RAM in use | used, available, chart |
 | **Battery details** | watts, %, temperature or time to full | power in or out, voltage, current, health, cycles, thermal state |
 | **Storage** | free space | used and free, shortcuts to clean up |
-| **Date and calendar** | the date, in your format | a month view, and the day's events (all-day ones too) with **Join** and **Directions**; tasks that apps like Todoist sync to your calendar are left out, here and in Next meeting |
-| **Next meeting** | title and countdown, until 3 a.m. tomorrow; just the icon when there are no more meetings | today's meetings with **Join** and **Directions** |
+| **Date and calendar** | the date, in your format | a month view, and the day's events (meetings and all-day ones too) with **Join** and **Directions**; tasks that apps like Todoist sync to your calendar are left out, here and in Next meeting, and so are canceled and declined events |
+| **Next meeting** | title and countdown (or the time alone), until 3 a.m. tomorrow or, with **Looks ahead: Any day**, your next meeting on a later day; a meeting that starts during a long one shows from your "Show when" minutes before it; just the icon when there are no more meetings | today's meetings with **Join** and **Directions** |
 | **Clock** | a second clock: seconds, 24-hour or another city | world clocks: add cities in the menu, and **Plan a time**, a slider that shows any time of day in every city (copy the line, or start a calendar event there) |
 | **Timer** | countdown, stopwatch or Pomodoro | start, pause, +1 min, stop |
 | **Countdown** | days and hours to a date | exact time left |
@@ -103,7 +103,7 @@ hides when an app goes full screen or the screen locks.
 | **Text or emoji**, **Spacer** | anything you like | optional link |
 
 <p align="center">
-  <img src="docs/images/menus.png" width="880" alt="BentoBar menus: network, timer, the right-click item menu, tools, and BentoBar's ‹ menu with the hidden items">
+  <img src="docs/images/menus.png" width="880" alt="BentoBar menus: weather, the month with today's events, Next meeting above the right-click item menu, CPU, and tools">
 </p>
 
 ## Settings
@@ -118,13 +118,33 @@ settings window.
 Changes apply to the status bar right away.
 
 <p align="center">
-  <img src="docs/images/settings.png" width="880" alt="BentoBar settings: the bar preview, the item list and the CPU item's options">
+  <img src="docs/images/settings.png" width="880" alt="BentoBar settings: the bar preview with its Left, Middle and Right areas, each area's items, and the Next meeting item's options">
 </p>
 
 <p align="center">
-  <img src="docs/images/settings-pages.png" width="880" alt="Adding items, and the look and behavior options">
+  <img src="docs/images/settings-pages.png" width="880" alt="Adding items, to the area you choose, and the Look page: where BentoBar sits, spacing, text size, color, background and hidden items">
   <br><sub>Adding items, and choosing where BentoBar sits and how it looks.</sub>
 </p>
+
+### Which events are meetings
+
+Next meeting, the Live Update chip and Live activity count the same events as meetings: timed events on a
+calendar you can change, with someone else invited, or with only you and a call link. A colleague's meeting
+on a calendar shared with you is not yours unless you are invited, a booked room is not someone else, and
+canceled and declined events show nowhere. One meeting on two of your calendars counts once, as its copy on
+your own calendar does: declined there, it doesn't count from a shared calendar either.
+**Setup › Calendar events** changes that for this device:
+
+- **Calendars**: untick one and its events never count (they still show in the month view).
+- **Events with only you**: never count, count with a call link (the default), or always count.
+- **Invitations you haven't answered**: on by default.
+- **Events marked as free**: off by default.
+- **Leave out titles with**: words or phrases; "Hold" leaves out "Hold: desk" and "On hold", not "Shareholders".
+  Up to 20, each of up to 80 characters.
+
+These choices stay on the device: they are no part of your layout, so Copy settings, a backup and a new
+device don't carry them. A meeting you make on a shared calendar without inviting yourself is not counted
+as yours (the calendar doesn't say who made it); add yourself as a guest.
 
 ## Install
 
@@ -145,7 +165,8 @@ status bar may work, but haven't been tested.
       settings**, and confirm with your PIN.
    3. Return to Accessibility › **BentoBar** and turn it on.
 5. Optional: in **Setup**, allow notifications (timer alerts, the Live Update chip) and calendar
-   access (Next meeting, events in the month view).
+   access (Next meeting, events in the month view). **Setup › Calendar events** then says which events
+   count as meetings (see [Which events are meetings](#which-events-are-meetings)).
 
 About a day later, Android shows *"Review app with full device access"*. That's a standard check
 for every app that uses an accessibility service. Keep BentoBar if you're happy with what it does

@@ -194,7 +194,8 @@ object Chips {
         if (t != null) return timer(context, t)
         if (!meetingChips()) return null
         val now = System.currentTimeMillis()
-        val e = Calendar.current(now) ?: Calendar.next(now)?.takeIf { it.begin - now <= ChipRules.LEAD_MS } ?: return null
+        // From every meeting not ended, not only today's: a 03:05 meeting gets its chip at 02:50.
+        val e = ChipRules.shown(Calendar.upcomingMeetings(now), now) ?: return null
         return event(context, e, now)
     }
 

@@ -28,6 +28,36 @@ class ChipRulesTest {
         assertNull(ChipRules.nextChange(listOf(e), now + 50 * min))
     }
 
+    @Test fun duringAWorkshopTheChipGoesToTheMeetingInsideItAtTheLeadAndBack() {
+        val t = 1_000 * min
+        val workshop = event(t, t + 240 * min)
+        val standup = event(t + 60 * min, t + 75 * min).copy(title = "inner")
+        val all = listOf(workshop, standup)
+        assertEquals(workshop, ChipRules.shown(all, t + 44 * min))
+        assertEquals(standup, ChipRules.shown(all, t + 45 * min))
+        assertEquals(standup, ChipRules.shown(all, t + 70 * min))
+        assertEquals(workshop, ChipRules.shown(all, t + 75 * min))
+        // Every one of those moments is a change the chip plans for.
+        assertEquals(t + 45 * min, ChipRules.nextChange(all, t + 30 * min))
+        assertEquals(t + 75 * min, ChipRules.nextChange(all, t + 60 * min))
+    }
+
+    @Test fun aMeetingPastTheHorizonGetsItsChipOnTime() {
+        // At 02:50 a 03:05 meeting is tomorrow's for Next meeting's "Today", and the chip's all the same: it picks from every meeting.
+        val zone = java.time.ZoneId.of("Europe/Berlin")
+        val now = java.time.LocalDateTime.of(2026, 11, 16, 2, 50).atZone(zone).toInstant().toEpochMilli()
+        val e = event(now + 15 * min, now + 45 * min)
+        assertTrue("past the horizon", e.begin >= Meetings.horizon(now, zone))
+        assertEquals(e, ChipRules.shown(listOf(e), now))
+    }
+
+    @Test fun nothingWithinTheLeadIsNoChip() {
+        val now = 1_000 * min
+        assertNull(ChipRules.shown(listOf(event(now + 16 * min, now + 30 * min)), now))
+        assertEquals(event(now + 15 * min, now + 30 * min), ChipRules.shown(listOf(event(now + 15 * min, now + 30 * min)), now))
+        assertNull(ChipRules.shown(emptyList(), now))
+    }
+
     @Test fun theChipGoesAtTheMeetingsEndEvenIfNothingIsLeftToTakeItAway() {
         assertEquals(30 * min, ChipRules.timeoutAfter(end = 1_000 * min, now = 970 * min))
         // A timeout of 0 means none at all: a chip built at the very end still gets one.

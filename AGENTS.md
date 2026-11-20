@@ -187,7 +187,14 @@ Name no other company's app as a model or a comparison, in the app or anywhere h
     holds what belongs to one install and never travels: whether each online service is switched on
     and the user's own key for one, in a file in Android's no-backup directory (so in no backup, no
     device transfer and no copied layout). `Kept.kt` keeps small texts there too (a service's last
-    answer, as the app's own model, never the reply as it came).
+    answer, as the app's own model, never the reply as it came). `MeetingChoices.kt` is the same for which calendar
+    events count as meetings (Setup's "Calendar events": the calendars unticked, by `Meetings.Cal.ident`, events with only
+    the user, invitations not answered, events marked free, words that leave a title out): one choice for the install,
+    since every Next meeting item, the chip and Live activity must agree, in `meetings.json` beside `online.json`. A change
+    is in memory at once and written on a background thread (`MeetingChoices.writer`); `Calendar.choicesChanged` judges
+    the last reading again and reads the provider again only for a calendar ticked that was unticked at that reading
+    (its attendees weren't read; a word, a switch or "Events with only you" changes nothing that is read). Calendars and
+    words are personal, so none of it travels.
   - `ui/`: `MainActivity` (the settings window: its pages inside `Shell`), `Shell` (the header row directly under the
     system's caption, on the caption's ground: mark and name, the tabs, the status line, and one control, the "Show in
     status bar" switch or Turn on while BentoBar is off, neither on Setup; nothing is ever placed in the caption. Below
@@ -236,7 +243,16 @@ Name no other company's app as a model or a comparison, in the app or anywhere h
     with an absolute offset, or from right to left it hangs mirrored across the window), `LookPage`, `SetupPage` and `AboutPage` (each one column of cards, 760 dp at most, built
     from `PageKit`: `PageColumn`, `PageSection`, `PageCard`, `SettingRow`, `ChoiceSetting`, `SwitchSetting`; About has two
     columns from 760 dp of window. Setup's first card is Turn on, or "On" once BentoBar is; a permission's row says
-    Allowed with a quiet way back, and one Android won't ask for again says so in its own row. `SetupRules`, pure, says
+    Allowed with a quiet way back, and one Android won't ask for again says so in its own row. After the permissions,
+    "Calendar events" (`CalendarEventsCard`, stateless, so a test gives it made-up calendars): the calendars the user can
+    change under their accounts (a `CheckList`; the heading only with more than one account), Events with only you,
+    two switches and "Leave out titles with" (`TextSetting`, which keeps what is typed while it has the focus, like
+    `TextRow`, and saves it once typing pauses for a second, the focus goes or the field leaves the page: never a word
+    half typed; its help says the limits, 20 words or phrases of 80 characters, and a longer one is dropped whole, never
+    kept cut); it is there whether or not a Next meeting item is. Its calendars are read off the main thread when it is
+    composed, when calendar access changes, when the window comes back (`Setup.returns`) and, while it is shown, when the
+    provider's calendars change (`Calendar.watchCalendars`, an observer that lives only as long as the card). An item's options turn the window to a page with
+    `LocalTurnTo` (Next meeting's "Open Setup"), in the process and never by an intent. `SetupRules`, pure, says
     when the window goes to Bar by itself: only at the moment BentoBar comes on while Setup is shown),
     `Disclosure` (the accessibility disclosure and consent Google Play requires, and the one list of
     what the service does that Setup shows too; `ConsentRules` says when it comes up. It is a page under the Setup tab,
@@ -250,7 +266,8 @@ Name no other company's app as a model or a comparison, in the app or anywhere h
     palette for the few pieces an item's options share with its popup), and `PaletteContrastTest` holds its pairs to the
     contrast they need. The bar's popups keep the device's colors (`BentoBarTheme`). The settings window's own controls are in `Controls`
     (`Segment`, equal parts or each as wide as its words; `SwitchMark`, `BentoButton`, `FilterField`, `Keycap`, `RadioList`,
-    `BentoField`, `BentoSlider`) and `Notice`
+    `CheckList` (`RadioList`'s look with a box that is ticked or not, and a dot in each row's colour), `BentoField`,
+    `BentoSlider`) and `Notice`
     (`NoticeLine`; an amber notice's one button is `ButtonKind.WARN`, and what deletes is `ButtonKind.DANGER`: a
     tonal button's shape and height on a ground of the danger colour over the card (`DANGER_VEIL`, the trash's with a
     row over it), its words and glyph in that colour, the control's veil in the same colour on it under the pointer and
@@ -329,6 +346,22 @@ Name no other company's app as a model or a comparison, in the app or anywhere h
   - `items/Holders.kt`: who needs what only runs while someone does. `Calendar` is held by the Calendar and Next meeting
     items while they are live and by the Live Update chip while it can be a meeting's (it works with the service off, so it
     can't hang on `onLive` alone); a minute after the last holder left it stops observing the provider and forgets what it read.
+  - `items/Calendar.kt` reads the provider (`read`: the calendars, the occurrences, and in chunks of 400 the attendees of
+    the events `Meetings.asksAttendees` names) into a `Meetings.Reading`; everything after that is `items/Meetings.kt`, pure
+    and unit-tested: `judge` gives each event one verdict, the first that applies (a hidden calendar, canceled, declined,
+    a task, all-day, read-only, an unticked calendar, someone else's, a word, free, unanswered, with others, only the
+    user; declined and unanswered are the user's own `answer`), `verdicts` judges one event on two calendars as its copy
+    on an own calendar (a declined own copy takes the shared one with it), `events` keeps those that show at all and is
+    judged again from the last reading when the choices change, `pick` says which meeting the bar stands on (the one on now, else the
+    next; one that starts inside a long one takes over at the lead), `once` counts one meeting on two calendars once,
+    `listed` is Next meeting's menu, `words`/`hasWord` are "Leave out titles with" (whole words), and `report` is
+    `event check`'s counts. `meetings(now)` (today, to 03:00) and `upcomingMeetings(now)` (everything not ended: the chip,
+    Live activity, "Any day") go through `once`; the month view shows every event that shows (`Verdict.event`).
+    `items/EventText.kt` is what Next meeting says in the bar (title and time, or the time alone; a later day by its
+    weekday or date) and in Live activity (`live`: as the first Next meeting item has it, so no title with the time
+    alone), pure with its words from outside. `items/EventSamples.kt` holds the made-up sets a test stages:
+    while one is staged `Calendar.events` is the set as the real rules and choices judge it, `allowed()` is true and the
+    provider is not read. Nothing of the calendar is logged: `PrivateTextTest` allows two failure lines, by their kind.
   - `tile/Tiles.kt`: the BentoBar, Keep awake and Timer tiles.
   - `util/`: `Sym.kt` (generated), `Ui.kt` (fonts, `SymIcon`), `Fmt.kt`, `Dates.kt` (locale-aware dates
     and times from skeletons), `Now.kt` (the clock for ages and countdowns, which a debug build's
@@ -402,8 +435,8 @@ Name no other company's app as a model or a comparison, in the app or anywhere h
   Also `now +3h|+90m|off` (moves the clock everything newer reads, `util/Now`), `net [reset]` (requests
   sent per host, and whether each service may be asked right now), `online weather|fx|flights|stocks on|off`,
   and `TYPE …` or `item TYPE …`, which go to that item type's own `debug(args)`. What a hook prints
-  is logged: no hook takes or prints a key, and a type marked `discreet` prints no title (`state media`
-  and `state flight` print the text's length).
+  is logged: no hook takes or prints a key, and a type marked `discreet` prints no title (`state media`,
+  `state flight` and `state event` print the text's length).
   The types' own hooks stage what a test can't make happen: `media stage playing|paused|none|notitle|two|
   live|noaccess|starting|long|wide|emoji|rtl|off`; `devices stage mouse=15 keyboard=40c stylus=unknown`
   and `devices off`; `heat stage 0..6`, `heat level 0.84`, `heat temp 41.3`, `heat off`; `weather stage
@@ -416,6 +449,9 @@ Name no other company's app as a model or a comparison, in the app or anywhere h
   meanwhile, closing the menu drops them as it does the real ones, and `several 2` is the second of them,
   followed; bare `flight` prints the question and the rows);
   `sound fixed on|off`; `notices stage three|many|progress|none|noaccess`; `live stage several`;
+  `event stage demo|solo|room|shared|unanswered|free|workshop|link|allday|gone|words` and `event off` (also as
+  `calendar …`: one calendar; a made-up set through the real rules and choices, `demo` for pictures), `event check` (the
+  real calendar's today and tomorrow in counts: no title, address or calendar name), bare `event` (what is loaded, by verdict);
   `focus stage ready|running|endless|noaccess`; `sun stage evening|night|polar|nozone`; `progress stage
   morning|evening|yearend`; `breaks stage early|due`; `network stage wifi|ethernet|vpn|ipv6|offline` and `network off`
   (the Addresses section's rows; stage one before capturing the menu, so that no real address is in a picture). Each
@@ -557,6 +593,25 @@ Name no other company's app as a model or a comparison, in the app or anywhere h
 - **A weather service's hourly chance of rain is for the hour that ends at its time** (Open-Meteo:
   "preceding hour"), while the temperature and the weather code are of that instant. The rain rule
   names the hour the chance is for, and an hour's cell takes its chance from the entry after it.
+- **Whose calendar event it is.** On a shared calendar `OWNER_ACCOUNT` is the calendar's own address (a group address,
+  a colleague's), and `SELF_ATTENDEE_STATUS` is the calendar owner's answer, so taking the owner for the user (as up to
+  2.2) made every attendee of a team calendar's event "someone else" and a colleague's meeting a meeting of the user's.
+  The user is every account a calendar is synced with (`Meetings.mine`, not a `LOCAL` one); an own calendar (`IS_PRIMARY`,
+  or owned by its account) has the user on every event, which keeps an alias safe; a room is no person, by
+  `ATTENDEE_TYPE` or, where the type wasn't synced, by its `resource.calendar.google.com` address (a calendar invited
+  as a guest is `group.calendar.google.com`). Other people and the user not on it: someone else's, whatever the
+  choices. The provider does not say who made an event, so a meeting the user makes on a shared calendar without
+  inviting themselves is someone else's: the known limit, said in the notes. A call link no longer spares the attendee
+  read (a colleague's meeting with a link was a meeting with nobody asked). Since `SELF_ATTENDEE_STATUS` on another's
+  calendar is its owner's answer, the user's answer there is the user's own attendee row (`ATTENDEE_STATUS`,
+  `Meetings.answer`), and where the event is also on an own calendar (the same start, end and title) that copy's verdict
+  stands for the others (`Meetings.verdicts`): an invitation declined, not answered or free on the user's calendar is
+  that on a team calendar the user can edit too. On an own calendar an outside organizer is another person only when
+  the event has attendee rows: a booking added from a file (a train, a dentist, a concert, organizer `noreply@…`) lists
+  nobody, and is an event with only the user (a webinar of that kind still counts by its call link, as in 2.2). A plain canceled event (`eventStatus` 2,
+  an invitation the organizer canceled) comes back from Instances like any other (seen on the API 34 and 37
+  emulators): `judge` drops it. The grown projection (`CALENDAR_ID`, `STATUS`, `AVAILABILITY`, `ORGANIZER`) ran there
+  too; a column a device lacks would throw, the catch empties the calendar, and `event check` says `query=failed:…`.
 - **Least privilege** (user feedback): the accessibility config subscribes only to
   `typeWindowsChanged`. No content events, key filtering or motion events. The status bar is the only
   window whose content code reads; of any other window it reads the type and where it is. One title is read, and

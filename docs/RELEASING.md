@@ -146,6 +146,30 @@ learned the hard way" says why. Run it again on every new draft.
   pressed its ground is a step stronger each time; Delete and Backspace still remove the selected item. Look's
   Discard (under a kept layout) and Setup's Remove key look the same.
 - **Live Update chip.** A timer or a meeting shows its chip with BentoBar's settings window closed.
+- **Calendar events.** With a debug build signed over the release (`-PreleaseSignedDebug`) on a real calendar (a
+  capture of the screen shows its events: keep none). `./bento debug event check`, line by line against the calendar
+  app for today and tomorrow: `you: found-by-account` about the number of meetings with guests, `found-by-owner-only`
+  and `own-with-guests-and-you-not-found` near 0 (else the user appears among attendees under another address: the
+  rules still hold on own calendars, but say so); `primary-by-flag` the number of accounts; `rooms-by-type` against
+  `rooms-by-address-only` (whether the sync writes a room's type); `not-mine` exactly the colleagues' meetings on
+  shared calendars and none of the user's own (one of theirs is the known limit: made on a shared calendar without
+  inviting themselves); `organizer: the-calendar` above 0 only with events on secondary calendars; `free`,
+  `unanswered`, `canceled`, `twice` as the calendar has them. Then: a colleague's meeting on a shared calendar, not
+  invited, is not in Next meeting and is in the month view; a block with only a room is no meeting; a long meeting
+  with another inside (`event stage workshop` shows the same) goes to the inner one at the lead and back after it,
+  in the item, the chip with the settings window closed and Live activity; Setup › Calendar events lists the
+  calendars with their names, colours and accounts, unticking one takes its meetings from the bar within a couple of
+  seconds, the choices are there after a restart and `./bento debug cfg` holds none of them; with BentoBar off and
+  the chip on "When BentoBar is off" the chip follows the same rules; the month view lists meetings with Join, and a
+  canceled event still on the calendar is not there; an invitation not answered and an event marked free follow
+  their switches; `./bento debug state event` prints a length, and `logcat` over the pass has no title; the strip
+  comes back from full screen with Next meeting in its first frame, and the CPU figure is as before (the attendee
+  read is once per load). A meeting declined on the user's calendar that is also on a team calendar they can edit is
+  in neither Next meeting, the chip, Live activity nor the month view; a booking added from a file (a train, organizer
+  `noreply@…`, nobody invited) is no meeting under "Count with a call link"; with Next meeting's In the bar on Time,
+  Live activity shows no title; typing in "Leave out titles with" changes the bar about a second after the typing
+  stops, not at each key; a calendar added or renamed in the calendar app shows in Setup's list while it stays open.
+  `event stage demo` for the store pictures, then `event off`.
 - **Items that tick.** A clock and a network speed item do not make neighbours move; the bar's CPU use stays low
   (about 1% of one core on a release build).
 - **Keep awake and timers.** Keep awake keeps the screen on and ends when switched off. With three areas exactly one strip

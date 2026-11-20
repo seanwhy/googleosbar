@@ -189,6 +189,54 @@ fun <T> RadioList(choices: List<Pair<T, String>>, selected: T?, onSelect: (T) ->
     }
 }
 
+/** One row of a [CheckList]: what it stands for ([key]), its [name], a dot in its [color], and what a screen reader hears ([said]). */
+class CheckItem<T>(val key: T, val name: String, val color: Color, val said: String)
+
+/**
+ * Choices each on or off, one under the other, in [RadioList]'s look: a box that is ticked (filled in the accent, the tick
+ * in the card's ground) or not (a thin outline), a dot in the item's colour, its name. [groups]: the rows under a heading
+ * each (null: none). A screen reader hears each row's [CheckItem.said] and whether it is ticked.
+ */
+@Composable
+fun <T> CheckList(groups: List<Pair<String?, List<CheckItem<T>>>>, checked: (T) -> Boolean, onCheck: (T, Boolean) -> Unit, modifier: Modifier = Modifier) {
+    val c = Bento.colors
+    Column(modifier) {
+        groups.forEachIndexed { g, (heading, items) ->
+            if (heading != null) Text(heading, Modifier.padding(top = if (g == 0) 0.dp else Space.s, bottom = 2.dp), style = Bento.type.help, color = c.ink3)
+            items.forEach { item ->
+                val on = checked(item.key)
+                val interaction = remember { MutableInteractionSource() }
+                Row(Modifier.fillMaxWidth().heightIn(min = 36.dp)
+                    .states(interaction, radius = Radius.small)
+                    .toggleable(on, interaction, indication = null, role = Role.Checkbox) { onCheck(item.key, it) }
+                    .semantics { contentDescription = item.said }
+                    .padding(end = Space.xs), verticalAlignment = Alignment.CenterVertically) {
+                    Canvas(Modifier.size(18.dp)) {
+                        val corner = CornerRadius(4.dp.toPx())
+                        if (on) {
+                            drawRoundRect(c.accent, cornerRadius = corner)
+                            val tick = androidx.compose.ui.graphics.Path().apply {
+                                moveTo(size.width * 0.26f, size.height * 0.52f)
+                                lineTo(size.width * 0.43f, size.height * 0.69f)
+                                lineTo(size.width * 0.76f, size.height * 0.33f)
+                            }
+                            drawPath(tick, c.panel, style = Stroke(2.dp.toPx(), cap = androidx.compose.ui.graphics.StrokeCap.Round,
+                                join = androidx.compose.ui.graphics.StrokeJoin.Round))
+                        } else {
+                            val w = 1.5.dp.toPx()
+                            drawRoundRect(c.ink3, Offset(w / 2, w / 2), Size(size.width - w, size.height - w), corner, style = Stroke(w))
+                        }
+                    }
+                    Spacer(Modifier.width(10.dp))
+                    Box(Modifier.size(10.dp).background(item.color, CircleShape))
+                    Spacer(Modifier.width(Space.s))
+                    Text(item.name, Modifier.weight(1f, fill = false).clearAndSetSemantics { }, style = Bento.type.body, color = c.ink)
+                }
+            }
+        }
+    }
+}
+
 /** A labelled single choice in an item's options: a segment for two or three short values, else a list of radio buttons ([ChoiceRules]). */
 @Composable
 fun <T> ChoiceRow(label: String, choices: List<Pair<T, String>>, selected: T, help: String? = null, onSelect: (T) -> Unit) {

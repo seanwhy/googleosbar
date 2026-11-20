@@ -8,6 +8,13 @@ internal object ChipRules {
     /** Whether the chip can be a meeting's right now, so it needs the calendar. The chip works while the service is off, so it is one of the calendar's users. */
     fun needsCalendar(notifies: Boolean, timerRuns: Boolean, meetingItem: Boolean): Boolean = notifies && !timerRuns && meetingItem
 
+    /**
+     * The meeting the chip shows at [now], of [meetings] (every one not ended): the one the bar would stand on ([Meetings.pick],
+     * with this lead), while it is on or starts within [LEAD_MS]. A meeting inside a long one takes over at its lead.
+     */
+    fun shown(meetings: List<Calendar.Event>, now: Long): Calendar.Event? =
+        Meetings.pick(meetings, now, LEAD_MS)?.takeIf { it.begin - now <= LEAD_MS }
+
     /** The next time the meeting chip would change: a meeting entering the 15-minute window, starting or ending. */
     fun nextChange(meetings: List<Calendar.Event>, now: Long): Long? =
         meetings.flatMap { listOf(it.begin - LEAD_MS, it.begin, it.end) }.filter { it > now }.minOrNull()

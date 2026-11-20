@@ -218,6 +218,20 @@ class TickLoopTest {
         assertEquals("plain", loop.states.value["n"]?.text)
     }
 
+    /**
+     * The strip back from full screen: a discreet type (Next meeting) forgot what it showed while the bar was hidden, and has
+     * it again in the same call that starts the ticks, before the strip's first frame can ask for it.
+     */
+    @Test fun aDiscreetTypeHasItsStateAgainTheMomentTheBarIsBack() {
+        type("private", discreet = true)
+        layout(item("p", "private"))
+        loop.start("bar")
+        loop.stop("bar")
+        assertNull("forgotten while hidden", loop.states.value["p"])
+        loop.start("bar")
+        assertEquals("private", loop.states.value["p"]?.text)
+    }
+
     @Test fun aPlainTypeKeepsWhatItLastShowedAcrossAnIdle() {
         type("plain"); layout(item("n", "plain"))
         loop.start("bar")

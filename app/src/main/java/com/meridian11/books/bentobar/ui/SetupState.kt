@@ -49,6 +49,18 @@ data class SetupState(
 object Setup {
     val state = MutableStateFlow(SetupState())
 
+    /**
+     * Counts the times the settings window came back to the front (resumed, or its focus back): what a page reads of its
+     * own (Setup's calendars) is read again then, since it may have been changed in another window meanwhile.
+     */
+    val returns = MutableStateFlow(0)
+
+    /** The settings window came back to the front. Main thread. */
+    fun cameBack(context: Context) {
+        refresh(context)
+        returns.value++
+    }
+
     fun refresh(context: Context) {
         val app = context.applicationContext
         val nm = app.getSystemService(NotificationManager::class.java)

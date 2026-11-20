@@ -1,5 +1,6 @@
 package com.meridian11.books.bentobar.items
 
+import com.meridian11.books.bentobar.data.MeetingChoices
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
@@ -7,22 +8,11 @@ import org.junit.Test
 import java.time.LocalDateTime
 import java.time.ZoneId
 
-/** Next meeting's rules: what counts as a meeting, and the horizon (today, plus 3 hours). */
+/** Next meeting's rules: what counts as a meeting, one event on two calendars, the menu's list, and the horizon (today, plus 3 hours). */
 class MeetingsTest {
     private val zone = ZoneId.of("America/Los_Angeles")
     private fun at(y: Int, mo: Int, d: Int, h: Int, mi: Int = 0) = LocalDateTime.of(y, mo, d, h, mi).atZone(zone).toInstant().toEpochMilli()
     private val min = 60_000L
-
-    @Test fun aTaskLinkMakesATaskOnlyWithNoCallLinkAndNoOneElse() {
-        // A plain task synced in from a task app.
-        assertTrue(Meetings.isTask(linksTask = true, hasCallLink = false, hasOthers = false))
-        // A real meeting whose notes link a task: it must still show.
-        assertFalse(Meetings.isTask(linksTask = true, hasCallLink = true, hasOthers = false))
-        assertFalse(Meetings.isTask(linksTask = true, hasCallLink = false, hasOthers = true))
-        assertFalse(Meetings.isTask(linksTask = true, hasCallLink = true, hasOthers = true))
-        // An event with no task link is never a task.
-        assertFalse(Meetings.isTask(linksTask = false, hasCallLink = false, hasOthers = false))
-    }
 
     @Test fun horizonIsThreeTomorrow() {
         assertEquals(at(2026, 10, 1, 3), Meetings.horizon(at(2026, 9, 30, 9, 30), zone))
@@ -58,21 +48,80 @@ class MeetingsTest {
         assertFalse("ends right now", Meetings.inHorizon(now - 30 * min, now, now, horizon))
     }
 
+    private val choices = MeetingChoices.State()
+    private val work = Meetings.Cal(1, "you@example.com", "com.google", "you@example.com", "Work", 0, 700, visible = true, flagPrimary = true)
+    private val holidays = Meetings.Cal(2, "you@example.com", "com.google", "holidays@example.com", "Holidays", 0, 200, visible = true, flagPrimary = false)
+    private fun row(allDay: Boolean = false, link: String? = null, linksTask: Boolean = false, status: Int = 1, self: Int = 0) =
+        Meetings.Row(1, 1, "t", 0, 1, allDay = allDay, link = link, linksTask = linksTask, status = status, selfStatus = self)
+    private fun judge(r: Meetings.Row, cal: Meetings.Cal = work, guests: List<Meetings.Guest> = emptyList(), c: MeetingChoices.State = choices) =
+        Meetings.judge(r, cal, guests, setOf("you@example.com"), c)
+
     @Test fun meetingRule() {
-        assertTrue("call link", Meetings.isMeeting(allDay = false, editable = true, hasCallLink = true, hasOthers = false))
-        assertTrue("someone else invited", Meetings.isMeeting(allDay = false, editable = true, hasCallLink = false, hasOthers = true))
-        assertFalse("a flight or solo appointment", Meetings.isMeeting(allDay = false, editable = true, hasCallLink = false, hasOthers = false))
-        assertFalse("all-day", Meetings.isMeeting(allDay = true, editable = true, hasCallLink = true, hasOthers = true))
-        assertFalse("a calendar you can't edit", Meetings.isMeeting(allDay = false, editable = false, hasCallLink = true, hasOthers = true))
+        val other = listOf(Meetings.Guest("you@example.com"), Meetings.Guest("ana@example.com"))
+        assertTrue("call link", judge(row(link = "https://meet.example.com/x")).meeting)
+        assertTrue("someone else invited", judge(row(), guests = other).meeting)
+        assertFalse("a flight or solo appointment", judge(row()).meeting)
+        assertFalse("all-day", judge(row(allDay = true, link = "https://meet.example.com/x"), guests = other).meeting)
+        assertFalse("a calendar you can't edit", judge(row(link = "https://meet.example.com/x"), cal = holidays, guests = other).meeting)
+        assertEquals(Meetings.Verdict.ALL_DAY, judge(row(allDay = true)))
+        assertTrue("all-day and read-only events are shown", judge(row(), cal = holidays).event)
     }
 
     @Test fun anAllDayOrReadOnlyEventWithATaskLinkIsAskedAboutAttendeesSoItIsNotLostAsATask() {
-        assertTrue(Meetings.asksAttendees(hasCallLink = false, linksTask = true, allDay = true, editable = true))
-        assertTrue(Meetings.asksAttendees(hasCallLink = false, linksTask = true, allDay = false, editable = false))
-        assertTrue(Meetings.asksAttendees(hasCallLink = false, linksTask = false, allDay = false, editable = true))
-        // Plain all-day or read-only events stay unasked, and a call link needs no attendees.
-        assertFalse(Meetings.asksAttendees(hasCallLink = false, linksTask = false, allDay = true, editable = true))
-        assertFalse(Meetings.asksAttendees(hasCallLink = true, linksTask = true, allDay = false, editable = true))
+        assertTrue(Meetings.asksAttendees(row(allDay = true, linksTask = true), work, choices))
+        assertTrue(Meetings.asksAttendees(row(linksTask = true), holidays, choices))
+        assertTrue(Meetings.asksAttendees(row(), work, choices))
+        // Plain all-day or read-only events stay unasked.
+        assertFalse(Meetings.asksAttendees(row(allDay = true), work, choices))
+        assertFalse(Meetings.asksAttendees(row(), holidays, choices))
+        // A call link no longer spares the read: whose meeting it is decides first.
+        assertTrue(Meetings.asksAttendees(row(link = "https://meet.example.com/x"), work, choices))
+        // What shows nowhere, and a calendar the user unticked, are not asked about.
+        assertFalse(Meetings.asksAttendees(row(status = Meetings.STATUS_CANCELED), work, choices))
+        assertFalse(Meetings.asksAttendees(row(self = Meetings.SELF_DECLINED), work, choices))
+        assertFalse(Meetings.asksAttendees(row(), null, choices))
+        assertFalse(Meetings.asksAttendees(row(), work, choices.copy(calendarsOff = setOf(work.ident))))
+    }
+
+    private fun meeting(title: String, begin: Long, end: Long, own: Boolean = false, cal: Long = 1) =
+        Calendar.Event(begin, title, begin, end, false, 0, "", true, true, null, calendarId = cal, ownCalendar = own)
+
+    @Test fun oneMeetingOnTwoCalendarsCountsOnceAndTheOwnCopyIsKept() {
+        val team = meeting("Team sync", 100, 200, own = false, cal = 3)
+        val mine = meeting("Team sync", 100, 200, own = true, cal = 1)
+        assertEquals(listOf(mine), Meetings.once(listOf(team, mine)))
+        assertEquals(listOf(mine), Meetings.once(listOf(mine, team)))
+    }
+
+    @Test fun meetingsThatDifferInTimeOrTitleAreTwo() {
+        val a = meeting("Sync", 100, 200)
+        val b = meeting("Sync", 100, 250)
+        val c = meeting("Other", 100, 200)
+        assertEquals(listOf(a, b, c), Meetings.once(listOf(a, b, c)))
+    }
+
+    @Test fun onceKeepsTheOrderAndTheFirstOfTwoOnCalendarsNeitherOwn() {
+        val a = meeting("Sync", 100, 200, cal = 3)
+        val b = meeting("Sync", 100, 200, cal = 4)
+        val later = meeting("Later", 50, 300)
+        assertEquals(listOf(later, a), Meetings.once(listOf(later, a, b)))
+        assertEquals(emptyList<Calendar.Event>(), Meetings.once(emptyList()))
+    }
+
+    @Test fun theMenuListsTodayAndWithAnyDayTheFirstLaterDayThatHasOne() {
+        val now = at(2026, 9, 30, 20)
+        val horizon = Meetings.horizon(now, zone)
+        val tonight = meeting("Tonight", at(2026, 9, 30, 21), at(2026, 9, 30, 22))
+        val friday = meeting("Friday", at(2026, 10, 2, 9), at(2026, 10, 2, 10))
+        val friday2 = meeting("Friday later", at(2026, 10, 2, 15), at(2026, 10, 2, 16))
+        val monday = meeting("Monday", at(2026, 10, 5, 9), at(2026, 10, 5, 10))
+        val all = listOf(tonight, friday, friday2, monday)
+        assertEquals(listOf(tonight), Meetings.listed(all, now, horizon, zone, any = true))
+        assertEquals(listOf(tonight), Meetings.listed(all, now, horizon, zone, any = false))
+        val later = listOf(friday, friday2, monday)
+        assertEquals("nothing left today: Friday's", listOf(friday, friday2), Meetings.listed(later, now, horizon, zone, any = true))
+        assertEquals("today only", emptyList<Calendar.Event>(), Meetings.listed(later, now, horizon, zone, any = false))
+        assertEquals(emptyList<Calendar.Event>(), Meetings.listed(emptyList(), now, horizon, zone, any = true))
     }
 
     @Test fun anInvitationsTitleIsCleanedWhereItComesIn() {

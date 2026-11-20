@@ -23,15 +23,25 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.DisposableEffect
+import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberUpdatedState
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.focus.onFocusChanged
 import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.heading
 import androidx.compose.ui.semantics.semantics
+import androidx.compose.ui.text.TextRange
+import androidx.compose.ui.text.input.TextFieldValue
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
+import kotlinx.coroutines.delay
 
 /** How wide a page's one column is at most (Look, Setup, About). */
 internal val PAGE_WIDTH = 760.dp
@@ -146,5 +156,42 @@ internal fun SwitchSetting(name: String, checked: Boolean, help: String? = null,
         SettingName(name, help, Modifier.weight(1f), enabled)
         Spacer(Modifier.width(Space.l))
         SwitchMark(checked, enabled = enabled)
+    }
+}
+
+/** How long typing in a [TextSetting] pauses before what is typed is saved. */
+internal const val TEXT_SAVE_PAUSE_MS = 1_000L
+
+/**
+ * A text the user types in a card, beside the setting's name, saved ([onChange]) once typing pauses for
+ * [TEXT_SAVE_PAUSE_MS], when the focus goes, or when the field leaves the page: not at each key, so a word half typed ("1"
+ * on the way to "1:1s") is never saved, and what a change sets off happens once. Like an item's text options ([TextRow])
+ * it keeps what is typed while it has the focus, since what is stored may be cleaned (words parted and trimmed), and shows
+ * the stored [value] again when the focus goes. No more than [maxLength] characters can be typed.
+ */
+@Composable
+internal fun TextSetting(name: String, value: String, modifier: Modifier = Modifier, help: String? = null, placeholder: String = "",
+                         maxLength: Int = 1_000, onChange: (String) -> Unit) {
+    var field by remember { mutableStateOf(TextFieldValue(value, TextRange(value.length))) }
+    var focused by remember { mutableStateOf(false) }
+    // Typed and not saved yet: each key starts the pause again.
+    var unsaved by remember { mutableStateOf<String?>(null) }
+    val save by rememberUpdatedState(onChange)
+    fun flush() { unsaved?.let { unsaved = null; save(it) } }
+    LaunchedEffect(unsaved) { if (unsaved != null) { delay(TEXT_SAVE_PAUSE_MS); flush() } }
+    DisposableEffect(Unit) { onDispose { flush() } }
+    LaunchedEffect(value, focused) {
+        if (!focused && unsaved == null && field.text != value) field = TextFieldValue(value, TextRange(value.length))
+    }
+    WideSettingRow(name, modifier, help) {
+        BentoField(field, { typed ->
+            val text = typed.text.take(maxLength)
+            val changed = text != field.text
+            field = if (text == typed.text) typed else typed.copy(text = text, selection = TextRange(text.length))
+            if (changed) unsaved = text
+        }, name, Modifier.fillMaxWidth().onFocusChanged {
+            if (focused && !it.isFocused) flush()
+            focused = it.isFocused
+        }, placeholder = placeholder)
     }
 }

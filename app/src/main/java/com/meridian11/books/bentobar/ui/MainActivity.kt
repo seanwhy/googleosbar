@@ -52,6 +52,12 @@ enum class Page(@androidx.annotation.StringRes val label: Int, @androidx.annotat
     ABOUT(R.string.nav_about, R.string.page_about),
 }
 
+/**
+ * Turns the settings window to a page, from a control on another (an item's options' "Open Setup"). In this process only:
+ * the window is exported, and an intent that names a page is another app's say. Nothing outside the window.
+ */
+val LocalTurnTo = androidx.compose.runtime.staticCompositionLocalOf<(Page) -> Unit> { {} }
+
 class MainActivity : ComponentActivity() {
     // Accessibility services turned on or off (in Settings' own window, on a Googlebook).
     private val services = AccessibilityManager.AccessibilityServicesStateChangeListener { Setup.refresh(this) }
@@ -235,7 +241,7 @@ class MainActivity : ComponentActivity() {
 
     override fun onResume() {
         super.onResume()
-        Setup.refresh(this)
+        Setup.cameBack(this)
         Ticker.start("settings")
         Chips.update(this)
     }
@@ -279,7 +285,7 @@ class MainActivity : ComponentActivity() {
 
     override fun onWindowFocusChanged(hasFocus: Boolean) {
         super.onWindowFocusChanged(hasFocus)
-        if (hasFocus) Setup.refresh(this)
+        if (hasFocus) Setup.cameBack(this)
     }
 
     @Composable
@@ -306,11 +312,13 @@ class MainActivity : ComponentActivity() {
                 onAgree = { disclosure = false; Store.setConsent(Store.Consent.AGREED); openAccessibility(this@MainActivity) },
                 onDecline = { disclosure = false; Store.setConsent(Store.Consent.DECLINED) },
                 onDismiss = { disclosure = false },
-            ) else when (page) {
-                Page.BAR -> BarPage(selected, onSelect = { selected = it }, turn = turn, running = running)
-                Page.LOOK -> LookPage()
-                Page.SETUP -> SetupPage(setup, consent == Store.Consent.DECLINED, wontAsk, onTurnOn = ::turnOn)
-                Page.ABOUT -> AboutPage()
+            ) else androidx.compose.runtime.CompositionLocalProvider(LocalTurnTo provides { if (!disclosure) page = it }) {
+                when (page) {
+                    Page.BAR -> BarPage(selected, onSelect = { selected = it }, turn = turn, running = running)
+                    Page.LOOK -> LookPage()
+                    Page.SETUP -> SetupPage(setup, consent == Store.Consent.DECLINED, wontAsk, onTurnOn = ::turnOn)
+                    Page.ABOUT -> AboutPage()
+                }
             }
             // Last, so it's drawn over the page (in a Box, later children are on top).
             SnackbarHost(snackbar, Modifier.align(Alignment.BottomCenter).padding(16.dp))
