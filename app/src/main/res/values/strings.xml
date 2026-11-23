@@ -826,6 +826,10 @@
     <string name="ai_usage_today_tokens">Today tokens</string>
     <string name="ai_usage_options_path">Snapshot file path</string>
     <string name="ai_usage_options_path_help">Optional custom path to ai_usage_snapshot.json</string>
+    <string name="ai_usage_options_auto_terminal">获取用量时自动启动终端</string>
+    <string name="ai_usage_options_auto_terminal_help">打开 BentoBar 或用量守护进程离线/过期时，自动启动 Googlebook OS 终端唤醒后台服务</string>
+    <string name="ai_usage_options_auto_minimize_terminal">启动后自动最小化终端</string>
+    <string name="ai_usage_options_auto_minimize_terminal_help">拉起终端后自动点击窗口最小化按钮，将其收起至后台保持运行</string>
     <string name="item_ai_antigravity_title">Antigravity</string>
     <string name="item_ai_antigravity_desc">Antigravity 5h &amp; weekly remaining quota ring</string>
     <string name="item_ai_codex_title">Codex</string>

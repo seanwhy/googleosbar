@@ -49,8 +49,10 @@ import com.meridian11.books.bentobar.data.Position
 import com.meridian11.books.bentobar.data.ROOM_ORDER
 import com.meridian11.books.bentobar.data.Section
 import com.meridian11.books.bentobar.data.Store
+import com.meridian11.books.bentobar.items.AiUsageTerminal
 import com.meridian11.books.bentobar.items.ChargeOptimization
 import com.meridian11.books.bentobar.items.ChargeOptimizationRules
+import com.meridian11.books.bentobar.items.TerminalMinimizeRules
 import com.meridian11.books.bentobar.items.Chips
 import com.meridian11.books.bentobar.items.CloudClipboardItem
 import com.meridian11.books.bentobar.items.DisplaysItem
@@ -82,6 +84,17 @@ class BarService : AccessibilityService() {
 
         fun toggleChargeOptimization(): Boolean =
             current?.controller()?.toggleChargeOptimization() ?: false
+
+        fun minimizeTerminalWindow(): Boolean =
+            current?.controller()?.scheduleTerminalMinimize() ?: false
+
+        fun launchActivity(intent: Intent): Boolean {
+            val svc = current ?: return false
+            return runCatching {
+                svc.startActivity(intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK))
+                true
+            }.getOrDefault(false)
+        }
 
         fun pasteIntoFocus(text: CharSequence) {
             val node = current?.findFocus(AccessibilityNodeInfo.FOCUS_INPUT) ?: return
@@ -328,6 +341,17 @@ class BarController(private val service: AccessibilityService) {
                 // The chip's next change is timed on a clock that stops while the device sleeps: catch up.
                 Chips.update(service)
             }
+            if (i.action == Intent.ACTION_USER_PRESENT) {
+                if (com.meridian11.books.bentobar.items.AiUsageTerminal.hasAiUsageItems(Store.config.value.items)) {
+                    main.postDelayed({
+                        if (started) {
+                            com.meridian11.books.bentobar.items.AiUsageReader.ensureDaemonReady(
+                                com.meridian11.books.bentobar.items.TerminalWakeReason.BACKGROUND_POLL
+                            )
+                        }
+                    }, 800L)
+                }
+            }
         }
     }
     fun start() {
@@ -345,6 +369,16 @@ class BarController(private val service: AccessibilityService) {
         // Last: what a type left behind when the service last ended, or the process with it (a mute of its own with no such
         // item placed any more, a Focus session past its end), it gives back now.
         for (t in Items.all) Ticker.guarded(t, "settle") { t.settle(Settle.SERVICE_STARTED) }
+        if (com.meridian11.books.bentobar.items.AiUsageTerminal.hasAiUsageItems(Store.config.value.items)) {
+            // Wait briefly for scan() to place the visible strip overlay window (so Android BAL allows startActivity).
+            main.postDelayed({
+                if (started) {
+                    com.meridian11.books.bentobar.items.AiUsageReader.ensureDaemonReady(
+                        com.meridian11.books.bentobar.items.TerminalWakeReason.BACKGROUND_POLL
+                    )
+                }
+            }, 800L)
+        }
     }
 
     fun stop() {
@@ -352,6 +386,8 @@ class BarController(private val service: AccessibilityService) {
         started = false
         chargeOptSession = null
         chargeOptDueAt = 0L
+        terminalMinSession = null
+        terminalMinDueAt = 0L
         BarLook.current.value = null
         BarStatus.current.value = BarStatus.STOPPED
         BarOverflow.ids.value = emptySet()
@@ -442,6 +478,14 @@ class BarController(private val service: AccessibilityService) {
                         val nowUp = SystemClock.uptimeMillis()
                         if (chargeOptDueAt == 0L || chargeOptDueAt - nowUp > 30L) {
                             scheduleChargeOptTick(25L)
+                        }
+                    }
+                }
+                terminalMinSession?.let { ts ->
+                    if (!ts.inFlightGesture) {
+                        val nowUp = SystemClock.uptimeMillis()
+                        if (terminalMinDueAt == 0L || terminalMinDueAt - nowUp > 60L) {
+                            scheduleTerminalMinTick(45L)
                         }
                     }
                 }
@@ -1402,6 +1446,235 @@ class BarController(private val service: AccessibilityService) {
                 main,
             )
         }.getOrDefault(false)
+    }
+
+    // ---- auto-minimize Linux Terminal window after AI usage wake -----------------------------
+
+    private class TerminalMinimizeSession(
+        val startedAt: Long,
+        var terminalSeenAt: Long = 0L,
+        var attempts: Int = 0,
+        var lastActionAt: Long = 0L,
+        var usedGesture: Boolean = false,
+        var inFlightGesture: Boolean = false,
+    )
+
+    private var terminalMinSession: TerminalMinimizeSession? = null
+    private var terminalMinDueAt: Long = 0L
+    private val terminalMinTick = Runnable {
+        terminalMinDueAt = 0L
+        stepTerminalMinimize()
+    }
+
+    private fun scheduleTerminalMinTick(delayMs: Long) {
+        main.removeCallbacks(terminalMinTick)
+        terminalMinDueAt = SystemClock.uptimeMillis() + delayMs
+        if (delayMs <= 0L) main.post(terminalMinTick) else main.postDelayed(terminalMinTick, delayMs)
+    }
+
+    fun scheduleTerminalMinimize(): Boolean {
+        if (!started) return false
+        main.post {
+            if (!started) return@post
+            terminalMinSession = TerminalMinimizeSession(startedAt = SystemClock.uptimeMillis())
+            scheduleTerminalMinTick(180L)
+        }
+        return true
+    }
+
+    private fun toCaptionTree(
+        node: AccessibilityNodeInfo,
+        liveNodes: MutableList<AccessibilityNodeInfo>,
+        maxNodes: Int = 256,
+        startIdx: Int = liveNodes.size,
+        depth: Int = 0,
+        maxBottom: Int = Int.MAX_VALUE,
+    ): TerminalMinimizeRules.CaptionNode {
+        val ref = liveNodes.size
+        liveNodes += node
+        val bounds = Rect().also { node.getBoundsInScreen(it) }
+        val hasClick = node.isClickable ||
+            node.actionList.any { it.id == AccessibilityNodeInfo.ACTION_CLICK }
+        val childCount = node.childCount
+        val withinCap = depth < 24 && (liveNodes.size - startIdx) < maxNodes && liveNodes.size < 4_000
+        val children = if (withinCap && childCount > 0 && bounds.top <= maxBottom) {
+            buildList {
+                for (i in 0 until childCount) {
+                    if ((liveNodes.size - startIdx) >= maxNodes || liveNodes.size >= 4_000) break
+                    val child = runCatching { node.getChild(i) }.getOrNull() ?: continue
+                    val cb = Rect().also { child.getBoundsInScreen(it) }
+                    if (cb.top > maxBottom && child.childCount == 0) continue
+                    add(toCaptionTree(child, liveNodes, maxNodes, startIdx, depth + 1, maxBottom))
+                }
+            }
+        } else {
+            emptyList()
+        }
+        return TerminalMinimizeRules.CaptionNode(
+            ref = ref,
+            id = node.viewIdResourceName.orEmpty(),
+            desc = node.contentDescription?.toString().orEmpty(),
+            text = node.text?.toString().orEmpty(),
+            clickable = hasClick,
+            enabled = node.isEnabled,
+            visible = node.isVisibleToUser,
+            left = bounds.left,
+            top = bounds.top,
+            right = bounds.right,
+            bottom = bounds.bottom,
+            children = children,
+        )
+    }
+
+    private fun stepTerminalMinimize() {
+        val sess = terminalMinSession ?: return
+        val now = SystemClock.uptimeMillis()
+        if (!started || now - sess.startedAt > TerminalMinimizeRules.MAX_SESSION_MS + 1_000L) {
+            terminalMinSession = null
+            terminalMinDueAt = 0L
+            return
+        }
+        if (sess.inFlightGesture) return
+
+        service.clearCache()
+        val wins = flattenWindows(runCatching { service.windows }.getOrDefault(emptyList()))
+        val liveNodes = ArrayList<AccessibilityNodeInfo>(128)
+        val snapshots = ArrayList<TerminalMinimizeRules.WindowSnapshot>(wins.size)
+
+        // First locate any visible Terminal application window so we only inspect aligned caption bars.
+        var terminalWin: AccessibilityWindowInfo? = null
+        val terminalRect = Rect()
+        for (w in wins) {
+            if (w.type != AccessibilityWindowInfo.TYPE_APPLICATION) continue
+            val rootNode = runCatching { w.root }.getOrNull() ?: continue
+            val pkg = rootNode.packageName?.toString().orEmpty()
+            val wb = Rect().also { w.getBoundsInScreen(it) }
+            val isTerm = pkg == AiUsageTerminal.TERMINAL_PACKAGE
+            if (isTerm && wb.width() > 0 && wb.height() > 0) {
+                if (terminalWin == null || w.layer > terminalWin.layer) {
+                    terminalWin = w
+                    terminalRect.set(wb)
+                }
+            }
+            val tree = if (isTerm && wb.width() > 0 && wb.height() > 0) {
+                toCaptionTree(rootNode, liveNodes, maxNodes = 160, maxBottom = wb.top + 180)
+            } else {
+                null
+            }
+            snapshots += TerminalMinimizeRules.WindowSnapshot(
+                windowId = w.id,
+                type = TerminalMinimizeRules.WindowKind.APPLICATION,
+                packageName = pkg,
+                layer = w.layer,
+                displayId = w.displayId,
+                left = wb.left,
+                top = wb.top,
+                right = wb.right,
+                bottom = wb.bottom,
+                tree = tree,
+            )
+        }
+
+        if (terminalWin != null && sess.terminalSeenAt == 0L) {
+            sess.terminalSeenAt = now
+        }
+
+        if (terminalWin != null) {
+            for (w in wins) {
+                val kind = when (w.type) {
+                    WINDOW_TYPE_CONTROL -> TerminalMinimizeRules.WindowKind.WINDOW_CONTROL
+                    AccessibilityWindowInfo.TYPE_SYSTEM -> TerminalMinimizeRules.WindowKind.SYSTEM
+                    else -> continue
+                }
+                if (w.displayId != terminalWin.displayId || w.layer < terminalWin.layer) continue
+                val wb = Rect().also { w.getBoundsInScreen(it) }
+                if (wb.height() !in 16..180) continue
+                if (kotlin.math.abs(wb.left - terminalRect.left) > 32 || kotlin.math.abs(wb.right - terminalRect.right) > 32) continue
+                val rootNode = runCatching { w.root }.getOrNull()
+                val pkg = rootNode?.packageName?.toString().orEmpty()
+                val tree = rootNode?.let {
+                    runCatching { it.refresh() }
+                    toCaptionTree(it, liveNodes, maxNodes = 256)
+                }
+                snapshots += TerminalMinimizeRules.WindowSnapshot(
+                    windowId = w.id,
+                    type = kind,
+                    packageName = pkg,
+                    layer = w.layer,
+                    displayId = w.displayId,
+                    left = wb.left,
+                    top = wb.top,
+                    right = wb.right,
+                    bottom = wb.bottom,
+                    tree = tree,
+                )
+            }
+        }
+
+        when (
+            val step = TerminalMinimizeRules.nextStep(
+                windows = snapshots,
+                terminalSeenAtMs = sess.terminalSeenAt,
+                nowMs = now,
+                attempts = sess.attempts,
+                lastActionAtMs = sess.lastActionAt,
+                usedGesture = sess.usedGesture,
+                startedAtMs = sess.startedAt,
+            )
+        ) {
+            TerminalMinimizeRules.Step.Done -> {
+                Log.i(tag, "Linux Terminal minimized automatically (attempts=${sess.attempts})")
+                terminalMinSession = null
+                terminalMinDueAt = 0L
+            }
+            TerminalMinimizeRules.Step.GiveUp -> {
+                Log.w(tag, "Linux Terminal auto-minimize timed out (seen=${sess.terminalSeenAt > 0L}, attempts=${sess.attempts})")
+                terminalMinSession = null
+                terminalMinDueAt = 0L
+            }
+            TerminalMinimizeRules.Step.Wait -> {
+                val delay = when {
+                    sess.terminalSeenAt > 0L && (now - sess.terminalSeenAt) < TerminalMinimizeRules.SETTLE_MS ->
+                        (TerminalMinimizeRules.SETTLE_MS - (now - sess.terminalSeenAt)) + 25L
+                    sess.attempts > 0 && (now - sess.lastActionAt) < TerminalMinimizeRules.RETRY_INTERVAL_MS ->
+                        (TerminalMinimizeRules.RETRY_INTERVAL_MS - (now - sess.lastActionAt)) + 25L
+                    else -> 140L
+                }
+                scheduleTerminalMinTick(delay.coerceIn(60L, 450L))
+            }
+            is TerminalMinimizeRules.Step.ClickMinimize -> {
+                val targetNode = liveNodes.getOrNull(step.nodeRef)
+                val canTap = hasGestureCapability() &&
+                    !isPointCovered(wins, step.captionWindowId, step.centerX, step.centerY, step.displayId)
+
+                fun dispatchMinimizeTap(): Boolean {
+                    if (!canTap) return false
+                    sess.inFlightGesture = true
+                    sess.attempts++
+                    sess.usedGesture = true
+                    sess.lastActionAt = now
+                    val dispatched = tapAt(step.centerX, step.centerY, step.displayId) {
+                        if (terminalMinSession !== sess) return@tapAt
+                        sess.inFlightGesture = false
+                        sess.lastActionAt = SystemClock.uptimeMillis()
+                        scheduleTerminalMinTick(180L)
+                    }
+                    if (!dispatched) {
+                        sess.inFlightGesture = false
+                    }
+                    return dispatched
+                }
+
+                if (step.preferGesture && dispatchMinimizeTap()) return
+
+                val clicked = targetNode?.performAction(AccessibilityNodeInfo.ACTION_CLICK) == true
+                if (!clicked && dispatchMinimizeTap()) return
+
+                sess.attempts++
+                sess.lastActionAt = now
+                scheduleTerminalMinTick(220L)
+            }
+        }
     }
 
     // ---- tests (adb only) --------------------------------------------------------------------

@@ -87,6 +87,7 @@ object Env {
         Timers.init(app)
         Caffeine.init(app)
         ChargeOptimization.init(app)
+        AiUsageTerminal.init(app)
     }
 
     /**
@@ -149,6 +150,10 @@ object Env {
         false
     }
 
+    /** Starts an activity preferring the connected AccessibilityService context (for background wakes), falling back to [launch]. */
+    fun launchFromServiceOrApp(intent: Intent, quiet: Boolean = true): Boolean =
+        BarService.launchActivity(intent) || launch(intent, quiet = quiet)
+
     /** A string in the app's language, for code outside Compose (item states, notifications, tiles). */
     fun str(@StringRes id: Int): String = app.getString(id)
     fun str(@StringRes id: Int, vararg args: Any): String = app.getString(id, *args)
@@ -160,6 +165,8 @@ object Env {
     fun global(action: Int): Boolean = BarService.global(action)
 
     fun toggleChargeOptimization(): Boolean = BarService.toggleChargeOptimization()
+
+    fun minimizeTerminalWindow(): Boolean = BarService.minimizeTerminalWindow()
 
     /** Puts [text] on the clipboard (a flight's status, the times of a planned moment). */
     fun copy(text: String) {

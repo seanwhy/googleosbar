@@ -7,6 +7,8 @@ import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.height
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.collectAsState
+import androidx.compose.runtime.getValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
@@ -21,6 +23,7 @@ import com.meridian11.books.bentobar.ui.MenuEntry
 import com.meridian11.books.bentobar.ui.MenuNote
 import com.meridian11.books.bentobar.ui.Meter
 import com.meridian11.books.bentobar.ui.SectionLabel
+import com.meridian11.books.bentobar.ui.SwitchRow
 import com.meridian11.books.bentobar.ui.TextRow
 import com.meridian11.books.bentobar.ui.rememberTick
 import com.meridian11.books.bentobar.util.Dates
@@ -46,6 +49,9 @@ private data class QuotaBarValues(
     val summary: String,
 )
 
+private fun isOfflineProblem(problem: QuotaProblem?): Boolean =
+    problem == QuotaProblem.UNREACHABLE || problem == QuotaProblem.STALE
+
 private fun problemLabel(problem: QuotaProblem): String = when (problem) {
     QuotaProblem.TIMEOUT -> "网络请求超时"
     QuotaProblem.ERROR -> "网络异常 / 获取失败"
@@ -67,6 +73,7 @@ private fun <T> buildQuotaState(
     providerTitle: String,
     resolved: ResolvedQuota<T>,
     threshold: Float,
+    startingTerminal: Boolean = false,
     extract: (T) -> QuotaBarValues,
     lastSummary: (T) -> String,
 ): ItemState {
@@ -86,16 +93,22 @@ private fun <T> buildQuotaState(
     }
 
     val problem = resolved.problem ?: QuotaProblem.ERROR
+    val starting = startingTerminal && isOfflineProblem(problem)
     val ringStatus = if (problem == QuotaProblem.UNCONFIGURED) QuotaRingStatus.UNAVAILABLE else QuotaRingStatus.TIMEOUT
     val shortText = if (problem == QuotaProblem.UNCONFIGURED) "--" else "TO"
-    val problemText = problemLabel(problem)
+    val problemText = if (starting) "正在启动终端守护进程…" else problemLabel(problem)
     val cachedNote = resolved.lastOk?.let { " · 上次 ${lastSummary(it)}" }.orEmpty()
     val fullDesc = "$providerTitle: $problemText$cachedNote"
+    val shortLabel = when {
+        problem == QuotaProblem.UNCONFIGURED -> "$providerTitle 未配置"
+        starting -> "$providerTitle 启动终端中"
+        else -> "$providerTitle 超时"
+    }
 
     return ItemState(
         icon = icon,
         text = shortText,
-        label = "$providerTitle ${if (problem == QuotaProblem.UNCONFIGURED) "未配置" else "超时"}",
+        label = shortLabel,
         quotaRing = QuotaRing(status = ringStatus),
         active = false,
         tone = Tone.NORMAL,
@@ -163,18 +176,36 @@ private fun QuotaBucketMeter(
 private fun <T> QuotaProblemSection(
     resolved: ResolvedQuota<T>,
     nowMs: Long,
+    startingTerminal: Boolean = false,
     renderCached: @Composable (T) -> Unit,
 ) {
     val problem = resolved.problem ?: QuotaProblem.ERROR
-    val statusColor = if (problem == QuotaProblem.UNCONFIGURED) MaterialTheme.colorScheme.onSurfaceVariant else MaterialTheme.colorScheme.error
-    InfoRow(stringResource(R.string.ai_usage_status), problemLabel(problem), statusColor)
-
-    resolved.errorMessage?.takeIf { it.isNotBlank() }?.let { msg ->
-        MenuNote("原因: $msg")
+    val starting = startingTerminal && isOfflineProblem(problem)
+    val statusColor = when {
+        starting -> MaterialTheme.colorScheme.primary
+        problem == QuotaProblem.UNCONFIGURED -> MaterialTheme.colorScheme.onSurfaceVariant
+        else -> MaterialTheme.colorScheme.error
     }
-    if (problem == QuotaProblem.STALE && resolved.snapshotUpdatedAtSec != null) {
-        val lagMs = (nowMs - resolved.snapshotUpdatedAtSec * 1000L).coerceAtLeast(0L)
-        MenuNote("快照已滞后 ${Fmt.duration(lagMs)} 未更新")
+    InfoRow(
+        stringResource(R.string.ai_usage_status),
+        if (starting) "正在启动终端守护进程…" else problemLabel(problem),
+        statusColor,
+    )
+
+    if (starting) {
+        val autoMin by AiUsageTerminal.autoMinimizeEnabled.collectAsState()
+        MenuNote(
+            if (autoMin) "已自动启动终端并尝试收起至后台，等待用量守护进程就绪后将自动刷新"
+            else "已自动启动终端，等待后台用量守护进程就绪后将自动刷新"
+        )
+    } else {
+        resolved.errorMessage?.takeIf { it.isNotBlank() }?.let { msg ->
+            MenuNote("原因: $msg")
+        }
+        if (problem == QuotaProblem.STALE && resolved.snapshotUpdatedAtSec != null) {
+            val lagMs = (nowMs - resolved.snapshotUpdatedAtSec * 1000L).coerceAtLeast(0L)
+            MenuNote("快照已滞后 ${Fmt.duration(lagMs)} 未更新")
+        }
     }
 
     val lastOk = resolved.lastOk
@@ -184,9 +215,38 @@ private fun <T> QuotaProblemSection(
         MenuDivider()
         SectionLabel(if (timeDesc != null) "上次成功记录 · $timeDesc" else "上次成功记录")
         renderCached(lastOk)
-    } else if (problem != QuotaProblem.UNCONFIGURED) {
+    } else if (!starting && problem != QuotaProblem.UNCONFIGURED) {
         Spacer(Modifier.height(4.dp))
         MenuNote("暂无历史成功记录，请检查网络或代理设置后重试")
+    }
+}
+
+@Composable
+private fun TerminalLaunchMenuEntry(resolved: ResolvedQuota<*>) {
+    if (resolved.live == null && isOfflineProblem(resolved.problem)) {
+        MenuEntry(Sym.PLAY_ARROW, "启动终端") {
+            AiUsageReader.launchTerminalNow()
+        }
+    }
+}
+
+@Composable
+private fun AiUsageTerminalOption() {
+    val autoStart by AiUsageTerminal.autoStartEnabled.collectAsState()
+    val autoMinimize by AiUsageTerminal.autoMinimizeEnabled.collectAsState()
+    SwitchRow(
+        label = stringResource(R.string.ai_usage_options_auto_terminal),
+        checked = autoStart,
+        help = stringResource(R.string.ai_usage_options_auto_terminal_help),
+    ) {
+        AiUsageTerminal.setAutoStartEnabled(it)
+    }
+    SwitchRow(
+        label = stringResource(R.string.ai_usage_options_auto_minimize_terminal),
+        checked = autoMinimize,
+        help = stringResource(R.string.ai_usage_options_auto_minimize_terminal_help),
+    ) {
+        AiUsageTerminal.setAutoMinimizeEnabled(it)
     }
 }
 
@@ -345,6 +405,9 @@ object AntigravityItem : ItemType("ai_antigravity", R.string.item_ai_antigravity
         return AiUsageReader.resolveAntigravity(nowMs, customPath, staging.of(item))
     }
 
+    private fun isStartingTerminal(item: ItemConfig): Boolean =
+        staging.of(item) == null && item.opt("snapshotPath", "").isEmpty() && AiUsageReader.isStartingTerminal()
+
     override fun state(item: ItemConfig): ItemState {
         val nowMs = Now.wall()
         val threshold = critThreshold.of(item).toFloat()
@@ -354,6 +417,7 @@ object AntigravityItem : ItemType("ai_antigravity", R.string.item_ai_antigravity
             providerTitle = "Antigravity",
             resolved = resolve(item, nowMs),
             threshold = threshold,
+            startingTerminal = isStartingTerminal(item),
             extract = { ag ->
                 val g5hRem = ag.gemini5h?.remaining?.toInt() ?: 100
                 val gWRem = ag.geminiWeekly?.remaining?.toInt() ?: 100
@@ -369,6 +433,7 @@ object AntigravityItem : ItemType("ai_antigravity", R.string.item_ai_antigravity
         val nowMs = Now.wall()
         val threshold = critThreshold.of(item).toFloat()
         val resolved = resolve(item, nowMs)
+        val startingTerminal = isStartingTerminal(item)
 
         MenuCard(
             "brand:antigravity",
@@ -380,7 +445,7 @@ object AntigravityItem : ItemType("ai_antigravity", R.string.item_ai_antigravity
                 AntigravityDetails(live, threshold, historical = false)
                 LiveUpdatedNote(resolved.lastOkAtSec ?: resolved.snapshotUpdatedAtSec, nowMs)
             } else {
-                QuotaProblemSection(resolved, nowMs) { cached ->
+                QuotaProblemSection(resolved, nowMs, startingTerminal) { cached ->
                     AntigravityDetails(cached, threshold, historical = true)
                 }
             }
@@ -388,6 +453,7 @@ object AntigravityItem : ItemType("ai_antigravity", R.string.item_ai_antigravity
             MenuEntry(Sym.REFRESH, "立即重试获取") {
                 AiUsageReader.forceRefresh()
             }
+            TerminalLaunchMenuEntry(resolved)
             MenuEntry(Sym.OPEN_IN_NEW, "打开 Antigravity") {
                 host.close()
                 launchAppOrUrl(
@@ -399,6 +465,10 @@ object AntigravityItem : ItemType("ai_antigravity", R.string.item_ai_antigravity
                 host.openItemSettings(item.id)
             }
         }
+    }
+
+    override val options: @Composable (ItemConfig, (ItemConfig) -> Unit) -> Unit = { _, _ ->
+        AiUsageTerminalOption()
     }
 }
 
@@ -439,6 +509,9 @@ object CodexItem : ItemType("ai_codex", R.string.item_ai_codex_title, "brand:cod
         return AiUsageReader.resolveCodex(nowMs, customPath, staging.of(item))
     }
 
+    private fun isStartingTerminal(item: ItemConfig): Boolean =
+        staging.of(item) == null && item.opt("snapshotPath", "").isEmpty() && AiUsageReader.isStartingTerminal()
+
     override fun state(item: ItemConfig): ItemState {
         val nowMs = Now.wall()
         val threshold = critThreshold.of(item).toFloat()
@@ -448,6 +521,7 @@ object CodexItem : ItemType("ai_codex", R.string.item_ai_codex_title, "brand:cod
             providerTitle = "Codex",
             resolved = resolve(item, nowMs),
             threshold = threshold,
+            startingTerminal = isStartingTerminal(item),
             extract = { cx ->
                 val cx5hRem = cx.window5h?.remaining?.toInt() ?: 100
                 val cxWRem = cx.windowWeekly?.remaining?.toInt() ?: cx5hRem
@@ -463,6 +537,7 @@ object CodexItem : ItemType("ai_codex", R.string.item_ai_codex_title, "brand:cod
         val nowMs = Now.wall()
         val threshold = critThreshold.of(item).toFloat()
         val resolved = resolve(item, nowMs)
+        val startingTerminal = isStartingTerminal(item)
         val plan = (resolved.live?.planType ?: resolved.lastOk?.planType ?: "PLUS").uppercase()
 
         MenuCard(
@@ -475,7 +550,7 @@ object CodexItem : ItemType("ai_codex", R.string.item_ai_codex_title, "brand:cod
                 CodexDetails(live, threshold, historical = false)
                 LiveUpdatedNote(resolved.lastOkAtSec ?: resolved.snapshotUpdatedAtSec, nowMs)
             } else {
-                QuotaProblemSection(resolved, nowMs) { cached ->
+                QuotaProblemSection(resolved, nowMs, startingTerminal) { cached ->
                     CodexDetails(cached, threshold, historical = true)
                 }
             }
@@ -483,6 +558,7 @@ object CodexItem : ItemType("ai_codex", R.string.item_ai_codex_title, "brand:cod
             MenuEntry(Sym.REFRESH, "立即重试获取") {
                 AiUsageReader.forceRefresh()
             }
+            TerminalLaunchMenuEntry(resolved)
             MenuEntry(Sym.OPEN_IN_NEW, "打开 Codex / ChatGPT") {
                 host.close()
                 launchAppOrUrl(
@@ -494,6 +570,10 @@ object CodexItem : ItemType("ai_codex", R.string.item_ai_codex_title, "brand:cod
                 host.openItemSettings(item.id)
             }
         }
+    }
+
+    override val options: @Composable (ItemConfig, (ItemConfig) -> Unit) -> Unit = { _, _ ->
+        AiUsageTerminalOption()
     }
 }
 
@@ -533,6 +613,9 @@ object GrokItem : ItemType("ai_grok", R.string.item_ai_grok_title, "brand:grok",
         return AiUsageReader.resolveGrok(nowMs, customPath, staging.of(item))
     }
 
+    private fun isStartingTerminal(item: ItemConfig): Boolean =
+        staging.of(item) == null && item.opt("snapshotPath", "").isEmpty() && AiUsageReader.isStartingTerminal()
+
     override fun state(item: ItemConfig): ItemState {
         val nowMs = Now.wall()
         val threshold = critThreshold.of(item).toFloat()
@@ -542,6 +625,7 @@ object GrokItem : ItemType("ai_grok", R.string.item_ai_grok_title, "brand:grok",
             providerTitle = "Grok",
             resolved = resolve(item, nowMs),
             threshold = threshold,
+            startingTerminal = isStartingTerminal(item),
             extract = { gk ->
                 val gkWRem = gk.cycle?.remaining?.toInt() ?: 100
                 val usedPct = gk.cycle?.usedPercent ?: 0f
@@ -556,6 +640,7 @@ object GrokItem : ItemType("ai_grok", R.string.item_ai_grok_title, "brand:grok",
         val nowMs = Now.wall()
         val threshold = critThreshold.of(item).toFloat()
         val resolved = resolve(item, nowMs)
+        val startingTerminal = isStartingTerminal(item)
         val tier = resolved.live?.tier ?: resolved.lastOk?.tier ?: "SuperGrok"
 
         MenuCard(
@@ -568,7 +653,7 @@ object GrokItem : ItemType("ai_grok", R.string.item_ai_grok_title, "brand:grok",
                 GrokCycleDetails(live.cycle, threshold, historical = false)
                 LiveUpdatedNote(resolved.lastOkAtSec ?: resolved.snapshotUpdatedAtSec, nowMs)
             } else {
-                QuotaProblemSection(resolved, nowMs) { cached ->
+                QuotaProblemSection(resolved, nowMs, startingTerminal) { cached ->
                     cached.cycle?.let { GrokCycleDetails(it, threshold, historical = true) }
                 }
             }
@@ -576,6 +661,7 @@ object GrokItem : ItemType("ai_grok", R.string.item_ai_grok_title, "brand:grok",
             MenuEntry(Sym.REFRESH, "立即重试获取") {
                 AiUsageReader.forceRefresh()
             }
+            TerminalLaunchMenuEntry(resolved)
             MenuEntry(Sym.OPEN_IN_NEW, "打开 Grok") {
                 host.close()
                 launchAppOrUrl(
@@ -587,6 +673,10 @@ object GrokItem : ItemType("ai_grok", R.string.item_ai_grok_title, "brand:grok",
                 host.openItemSettings(item.id)
             }
         }
+    }
+
+    override val options: @Composable (ItemConfig, (ItemConfig) -> Unit) -> Unit = { _, _ ->
+        AiUsageTerminalOption()
     }
 }
 
@@ -646,6 +736,9 @@ object GrokBotItem : ItemType("ai_grok_bot", R.string.item_ai_grok_bot_title, "b
         return AiUsageReader.resolveGrokBot(nowMs, customPath, staging.of(item))
     }
 
+    private fun isStartingTerminal(item: ItemConfig): Boolean =
+        staging.of(item) == null && item.opt("snapshotPath", "").isEmpty() && AiUsageReader.isStartingTerminal()
+
     override fun state(item: ItemConfig): ItemState {
         val nowMs = Now.wall()
         val threshold = critThreshold.of(item).toFloat()
@@ -655,6 +748,7 @@ object GrokBotItem : ItemType("ai_grok_bot", R.string.item_ai_grok_bot_title, "b
             providerTitle = "Grok Bot",
             resolved = resolve(item, nowMs),
             threshold = threshold,
+            startingTerminal = isStartingTerminal(item),
             extract = { b ->
                 val rem = b.remaining.toInt()
                 val usedPct = b.usedPercent ?: (100f - rem)
@@ -669,6 +763,7 @@ object GrokBotItem : ItemType("ai_grok_bot", R.string.item_ai_grok_bot_title, "b
         val nowMs = Now.wall()
         val threshold = critThreshold.of(item).toFloat()
         val resolved = resolve(item, nowMs)
+        val startingTerminal = isStartingTerminal(item)
 
         MenuCard(
             "brand:grok_bot",
@@ -680,7 +775,7 @@ object GrokBotItem : ItemType("ai_grok_bot", R.string.item_ai_grok_bot_title, "b
                 GrokCycleDetails(live, threshold, historical = false)
                 LiveUpdatedNote(resolved.lastOkAtSec ?: resolved.snapshotUpdatedAtSec, nowMs)
             } else {
-                QuotaProblemSection(resolved, nowMs) { cached ->
+                QuotaProblemSection(resolved, nowMs, startingTerminal) { cached ->
                     GrokCycleDetails(cached, threshold, historical = true)
                 }
             }
@@ -688,6 +783,7 @@ object GrokBotItem : ItemType("ai_grok_bot", R.string.item_ai_grok_bot_title, "b
             MenuEntry(Sym.REFRESH, "立即重试获取") {
                 AiUsageReader.forceRefresh()
             }
+            TerminalLaunchMenuEntry(resolved)
             MenuEntry(Sym.OPEN_IN_NEW, "打开 Grok Bot") {
                 host.close()
                 launchAppOrUrl(
@@ -699,6 +795,10 @@ object GrokBotItem : ItemType("ai_grok_bot", R.string.item_ai_grok_bot_title, "b
                 host.openItemSettings(item.id)
             }
         }
+    }
+
+    override val options: @Composable (ItemConfig, (ItemConfig) -> Unit) -> Unit = { _, _ ->
+        AiUsageTerminalOption()
     }
 }
 
@@ -715,6 +815,7 @@ object AiUsageItem : ItemType("ai_usage", R.string.item_ai_usage_title, Sym.BOLT
     override fun state(item: ItemConfig): ItemState = AntigravityItem.state(item)
     override val menu: @Composable (ItemConfig, MenuHost) -> Unit = { item, host -> AntigravityItem.menu(item, host) }
     override val options: @Composable (ItemConfig, (ItemConfig) -> Unit) -> Unit = { item, set ->
+        AiUsageTerminalOption()
         TextRow(
             stringResource(R.string.ai_usage_options_path),
             item.opt("snapshotPath", ""),

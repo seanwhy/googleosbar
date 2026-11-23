@@ -329,8 +329,14 @@ object AiUsageReader {
     private const val UNREACHABLE_POLL_STREAK = 3
     @Volatile private var lastPollAt = 0L
     @Volatile private var isPolling = false
+    @Volatile private var pendingWakeReason: TerminalWakeReason? = null
     @Volatile private var cached: AiUsageSnapshot? = null
     @Volatile private var consecutivePollFailures = 0
+
+    internal var daemonFetcher: () -> AiUsageSnapshot? = ::fetchFromDaemon
+    internal var fileReader: (String?) -> AiUsageSnapshot? = ::readFiles
+    internal var wallClockMs: () -> Long = System::currentTimeMillis
+    internal var pollRunner: (Runnable) -> Unit = { executor.execute(it) }
 
     @Volatile private var memAntigravity: AntigravityQuota? = null
     @Volatile private var memAntigravityAt: Long? = null
@@ -459,20 +465,69 @@ object AiUsageReader {
         }
     }
 
-    private fun triggerPoll(force: Boolean = false) {
-        val sysNow = System.currentTimeMillis()
-        if ((!force && sysNow - lastPollAt <= 4000L) || isPolling) return
+    private fun triggerPoll(
+        force: Boolean = false,
+        reason: TerminalWakeReason = TerminalWakeReason.BACKGROUND_POLL,
+    ) {
+        val elapsedNow = AiUsageTerminal.clockElapsedMs()
+        val interval = AiUsageTerminal.pollIntervalMs()
+        if (isPolling) {
+            if (reason != TerminalWakeReason.BACKGROUND_POLL) {
+                pendingWakeReason = reason
+            }
+            return
+        }
+        if (!force && lastPollAt != 0L && (elapsedNow - lastPollAt) < interval) return
         isPolling = true
-        executor.execute {
+        pollRunner(Runnable {
+            var nextReason: TerminalWakeReason? = null
             try {
-                applyPollResult(fetchFromDaemon() ?: readFiles(null))
+                val daemonSnap = runCatching { daemonFetcher() }.getOrNull()
+                val fileSnap = if (daemonSnap != null && daemonSnap.updatedAt > 0L) {
+                    null
+                } else {
+                    runCatching { fileReader(null) }.getOrNull()
+                }
+                val nowSec = wallClockMs() / 1000L
+                val staleThreshold = if (reason == TerminalWakeReason.MANUAL_RETRY) {
+                    TerminalWakePolicy.MANUAL_WAKE_STALE_SEC
+                } else {
+                    AiUsageResolver.STALE_TIMEOUT_SEC
+                }
+                val offline = TerminalWakePolicy.isDaemonOffline(daemonSnap, fileSnap, nowSec, staleThreshold)
+                val effectiveSnap = when {
+                    daemonSnap != null && daemonSnap.updatedAt > 0L -> daemonSnap
+                    fileSnap != null -> fileSnap
+                    else -> daemonSnap
+                }
+                applyPollResult(effectiveSnap)
+                if (!offline) {
+                    val hasValidFresh = effectiveSnap != null &&
+                        effectiveSnap.updatedAt > 0L &&
+                        !effectiveSnap.isStale(nowSec, AiUsageResolver.STALE_TIMEOUT_SEC)
+                    if (AiUsageTerminal.onDaemonReachable(hasValidFresh)) {
+                        refreshItems()
+                    }
+                } else {
+                    val cur = cached
+                    val statusBarShowingOffline = cur == null ||
+                        cur.updatedAt <= 0L ||
+                        cur.isStale(nowSec, AiUsageResolver.STALE_TIMEOUT_SEC)
+                    val shouldTryWake = reason != TerminalWakeReason.BACKGROUND_POLL || statusBarShowingOffline
+                    if (shouldTryWake && AiUsageTerminal.maybeWake(reason)) {
+                        refreshItems()
+                    }
+                }
             } catch (_: Throwable) {
                 applyPollResult(null)
             } finally {
-                lastPollAt = System.currentTimeMillis()
+                lastPollAt = AiUsageTerminal.clockElapsedMs()
                 isPolling = false
+                nextReason = pendingWakeReason
+                pendingWakeReason = null
             }
-        }
+            nextReason?.let { triggerPoll(force = true, reason = it) }
+        })
     }
 
     private fun refreshItems() {
@@ -485,9 +540,23 @@ object AiUsageReader {
         }
     }
 
+    fun isStartingTerminal(): Boolean = AiUsageTerminal.isBootWatching()
+
     fun forceRefresh() {
         lastPollAt = 0L
-        triggerPoll(force = true)
+        triggerPoll(force = true, reason = TerminalWakeReason.MANUAL_RETRY)
+    }
+
+    fun ensureDaemonReady(reason: TerminalWakeReason) {
+        triggerPoll(force = true, reason = reason)
+    }
+
+    fun launchTerminalNow(): Boolean {
+        val launched = AiUsageTerminal.launchExplicit()
+        refreshItems()
+        lastPollAt = 0L
+        triggerPoll(force = true, reason = TerminalWakeReason.BACKGROUND_POLL)
+        return launched
     }
 
     fun read(now: Long, customPath: String? = null): AiUsageSnapshot? {
@@ -504,7 +573,7 @@ object AiUsageReader {
         triggerPoll()
 
         if (cached == null) {
-            val fileRes = readFiles(null)
+            val fileRes = runCatching { fileReader(null) }.getOrNull()
             if (fileRes != null) {
                 cached = fileRes
                 rememberLastOk(fileRes)
@@ -559,6 +628,8 @@ object AiUsageReader {
     /** Clears in-memory cache, primarily for unit testing. */
     fun clearCacheForTesting() {
         lastPollAt = 0L
+        isPolling = false
+        pendingWakeReason = null
         consecutivePollFailures = 0
         cached = null
         memAntigravity = null
@@ -569,5 +640,10 @@ object AiUsageReader {
         memGrokAt = null
         memGrokBuild = null
         memGrokBuildAt = null
+        daemonFetcher = ::fetchFromDaemon
+        fileReader = ::readFiles
+        wallClockMs = System::currentTimeMillis
+        pollRunner = { executor.execute(it) }
+        AiUsageTerminal.resetForTesting()
     }
 }

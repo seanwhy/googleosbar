@@ -244,6 +244,11 @@ class MainActivity : ComponentActivity() {
         Setup.cameBack(this)
         Ticker.start("settings")
         Chips.update(this)
+        if (!disclosure && com.meridian11.books.bentobar.items.AiUsageTerminal.hasAiUsageItems(Store.config.value.items)) {
+            com.meridian11.books.bentobar.items.AiUsageReader.ensureDaemonReady(
+                com.meridian11.books.bentobar.items.TerminalWakeReason.APP_OPEN
+            )
+        }
     }
 
     override fun onPause() {
