@@ -90,6 +90,39 @@ data class CloudClipboardEntry(
 }
 
 @Serializable
+data class TailnetSummaryNode(
+    val id: String = "",
+    val name: String = "",
+    val displayName: String = "",
+    val ip: String = "",
+    val magicDns: String = "",
+    val os: String = "",
+    val online: Boolean = false,
+    val rttMs: Double? = null,
+    val mode: String = "",
+    val relay: String = "",
+    val cpu: Double? = null,
+    val ram: Double? = null,
+    val serviceAlert: Boolean = false,
+    val sshUrl: String = "",
+)
+
+@Serializable
+data class TailnetSummaryResponse(
+    val generatedAt: String = "",
+    val tailnetName: String = "",
+    val dashboardUrl: String = "",
+    val totalNodes: Int = 0,
+    val onlineNodes: Int = 0,
+    val directRatio: Double = 0.0,
+    val primaryDerp: String = "",
+    val primaryDerpMs: Double? = null,
+    val alertCount: Int = 0,
+    val topAlert: String = "",
+    val nodes: List<TailnetSummaryNode> = emptyList(),
+)
+
+@Serializable
 internal data class CloudClipboardListResponse(
     val items: List<CloudClipboardEntry> = emptyList(),
 )
@@ -1835,6 +1868,28 @@ object CloudClipboardClient {
         } else {
             emptyList()
         }
+    }
+
+    internal fun parseTailnetSummary(bodyText: String): TailnetSummaryResponse {
+        val trimmed = bodyText.trim()
+        if (trimmed.isEmpty()) return TailnetSummaryResponse()
+        return CloudClipboardProtocol.json.decodeFromString<TailnetSummaryResponse>(trimmed)
+    }
+
+    fun fetchTailnetSummary(identity: NetTransferIdentity): TailnetSummaryResponse {
+        val cleanUrl = CloudClipboardProtocol.validateVpsUrl(identity.vpsUrl)
+        val headers = CloudClipboardProtocol.buildAgentHeaders(identity, "GET", ByteArray(0))
+        val resp = request(
+            url = "$cleanUrl/api/agent/v1/tailnet/summary",
+            method = "GET",
+            headers = headers,
+            body = null,
+        )
+        if (resp.statusCode !in 200..299) {
+            val detail = CloudClipboardProtocol.readErrorDetail(resp.bodyText, resp.statusCode, resp.reasonPhrase)
+            throw IllegalStateException("Tailnet 状态拉取失败：$detail")
+        }
+        return parseTailnetSummary(resp.bodyText)
     }
 }
 

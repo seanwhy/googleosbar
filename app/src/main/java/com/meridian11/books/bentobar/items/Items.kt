@@ -47,6 +47,7 @@ object Items {
         SoundItem,
         CloudClipboardItem,
         RemoteKeyboardItem,
+        TailnetItem,
         ToolsItem,
         AntigravityItem,
         CodexItem,

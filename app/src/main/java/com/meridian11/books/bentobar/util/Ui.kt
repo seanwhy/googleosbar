@@ -289,6 +289,22 @@ fun SymIcon(
                     )
                     drawRemoteKeyboardChassis(color = color, s = s, filled = filled, chassisTopY = 10.8f, chassisHeight = 10.8f)
                 }
+                "brand:tailscale" -> {
+                    val r = 2.0f * s
+                    val dim = color.copy(alpha = if (filled) 0.34f else 0.28f)
+                    val xs = listOf(5.8f, 12.0f, 18.2f)
+                    val ys = listOf(5.8f, 12.0f, 18.2f)
+                    for ((row, cy) in ys.withIndex()) {
+                        for ((col, cx) in xs.withIndex()) {
+                            val activeDot = row == 1 || (row == 2 && col == 1)
+                            drawCircle(
+                                color = if (activeDot) color else dim,
+                                radius = r,
+                                center = Offset(cx * s, cy * s),
+                            )
+                        }
+                    }
+                }
             }
         }
         return

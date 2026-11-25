@@ -1,0 +1,7 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="item_tailnet_title">Tailscale &amp; NetTransfer</string>
+    <string name="item_tailnet_desc">Tailscale mesh status, nodes, and local NetTransfer daemon control</string>
+    <string name="trigger_tailnet">Show when nodes have alerts or the local NetTransfer agent stops</string>
+    <string name="trigger_tailnet_short">shows on alert</string>
+</resources>

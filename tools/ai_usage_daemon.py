@@ -88,10 +88,39 @@ def ensure_proxy():
 import http.server
 
 
+import nettransfer_bridge
+
+
 def start_server(port=SERVER_PORT):
-    """Starts a local HTTP responder so BentoBar on Android can instantly read quotas."""
+    """Starts a local HTTP responder so BentoBar on Android can instantly read quotas & Tailnet state."""
     class QuotaHandler(http.server.BaseHTTPRequestHandler):
+        def _send_json(self, code: int, payload_bytes: bytes):
+            self.send_response(code)
+            self.send_header("Content-Type", "application/json; charset=utf-8")
+            self.send_header("Access-Control-Allow-Origin", "*")
+            self.send_header("Content-Length", str(len(payload_bytes)))
+            self.send_header("Connection", "close")
+            self.end_headers()
+            self.wfile.write(payload_bytes)
+
+        def do_OPTIONS(self):
+            self.send_response(204)
+            self.send_header("Access-Control-Allow-Origin", "*")
+            self.send_header("Access-Control-Allow-Methods", "GET, POST, OPTIONS")
+            self.send_header("Access-Control-Allow-Headers", "Content-Type")
+            self.send_header("Content-Length", "0")
+            self.end_headers()
+
         def do_GET(self):
+            path = urllib.parse.urlparse(self.path).path
+            if path == "/tailnet/status":
+                if not nettransfer_bridge.is_local_management_client(self.client_address[0]):
+                    self._send_json(403, b'{"error":"forbidden"}\n')
+                    return
+                status_bytes = json.dumps(nettransfer_bridge.read_combined_status(), ensure_ascii=False).encode("utf-8")
+                self._send_json(200, status_bytes)
+                return
+
             data = _latest_snapshot_bytes
             self.send_response(200)
             self.send_header("Content-Type", "application/json")
@@ -100,6 +129,33 @@ def start_server(port=SERVER_PORT):
             self.send_header("Connection", "close")
             self.end_headers()
             self.wfile.write(data)
+
+        def do_POST(self):
+            path = urllib.parse.urlparse(self.path).path
+            if path != "/nettransfer/action":
+                self._send_json(404, b'{"ok":false,"message":"not found"}\n')
+                return
+            if not nettransfer_bridge.is_local_management_client(self.client_address[0]):
+                self._send_json(403, b'{"ok":false,"message":"forbidden"}\n')
+                return
+            try:
+                length = int(self.headers.get("Content-Length") or "0")
+            except ValueError:
+                length = 0
+            if length <= 0 or length > 8192:
+                self._send_json(400, b'{"ok":false,"message":"invalid body length"}\n')
+                return
+            raw_body = self.rfile.read(length)
+            try:
+                req = json.loads(raw_body.decode("utf-8"))
+            except Exception:
+                self._send_json(400, b'{"ok":false,"message":"invalid json"}\n')
+                return
+            action = str(req.get("action") or "")
+            code = str(req.get("code") or "")
+            reply = nettransfer_bridge.perform_action(action, code)
+            out_bytes = json.dumps(reply, ensure_ascii=False).encode("utf-8")
+            self._send_json(200 if reply.get("ok") else 400, out_bytes)
 
         def log_message(self, format, *args):
             pass

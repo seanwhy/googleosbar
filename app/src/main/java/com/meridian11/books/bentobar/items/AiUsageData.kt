@@ -2,6 +2,7 @@ package com.meridian11.books.bentobar.items
 
 import kotlinx.serialization.SerialName
 import kotlinx.serialization.Serializable
+import kotlinx.serialization.encodeToString
 import kotlinx.serialization.json.Json
 import java.io.File
 import java.util.Locale
@@ -645,5 +646,176 @@ object AiUsageReader {
         wallClockMs = System::currentTimeMillis
         pollRunner = { executor.execute(it) }
         AiUsageTerminal.resetForTesting()
+    }
+}
+
+@Serializable
+data class VmTailnetNode(
+    val id: String = "",
+    val name: String = "",
+    @SerialName("display_name") val displayName: String = "",
+    val ip: String = "",
+    val os: String = "",
+    val online: Boolean = false,
+    val mode: String = "",
+    val relay: String = "",
+)
+
+@Serializable
+data class VmTailnetFallback(
+    val available: Boolean = false,
+    @SerialName("tailnet_name") val tailnetName: String = "",
+    @SerialName("total_nodes") val totalNodes: Int = 0,
+    @SerialName("online_nodes") val onlineNodes: Int = 0,
+    @SerialName("direct_ratio") val directRatio: Double = 0.0,
+    @SerialName("primary_derp") val primaryDerp: String = "",
+    val nodes: List<VmTailnetNode> = emptyList(),
+)
+
+@Serializable
+data class VmNetTransferAgentStatus(
+    val installed: Boolean = false,
+    @SerialName("binary_exists") val binaryExists: Boolean = false,
+    val active: Boolean = false,
+    val enabled: Boolean = false,
+    val state: String = "unknown",
+    val pid: Int = 0,
+    val version: String = "",
+    val arch: String = "",
+    @SerialName("vps_url") val vpsUrl: String = "",
+    val registered: Boolean = false,
+    @SerialName("device_id") val deviceId: String = "",
+    val revoked: Boolean = false,
+    @SerialName("has_backup") val hasBackup: Boolean = false,
+    @SerialName("latest_backup") val latestBackup: String = "",
+    @SerialName("recent_logs") val recentLogs: List<String> = emptyList(),
+)
+
+@Serializable
+data class VmTailnetStatusResponse(
+    @SerialName("updated_at") val updatedAt: Double = 0.0,
+    val tailnet: VmTailnetFallback = VmTailnetFallback(),
+    val agent: VmNetTransferAgentStatus = VmNetTransferAgentStatus(),
+)
+
+@Serializable
+data class VmNetTransferActionReply(
+    val ok: Boolean = false,
+    val message: String = "",
+    val agent: VmNetTransferAgentStatus? = null,
+    @SerialName("current_version") val currentVersion: String = "",
+    @SerialName("latest_version") val latestVersion: String = "",
+    @SerialName("has_update") val hasUpdate: Boolean = false,
+    val notes: String = "",
+    @SerialName("released_at") val releasedAt: String = "",
+    val sha256: String = "",
+    val size: Long = 0L,
+    val url: String = "",
+)
+
+@Serializable
+private data class VmNetTransferActionRequest(
+    val action: String,
+    val code: String? = null,
+)
+
+/**
+ * Localhost / crosvm HTTP bridge to `tools/ai_usage_daemon.py` (`GET /tailnet/status`, `POST /nettransfer/action`).
+ * Socket usage stays here alongside [AiUsageReader] to preserve `OneWayOutTest` guarantees.
+ */
+object TailnetVmBridge {
+    private val targets = listOf("127.0.0.1", "10.192.190.115", "10.192.190.62", "localhost")
+    private const val PORT = 19876
+    private val json = Json {
+        ignoreUnknownKeys = true
+        encodeDefaults = false
+    }
+
+    internal fun extractHttpBody(raw: String): Pair<Int, String> {
+        val headerSep = raw.indexOf("\r\n\r\n").takeIf { it >= 0 } ?: raw.indexOf("\n\n")
+        val statusLine = raw.lineSequence().firstOrNull().orEmpty()
+        val statusCode = Regex("^HTTP/\\S+\\s+(\\d{3})").find(statusLine)?.groupValues?.get(1)?.toIntOrNull() ?: 0
+        val body = if (headerSep >= 0) {
+            val offset = if (raw.startsWith("\r\n\r\n", headerSep)) 4 else 2
+            raw.substring(headerSep + offset)
+        } else {
+            raw
+        }
+        val jsonStart = body.indexOf('{')
+        val jsonEnd = body.lastIndexOf('}')
+        val cleaned = if (jsonStart >= 0 && jsonEnd >= jsonStart) body.substring(jsonStart, jsonEnd + 1) else body.trim()
+        return statusCode to cleaned
+    }
+
+    internal fun parseStatus(raw: String): VmTailnetStatusResponse? = runCatching {
+        val (status, body) = extractHttpBody(raw)
+        if (status != 0 && status !in 200..299) return@runCatching null
+        if (!body.startsWith("{")) return@runCatching null
+        json.decodeFromString<VmTailnetStatusResponse>(body)
+    }.getOrNull()
+
+    internal fun parseActionReply(raw: String): VmNetTransferActionReply? = runCatching {
+        val (_, body) = extractHttpBody(raw)
+        if (!body.startsWith("{")) return@runCatching null
+        json.decodeFromString<VmNetTransferActionReply>(body)
+    }.getOrNull()
+
+    fun fetchStatus(readTimeoutMs: Int = 4000): VmTailnetStatusResponse? {
+        for (host in targets) {
+            val res = runCatching {
+                val socket = java.net.Socket()
+                try {
+                    socket.connect(java.net.InetSocketAddress(host, PORT), 500)
+                    socket.soTimeout = readTimeoutMs
+                    val out = socket.getOutputStream()
+                    out.write("GET /tailnet/status HTTP/1.0\r\nHost: localhost\r\nConnection: close\r\n\r\n".toByteArray(Charsets.UTF_8))
+                    out.flush()
+                    val raw = socket.getInputStream().bufferedReader(Charsets.UTF_8).use { it.readText() }
+                    parseStatus(raw)
+                } finally {
+                    runCatching { socket.close() }
+                }
+            }.getOrNull()
+            if (res != null) return res
+        }
+        return null
+    }
+
+    fun postAction(action: String, code: String? = null, timeoutMs: Int = 60_000): VmNetTransferActionReply {
+        val payload = json.encodeToString(VmNetTransferActionRequest(action = action, code = code?.trim()?.takeIf { it.isNotEmpty() }))
+        val bodyBytes = payload.toByteArray(Charsets.UTF_8)
+        for (host in targets) {
+            val reply = runCatching {
+                val socket = java.net.Socket()
+                try {
+                    socket.connect(java.net.InetSocketAddress(host, PORT), 500)
+                    socket.soTimeout = timeoutMs
+                    val req = buildString {
+                        append("POST /nettransfer/action HTTP/1.0\r\n")
+                        append("Host: localhost\r\n")
+                        append("Content-Type: application/json; charset=utf-8\r\n")
+                        append("Content-Length: ").append(bodyBytes.size).append("\r\n")
+                        append("Connection: close\r\n\r\n")
+                    }.toByteArray(Charsets.UTF_8)
+                    val out = socket.getOutputStream()
+                    out.write(req)
+                    out.write(bodyBytes)
+                    out.flush()
+                    val raw = socket.getInputStream().bufferedReader(Charsets.UTF_8).use { it.readText() }
+                    val (status, _) = extractHttpBody(raw)
+                    parseActionReply(raw) ?: VmNetTransferActionReply(
+                        ok = false,
+                        message = "VM 服务返回异常 (HTTP $status)",
+                    )
+                } finally {
+                    runCatching { socket.close() }
+                }
+            }.getOrNull()
+            if (reply != null) return reply
+        }
+        return VmNetTransferActionReply(
+            ok = false,
+            message = "无法连接本机 Linux 守护进程 (port $PORT)",
+        )
     }
 }
