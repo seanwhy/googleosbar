@@ -1,5 +1,6 @@
 <?xml version="1.0" encoding="utf-8"?>
-<resources>
+<!-- Tailscale and the local NetTransfer daemon. Every name here starts with tailnet_, item_tailnet_ or trigger_tailnet. -->
+<resources xmlns:tools="http://schemas.android.com/tools" tools:locale="en">
     <string name="item_tailnet_title">Tailscale &amp; NetTransfer</string>
     <string name="item_tailnet_desc">Tailscale mesh status, nodes, and local NetTransfer daemon control</string>
     <string name="trigger_tailnet">Show when nodes have alerts or the local NetTransfer agent stops</string>
