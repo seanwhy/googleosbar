@@ -37,8 +37,25 @@ jobs:
 
       # The heap comes from gradle.properties. There is no keystore on this runner, so assembleRelease builds unsigned
       # (app/build.gradle.kts signs only when ~/.config/bentobar holds a key); a real release is signed by release.yml.
+      # Maven Central and the plugin portal sometimes answer 429, or a lookup comes back as not found, and the same
+      # command succeeds a moment later. Retry only that. A failing test is not tried again.
       - name: Tests, lint and release build
-        run: ./gradlew :app:testDebugUnitTest :app:testComposeTestUnitTest :app:lintDebug :app:assembleRelease --no-daemon --console=plain
+        run: |
+          set +e
+          log=$(mktemp)
+          for attempt in 1 2 3; do
+            ./gradlew :app:testDebugUnitTest :app:testComposeTestUnitTest :app:lintDebug :app:assembleRelease --no-daemon --console=plain 2>&1 | tee "$log"
+            code=${PIPESTATUS[0]}
+            if [ "$code" -eq 0 ]; then
+              exit 0
+            fi
+            if [ "$attempt" -lt 3 ] && ! grep -q 'There were failing tests' "$log" && grep -qE '429|was not found|Could not GET|Could not resolve|Read timed out|Connection reset' "$log"; then
+              echo "Dependency lookup failed (attempt $attempt), retrying in 30s"
+              sleep 30
+              continue
+            fi
+            exit "$code"
+          done
 
       - name: Reports
         if: failure()
