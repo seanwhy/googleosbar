@@ -83,23 +83,30 @@ object RemoteKeyboardItem : ItemType(
     override val discreet = true
     override val trigger = Trigger(R.string.trigger_remote_keyboard, R.string.trigger_remote_keyboard_short)
 
-    enum class ChannelKind { PROBING, DIRECT, RELAY }
+    enum class ChannelKind { PROBING, TAILSCALE, DIRECT, RELAY }
 
     data class ActiveSession(
         val target: RemoteDeviceSummary,
-        val transportMode: String, // "auto" | "relay" | "direct"
+        val transportMode: String, // "auto" | "tailscale" | "direct" | "relay"
         val customDirectAddress: String = "",
         val startedAtMs: Long = System.currentTimeMillis(),
         val activeChannelLabel: String = "连接中…",
         val channelKind: ChannelKind = ChannelKind.PROBING,
+        val verifiedTailscaleBridge: VerifiedTailscaleBridge? = null,
+        val consecutiveTailscaleFailures: Int = 0,
+        val lastTailscaleProbeMs: Long = 0L,
         val verifiedDirectEndpoint: DirectTargetEndpoint? = null,
         val consecutiveDirectFailures: Int = 0,
         val lastDirectProbeMs: Long = 0L,
+        val lastRttMs: Int = 0,
         val sentKeyCount: Long = 0L,
         val ackedKeyCount: Long = 0L,
         val lastKeyLabel: String = "",
         val targetReceiverReady: Boolean = true,
     )
+
+    internal const val REPROBE_INTERVAL_MS = 6_000L
+    internal const val MAX_DIRECT_CANDIDATES = 8
 
     private val deviceExecutor = Executors.newSingleThreadExecutor()
     private val sendExecutor = Executors.newSingleThreadExecutor()
@@ -108,6 +115,7 @@ object RemoteKeyboardItem : ItemType(
     private val mainHandler by lazy { Handler(Looper.getMainLooper()) }
 
     internal val identityState = MutableStateFlow(NetTransferIdentity())
+    internal val bridgeIdentityState = MutableStateFlow<VmKeyboardBridgeHealthResponse?>(null)
     internal val devicesState = MutableStateFlow<List<RemoteDeviceSummary>>(emptyList())
     internal val activeSessionState = MutableStateFlow<ActiveSession?>(null)
     internal val loadingDevicesState = MutableStateFlow(false)
@@ -139,10 +147,7 @@ object RemoteKeyboardItem : ItemType(
     override fun onLive() {
         ensureInitialized()
         refreshIdentityFromStore()
-        val id = identityState.value
-        if (id.isRegistered || id.sessionCookie.isNotBlank()) {
-            refreshDevices(quiet = true)
-        }
+        refreshDevices(quiet = true)
     }
 
     override fun onIdle() {
@@ -154,9 +159,8 @@ object RemoteKeyboardItem : ItemType(
     override fun sample(now: Long) {
         ensureInitialized()
         refreshIdentityFromStore()
-        val id = identityState.value
         val interval = if (activeSessionState.value != null) 15_000L else 45_000L
-        if ((id.isRegistered || id.sessionCookie.isNotBlank()) && now - lastDeviceSyncMs >= interval) {
+        if (now - lastDeviceSyncMs >= interval) {
             lastDeviceSyncMs = now
             refreshDevices(quiet = true)
         }
@@ -195,7 +199,10 @@ object RemoteKeyboardItem : ItemType(
     internal fun transportModeOf(item: ItemConfig?): String {
         val raw = item?.opt("transportMode", RemoteKeyboardProtocol.MODE_AUTO)?.lowercase() ?: RemoteKeyboardProtocol.MODE_AUTO
         return when (raw) {
-            RemoteKeyboardProtocol.MODE_RELAY, RemoteKeyboardProtocol.MODE_DIRECT -> raw
+            RemoteKeyboardProtocol.MODE_TAILSCALE,
+            RemoteKeyboardProtocol.MODE_RELAY,
+            RemoteKeyboardProtocol.MODE_DIRECT,
+            -> raw
             else -> RemoteKeyboardProtocol.MODE_AUTO
         }
     }
@@ -206,14 +213,25 @@ object RemoteKeyboardItem : ItemType(
     internal fun selectedTargetIdOf(item: ItemConfig?): String =
         item?.opt("targetDeviceId", "")?.trim().orEmpty()
 
+    internal fun menuTargetsFor(
+        devices: List<RemoteDeviceSummary>,
+        activeTargetId: String? = null,
+    ): List<RemoteDeviceSummary> =
+        devices.filter { it.isKeyboardMenuVisible || (activeTargetId != null && it.id == activeTargetId) }
+
+    internal fun shortcutEligibleTargetsFor(
+        item: ItemConfig?,
+        devices: List<RemoteDeviceSummary>,
+    ): List<RemoteDeviceSummary> =
+        devices.filter { it.isKeyboardCapable || deviceShortcutOf(item, it.id) != null }
+
     internal fun selectedTargetFor(item: ItemConfig?, devices: List<RemoteDeviceSummary>): RemoteDeviceSummary? {
+        val eligible = menuTargetsFor(devices)
         val wantedId = selectedTargetIdOf(item)
         if (wantedId.isNotEmpty()) {
-            devices.firstOrNull { it.id == wantedId }?.let { return it }
+            eligible.firstOrNull { it.id == wantedId }?.let { return it }
         }
-        return devices.firstOrNull { it.isDesktopTarget && it.online }
-            ?: devices.firstOrNull { it.isDesktopTarget }
-            ?: devices.firstOrNull()
+        return eligible.firstOrNull { it.keyboardActive } ?: eligible.firstOrNull()
     }
 
     val isMappingActive: Boolean
@@ -260,9 +278,13 @@ object RemoteKeyboardItem : ItemType(
                 val cfg = activeConfig()
                 val devices = devicesState.value
                 for (dev in devices) {
-                    if (!dev.isDesktopTarget) continue
+                    if (!dev.isKeyboardCapable) continue
                     val sc = deviceShortcutOf(cfg, dev.id) ?: continue
                     if (sc.matches(event)) {
+                        if (!dev.online) {
+                            toastOnMain("${dev.displayTitle} 当前离线，无法开启键盘映射")
+                            return true
+                        }
                         startMapping(dev, cfg?.with("targetDeviceId", dev.id))
                         return true
                     }
@@ -352,8 +374,14 @@ object RemoteKeyboardItem : ItemType(
         val mode = transportModeOf(item)
         val customAddr = customDirectAddressOf(item)
         RemoteKeyboardProtocol.invalidateLocalSubnetCache()
-        if (mode != RemoteKeyboardProtocol.MODE_DIRECT && !id.isRegistered && id.sessionCookie.isBlank()) {
-            errorMessageState.value = "请先在设置或云剪切板中完成 VPS 设备注册。"
+        val bridgeReady = bridgeIdentityState.value?.identityReady == true || devicesState.value.isNotEmpty()
+        if (mode != RemoteKeyboardProtocol.MODE_DIRECT &&
+            mode != RemoteKeyboardProtocol.MODE_TAILSCALE &&
+            !id.isRegistered &&
+            id.sessionCookie.isBlank() &&
+            !bridgeReady
+        ) {
+            errorMessageState.value = "请先在设置或云剪切板中完成 VPS 设备注册，或确认 Debian VM 桥接在线。"
             toastOnMain("请先注册 VPS 设备凭证")
             return
         }
@@ -368,9 +396,10 @@ object RemoteKeyboardItem : ItemType(
         consecutiveEscCount = 0
 
         val (initialKind, initialChannel) = when (mode) {
-            RemoteKeyboardProtocol.MODE_DIRECT -> ChannelKind.PROBING to "局域网直连探测中…"
+            RemoteKeyboardProtocol.MODE_TAILSCALE -> ChannelKind.PROBING to "Tailscale 探测中…"
+            RemoteKeyboardProtocol.MODE_DIRECT -> ChannelKind.PROBING to "LAN 直连探测中…"
             RemoteKeyboardProtocol.MODE_RELAY -> ChannelKind.RELAY to "VPS 中转"
-            else -> ChannelKind.PROBING to "直连探测 / VPS 中转"
+            else -> ChannelKind.PROBING to "TS 优先探测中…"
         }
 
         val nowMs = System.currentTimeMillis()
@@ -381,6 +410,7 @@ object RemoteKeyboardItem : ItemType(
             startedAtMs = nowMs,
             activeChannelLabel = initialChannel,
             channelKind = initialKind,
+            lastTailscaleProbeMs = nowMs,
             lastDirectProbeMs = nowMs,
             targetReceiverReady = target.keyboardActive,
         )
@@ -390,8 +420,8 @@ object RemoteKeyboardItem : ItemType(
         statusMessageState.value = "正在控制 ${target.displayTitle} · 按 $exitHint 退出"
         Ticker.refresh(type)
 
-        // Probe direct LAN / P2P endpoints in background if mode is AUTO or DIRECT
-        if (mode == RemoteKeyboardProtocol.MODE_AUTO || mode == RemoteKeyboardProtocol.MODE_DIRECT) {
+        // Probe Tailscale VM bridge & direct LAN endpoints in background unless forced RELAY
+        if (mode != RemoteKeyboardProtocol.MODE_RELAY) {
             probeDirectEndpointsAsync(session)
         }
 
@@ -420,6 +450,7 @@ object RemoteKeyboardItem : ItemType(
                 dispatchBatch(prev, listOf(releaseEvent))
             }
             RemoteKeyboardClient.closeConnections()
+            VmKeyboardBridgeClient.closeConnections()
         }
     }
 
@@ -448,11 +479,170 @@ object RemoteKeyboardItem : ItemType(
         return out
     }
 
+    internal fun tailscaleCandidatesFor(session: ActiveSession): List<DirectTargetEndpoint> {
+        val out = ArrayList<DirectTargetEndpoint>()
+        val seen = HashSet<String>()
+        val defaultPort = session.target.directPort.takeIf { it in 1..65535 }
+            ?: RemoteKeyboardProtocol.DEFAULT_DIRECT_PORT
+        fun addIfTailscale(ep: DirectTargetEndpoint?) {
+            if (ep != null && RemoteKeyboardProtocol.isTailscaleIpv4(ep.host) && seen.add("${ep.host}:${ep.port}")) {
+                out.add(ep)
+            }
+        }
+        addIfTailscale(session.verifiedTailscaleBridge?.targetEndpoint)
+        addIfTailscale(RemoteKeyboardProtocol.parseDirectEndpoint(session.customDirectAddress, defaultPort))
+        for (ep in session.target.candidateTailscaleEndpoints()) {
+            addIfTailscale(ep)
+        }
+        return out
+    }
+
+    internal fun formatTailscaleChannelLabel(bridge: VerifiedTailscaleBridge): String {
+        val modeTag = when {
+            bridge.direct -> "TS 直连"
+            bridge.relay.isNotBlank() -> "TS DERP(${bridge.relay})"
+            else -> "TS 通道"
+        }
+        val rttSuffix = if (bridge.rttMs > 0) " · ${bridge.rttMs}ms" else ""
+        return "$modeTag (${bridge.targetEndpoint.host}:${bridge.targetEndpoint.port}$rttSuffix)"
+    }
+
+    internal fun formatDirectChannelLabel(ep: DirectTargetEndpoint, rttMs: Int): String {
+        val kind = if (RemoteKeyboardProtocol.isTailscaleIpv4(ep.host)) "TS 直连" else "LAN 直连"
+        val rttSuffix = if (rttMs > 0) " · ${rttMs}ms" else ""
+        return "$kind (${ep.host}:${ep.port}$rttSuffix)"
+    }
+
+    internal fun shortChannelBadge(session: ActiveSession): String {
+        val rttPart = if (session.lastRttMs > 0) " · ${session.lastRttMs}ms" else ""
+        return when (session.channelKind) {
+            ChannelKind.TAILSCALE -> {
+                val bridge = session.verifiedTailscaleBridge
+                val prefix = if (bridge != null && !bridge.direct && bridge.relay.isNotBlank()) {
+                    "TS DERP"
+                } else {
+                    "TS 直连"
+                }
+                "$prefix$rttPart"
+            }
+            ChannelKind.DIRECT -> "LAN 直连$rttPart"
+            ChannelKind.RELAY -> "VPS 中转$rttPart"
+            ChannelKind.PROBING -> "探测中…"
+        }
+    }
+
     private fun probeDirectEndpointsAsync(session: ActiveSession) {
         val sessionId = session.startedAtMs
         probeExecutor.execute {
-            val candidates = directCandidatesFor(session).take(4)
             if (activeSessionState.value?.startedAtMs != sessionId) return@execute
+
+            val mode = session.transportMode
+            val tsCandidates = tailscaleCandidatesFor(session)
+
+            // 1. Tailscale VM bridge first in MODE_TAILSCALE and MODE_AUTO
+            if (mode == RemoteKeyboardProtocol.MODE_TAILSCALE || mode == RemoteKeyboardProtocol.MODE_AUTO) {
+                if (tsCandidates.isEmpty()) {
+                    if (mode == RemoteKeyboardProtocol.MODE_TAILSCALE) {
+                        updateActiveSession(sessionId) { cur ->
+                            cur.copy(
+                                verifiedTailscaleBridge = null,
+                                verifiedDirectEndpoint = null,
+                                channelKind = ChannelKind.PROBING,
+                                activeChannelLabel = "未发现 Tailscale IP",
+                            )
+                        }
+                        errorMessageState.value = "未发现 ${session.target.displayTitle} 的 Tailscale IP (100.64.0.0/10)，请确认对端在线或在下方填写 100.x 地址"
+                        Ticker.refresh(type)
+                        return@execute
+                    }
+                } else {
+                    val outcome = VmKeyboardBridgeClient.probeTailscaleCandidates(
+                        candidates = tsCandidates,
+                        executor = probeWorkers,
+                        expectedDeviceId = session.target.id,
+                    )
+                    if (activeSessionState.value?.startedAtMs != sessionId) return@execute
+                    when (outcome) {
+                        is TailscaleBridgeProbeOutcome.Connected -> {
+                            val bridge = outcome.bridge
+                            updateActiveSession(sessionId) { cur ->
+                                cur.copy(
+                                    verifiedTailscaleBridge = bridge,
+                                    channelKind = ChannelKind.TAILSCALE,
+                                    activeChannelLabel = formatTailscaleChannelLabel(bridge),
+                                    consecutiveTailscaleFailures = 0,
+                                    lastRttMs = bridge.rttMs,
+                                    targetReceiverReady = true,
+                                )
+                            }
+                            errorMessageState.value = null
+                            Ticker.refresh(type)
+                            return@execute
+                        }
+                        is TailscaleBridgeProbeOutcome.BridgeUnreachable -> {
+                            // If Android itself runs Tailscale VPN (no VM bridge), still allow direct 100.x:19878
+                            if (mode == RemoteKeyboardProtocol.MODE_TAILSCALE) {
+                                val t0 = System.nanoTime()
+                                val matchedTs = RemoteKeyboardClient.probeBestDirectEndpoint(
+                                    candidates = tsCandidates,
+                                    executor = probeWorkers,
+                                    expectedDeviceId = session.target.id,
+                                )
+                                if (activeSessionState.value?.startedAtMs != sessionId) return@execute
+                                if (matchedTs != null) {
+                                    val rtt = ((System.nanoTime() - t0) / 1_000_000L).toInt().coerceAtLeast(1)
+                                    updateActiveSession(sessionId) { cur ->
+                                        cur.copy(
+                                            verifiedTailscaleBridge = null,
+                                            verifiedDirectEndpoint = matchedTs,
+                                            channelKind = ChannelKind.TAILSCALE,
+                                            activeChannelLabel = formatDirectChannelLabel(matchedTs, rtt),
+                                            lastRttMs = rtt,
+                                            consecutiveDirectFailures = 0,
+                                            targetReceiverReady = true,
+                                        )
+                                    }
+                                    errorMessageState.value = null
+                                    Ticker.refresh(type)
+                                    return@execute
+                                }
+                                val primary = tsCandidates.first()
+                                updateActiveSession(sessionId) { cur ->
+                                    cur.copy(
+                                        verifiedTailscaleBridge = null,
+                                        verifiedDirectEndpoint = null,
+                                        channelKind = ChannelKind.PROBING,
+                                        activeChannelLabel = "TS 桥接未启动 (${primary.host})",
+                                    )
+                                }
+                                errorMessageState.value = "Tailscale 桥接未连接 (VM :${VmKeyboardBridgeClient.BRIDGE_PORT} 未响应) 且本机直连 ${primary.host}:${primary.port} 不通"
+                                Ticker.refresh(type)
+                                return@execute
+                            }
+                        }
+                        is TailscaleBridgeProbeOutcome.TargetUnreachable -> {
+                            if (mode == RemoteKeyboardProtocol.MODE_TAILSCALE) {
+                                updateActiveSession(sessionId) { cur ->
+                                    cur.copy(
+                                        verifiedTailscaleBridge = null,
+                                        verifiedDirectEndpoint = null,
+                                        channelKind = ChannelKind.PROBING,
+                                        activeChannelLabel = "TS 目标未通 (${outcome.endpoint.host})",
+                                    )
+                                }
+                                errorMessageState.value = "强制 Tailscale 失败: ${outcome.endpoint.host}:${outcome.endpoint.port} (${outcome.detail})"
+                                Ticker.refresh(type)
+                                return@execute
+                            }
+                        }
+                    }
+                }
+            }
+
+            // 2. Direct LAN / P2P probing (raised candidate cap from 4 to 8)
+            val candidates = directCandidatesFor(session).take(MAX_DIRECT_CANDIDATES)
+            if (activeSessionState.value?.startedAtMs != sessionId) return@execute
+            val directT0 = System.nanoTime()
             val matched = RemoteKeyboardClient.probeBestDirectEndpoint(
                 candidates = candidates,
                 executor = probeWorkers,
@@ -460,11 +650,18 @@ object RemoteKeyboardItem : ItemType(
             )
             if (activeSessionState.value?.startedAtMs != sessionId) return@execute
             if (matched != null) {
+                val rtt = ((System.nanoTime() - directT0) / 1_000_000L).toInt().coerceAtLeast(1)
+                val kind = if (RemoteKeyboardProtocol.isTailscaleIpv4(matched.host)) {
+                    ChannelKind.TAILSCALE
+                } else {
+                    ChannelKind.DIRECT
+                }
                 updateActiveSession(sessionId) { cur ->
                     cur.copy(
                         verifiedDirectEndpoint = matched,
-                        channelKind = ChannelKind.DIRECT,
-                        activeChannelLabel = "直连 (${matched.host}:${matched.port})",
+                        channelKind = kind,
+                        activeChannelLabel = formatDirectChannelLabel(matched, rtt),
+                        lastRttMs = rtt,
                         consecutiveDirectFailures = 0,
                         targetReceiverReady = true,
                     )
@@ -474,8 +671,12 @@ object RemoteKeyboardItem : ItemType(
                 return@execute
             }
 
+            // 3. Fallback when neither Tailscale nor LAN Direct connected
             val current = activeSessionState.value ?: return@execute
-            if (current.startedAtMs == sessionId && current.verifiedDirectEndpoint == null) {
+            if (current.startedAtMs == sessionId &&
+                current.verifiedTailscaleBridge == null &&
+                current.verifiedDirectEndpoint == null
+            ) {
                 if (current.transportMode == RemoteKeyboardProtocol.MODE_DIRECT) {
                     val primaryHint = candidates.firstOrNull()?.let { "${it.host}:${it.port}" } ?: "19878"
                     updateActiveSession(sessionId) { cur ->
@@ -488,10 +689,10 @@ object RemoteKeyboardItem : ItemType(
                     errorMessageState.value = "直连探测未通 ($primaryHint)：请检查目标端口、防火墙或同一局域网连接"
                 } else {
                     updateActiveSession(sessionId) { cur ->
-                        if (cur.verifiedDirectEndpoint != null) cur
+                        if (cur.verifiedTailscaleBridge != null || cur.verifiedDirectEndpoint != null) cur
                         else cur.copy(
                             channelKind = ChannelKind.RELAY,
-                            activeChannelLabel = "VPS 极速中转",
+                            activeChannelLabel = "VPS 中转",
                         )
                     }
                 }
@@ -552,7 +753,11 @@ object RemoteKeyboardItem : ItemType(
                 break
             }
             try {
-                return RemoteKeyboardClient.sendRelay(identity, request)
+                return if (identity.isRegistered || identity.sessionCookie.isNotBlank()) {
+                    RemoteKeyboardClient.sendRelay(identity, request)
+                } else {
+                    VmKeyboardBridgeClient.sendRelayViaBridge(request, deviceExecutor)
+                }
             } catch (t: Throwable) {
                 lastErr = t
                 if (attempt < delays.size) {
@@ -574,13 +779,140 @@ object RemoteKeyboardItem : ItemType(
         val currentSession = activeSessionState.value?.takeIf { it.startedAtMs == sessionId } ?: session
         val isStoppingReleaseAll = batch.size == 1 && batch[0].action == "release_all" && activeSessionState.value == null
         val id = identityState.value
+        val bridgeInfo = bridgeIdentityState.value
+        val effectiveSourceId = id.deviceId.ifBlank { bridgeInfo?.selfDeviceId.orEmpty() }
+        val effectiveSourceName = id.displayName.ifBlank {
+            bridgeInfo?.selfDisplayName?.ifBlank { "googlebook" } ?: "googlebook"
+        }
         val req = RemoteKeyboardSendRequest(
             targetDeviceId = currentSession.target.id,
-            sourceDeviceId = id.deviceId,
-            sourceName = id.displayName.ifBlank { "Googlebook" },
+            sourceDeviceId = effectiveSourceId,
+            sourceName = effectiveSourceName,
             events = batch,
         )
-        val payloadBytes = CloudClipboardProtocol.json.encodeToString(req).toByteArray(StandardCharsets.UTF_8)
+        val payloadJson = CloudClipboardProtocol.json.encodeToString(req)
+        val payloadBytes = payloadJson.toByteArray(StandardCharsets.UTF_8)
+
+        // 0. Forced Tailscale path (never falls back silently to VPS relay)
+        if (currentSession.transportMode == RemoteKeyboardProtocol.MODE_TAILSCALE) {
+            val tsCandidates = tailscaleCandidatesFor(currentSession)
+            if (tsCandidates.isEmpty()) {
+                errorMessageState.value = "未发现目标设备的 Tailscale IP (100.64.0.0/10)，请确认对端运行 Tailscale 或切换为自动模式。"
+                Ticker.refresh(type)
+                return
+            }
+
+            var activeBridge = currentSession.verifiedTailscaleBridge
+            if (activeBridge != null) {
+                val fwd = VmKeyboardBridgeClient.sendForwardOverBridge(activeBridge, payloadJson)
+                if (fwd.ok) {
+                    val updatedBridge = activeBridge.copy(rttMs = fwd.rttMs)
+                    val acked = fwd.accepted.takeIf { it > 0 } ?: batch.size
+                    updateActiveSession(sessionId) { cur ->
+                        val switched = cur.channelKind != ChannelKind.TAILSCALE || cur.lastRttMs != fwd.rttMs
+                        cur.copy(
+                            verifiedTailscaleBridge = updatedBridge,
+                            ackedKeyCount = cur.ackedKeyCount + acked,
+                            lastRttMs = fwd.rttMs,
+                            channelKind = ChannelKind.TAILSCALE,
+                            activeChannelLabel = formatTailscaleChannelLabel(updatedBridge),
+                            consecutiveTailscaleFailures = 0,
+                        ).also { if (switched) Ticker.refresh(type) }
+                    }
+                    errorMessageState.value = null
+                    return
+                }
+                activeBridge = null
+                updateActiveSession(sessionId) { cur ->
+                    cur.copy(verifiedTailscaleBridge = null, consecutiveTailscaleFailures = 0)
+                }
+            }
+
+            // Re-establish via VM bridge (or direct Android Tailscale if bridge unavailable)
+            if (!isStoppingReleaseAll) {
+                when (val outcome = VmKeyboardBridgeClient.probeTailscaleCandidates(
+                    candidates = tsCandidates,
+                    executor = probeWorkers,
+                    expectedDeviceId = currentSession.target.id,
+                )) {
+                    is TailscaleBridgeProbeOutcome.Connected -> {
+                        val fwd = VmKeyboardBridgeClient.sendForwardOverBridge(outcome.bridge, payloadJson)
+                        if (fwd.ok) {
+                            val updatedBridge = outcome.bridge.copy(rttMs = fwd.rttMs)
+                            val acked = fwd.accepted.takeIf { it > 0 } ?: batch.size
+                            updateActiveSession(sessionId) { cur ->
+                                cur.copy(
+                                    verifiedTailscaleBridge = updatedBridge,
+                                    verifiedDirectEndpoint = null,
+                                    ackedKeyCount = cur.ackedKeyCount + acked,
+                                    lastRttMs = fwd.rttMs,
+                                    channelKind = ChannelKind.TAILSCALE,
+                                    activeChannelLabel = formatTailscaleChannelLabel(updatedBridge),
+                                    consecutiveTailscaleFailures = 0,
+                                )
+                            }
+                            errorMessageState.value = null
+                            Ticker.refresh(type)
+                            return
+                        }
+                        updateActiveSession(sessionId) { cur ->
+                            cur.copy(channelKind = ChannelKind.PROBING, activeChannelLabel = "TS 发送失败 (${fwd.detail})")
+                        }
+                        errorMessageState.value = "Tailscale 发送失败: ${outcome.bridge.targetEndpoint.host}:${outcome.bridge.targetEndpoint.port} (${fwd.detail})"
+                        Ticker.refresh(type)
+                        return
+                    }
+                    is TailscaleBridgeProbeOutcome.BridgeUnreachable -> {
+                        var directTsEp: DirectTargetEndpoint? = null
+                        var directRtt = 0
+                        for (ep in tsCandidates) {
+                            val t0 = System.nanoTime()
+                            val res = RemoteKeyboardClient.sendDirectTcpWithStatus(ep, payloadBytes)
+                            if (res.ok) {
+                                directTsEp = ep
+                                directRtt = ((System.nanoTime() - t0) / 1_000_000L).toInt().coerceAtLeast(1)
+                                break
+                            }
+                        }
+                        if (directTsEp != null) {
+                            updateActiveSession(sessionId) { cur ->
+                                cur.copy(
+                                    verifiedTailscaleBridge = null,
+                                    verifiedDirectEndpoint = directTsEp,
+                                    ackedKeyCount = cur.ackedKeyCount + batch.size,
+                                    lastRttMs = directRtt,
+                                    channelKind = ChannelKind.TAILSCALE,
+                                    activeChannelLabel = formatDirectChannelLabel(directTsEp, directRtt),
+                                    consecutiveDirectFailures = 0,
+                                )
+                            }
+                            errorMessageState.value = null
+                            Ticker.refresh(type)
+                            return
+                        }
+                        val firstEp = tsCandidates.first()
+                        updateActiveSession(sessionId) { cur ->
+                            cur.copy(channelKind = ChannelKind.PROBING, activeChannelLabel = "TS 桥接未连接")
+                        }
+                        errorMessageState.value = "Tailscale 桥接未连接 (VM :${VmKeyboardBridgeClient.BRIDGE_PORT} 未响应) 且直连 ${firstEp.host}:${firstEp.port} 失败"
+                        Ticker.refresh(type)
+                        return
+                    }
+                    is TailscaleBridgeProbeOutcome.TargetUnreachable -> {
+                        updateActiveSession(sessionId) { cur ->
+                            cur.copy(
+                                channelKind = ChannelKind.PROBING,
+                                activeChannelLabel = "TS 未通 (${outcome.detail})",
+                            )
+                        }
+                        errorMessageState.value = "强制 Tailscale 未通: ${outcome.endpoint.host}:${outcome.endpoint.port} (${outcome.detail})"
+                        Ticker.refresh(type)
+                        return
+                    }
+                }
+            }
+            return
+        }
 
         // 1. Direct P2P / LAN path (prefer reliable TCP keep-alive; require real ACK in direct mode)
         if (currentSession.transportMode == RemoteKeyboardProtocol.MODE_DIRECT) {
@@ -590,16 +922,19 @@ object RemoteKeyboardItem : ItemType(
                 return
             }
             val tcpTargets = if (currentSession.verifiedDirectEndpoint != null) {
-                candidates.take(2)
-            } else {
                 candidates.take(4)
+            } else {
+                candidates.take(MAX_DIRECT_CANDIDATES)
             }
             var deliveredEp: DirectTargetEndpoint? = null
+            var deliveredRttMs = 0
             val failures = ArrayList<Pair<DirectTargetEndpoint, String>>()
             for (ep in tcpTargets) {
+                val t0 = System.nanoTime()
                 val res = RemoteKeyboardClient.sendDirectTcpWithStatus(ep, payloadBytes)
                 if (res.ok) {
                     deliveredEp = ep
+                    deliveredRttMs = ((System.nanoTime() - t0) / 1_000_000L).toInt().coerceAtLeast(1)
                     break
                 }
                 val reason = res.detail.takeIf { it.isNotBlank() } ?: "目标未响应"
@@ -607,18 +942,26 @@ object RemoteKeyboardItem : ItemType(
             }
             if (deliveredEp == null && !isStoppingReleaseAll) {
                 val udpEp = candidates.first()
+                val t0 = System.nanoTime()
                 if (RemoteKeyboardClient.sendDirectUdpWithAck(udpEp, payloadBytes)) {
                     deliveredEp = udpEp
+                    deliveredRttMs = ((System.nanoTime() - t0) / 1_000_000L).toInt().coerceAtLeast(1)
                 }
             }
             if (deliveredEp != null) {
                 updateActiveSession(sessionId) { cur ->
-                    val switched = cur.channelKind != ChannelKind.DIRECT || cur.verifiedDirectEndpoint != deliveredEp
+                    val kind = if (RemoteKeyboardProtocol.isTailscaleIpv4(deliveredEp.host)) {
+                        ChannelKind.TAILSCALE
+                    } else {
+                        ChannelKind.DIRECT
+                    }
+                    val switched = cur.channelKind != kind || cur.verifiedDirectEndpoint != deliveredEp
                     cur.copy(
                         verifiedDirectEndpoint = deliveredEp,
                         ackedKeyCount = cur.ackedKeyCount + batch.size,
-                        channelKind = ChannelKind.DIRECT,
-                        activeChannelLabel = "直连 (${deliveredEp.host}:${deliveredEp.port})",
+                        lastRttMs = deliveredRttMs,
+                        channelKind = kind,
+                        activeChannelLabel = formatDirectChannelLabel(deliveredEp, deliveredRttMs),
                         consecutiveDirectFailures = 0,
                     ).also { if (switched) Ticker.refresh(type) }
                 }
@@ -645,16 +988,62 @@ object RemoteKeyboardItem : ItemType(
             return
         }
 
-        // In AUTO mode, use persistent direct TCP when verified (no duplicate UDP/Relay race).
+        // In AUTO mode, route Tailscale bridge first, then LAN direct TCP (zero duplicate VPS relay race).
         if (currentSession.transportMode == RemoteKeyboardProtocol.MODE_AUTO) {
+            val verifiedTs = currentSession.verifiedTailscaleBridge
+            if (verifiedTs != null) {
+                val fwd = VmKeyboardBridgeClient.sendForwardOverBridge(verifiedTs, payloadJson)
+                if (fwd.ok) {
+                    val updatedBridge = verifiedTs.copy(rttMs = fwd.rttMs)
+                    val acked = fwd.accepted.takeIf { it > 0 } ?: batch.size
+                    updateActiveSession(sessionId) { cur ->
+                        val switched = cur.channelKind != ChannelKind.TAILSCALE
+                        cur.copy(
+                            verifiedTailscaleBridge = updatedBridge,
+                            ackedKeyCount = cur.ackedKeyCount + acked,
+                            lastRttMs = fwd.rttMs,
+                            channelKind = ChannelKind.TAILSCALE,
+                            activeChannelLabel = formatTailscaleChannelLabel(updatedBridge),
+                            consecutiveTailscaleFailures = 0,
+                        ).also { if (switched) Ticker.refresh(type) }
+                    }
+                    errorMessageState.value = null
+                    return
+                }
+                val newTsFailures = currentSession.consecutiveTailscaleFailures + 1
+                if (newTsFailures >= 2) {
+                    updateActiveSession(sessionId) { cur ->
+                        cur.copy(
+                            verifiedTailscaleBridge = null,
+                            consecutiveTailscaleFailures = 0,
+                        )
+                    }
+                    Ticker.refresh(type)
+                } else {
+                    updateActiveSession(sessionId) { cur ->
+                        cur.copy(consecutiveTailscaleFailures = newTsFailures)
+                    }
+                }
+            }
+
             val verified = currentSession.verifiedDirectEndpoint
             if (verified != null) {
-                if (RemoteKeyboardClient.sendDirectTcp(verified, payloadBytes)) {
+                val t0 = System.nanoTime()
+                val res = RemoteKeyboardClient.sendDirectTcpWithStatus(verified, payloadBytes)
+                if (res.ok) {
+                    val rtt = ((System.nanoTime() - t0) / 1_000_000L).toInt().coerceAtLeast(1)
+                    val kind = if (RemoteKeyboardProtocol.isTailscaleIpv4(verified.host)) {
+                        ChannelKind.TAILSCALE
+                    } else {
+                        ChannelKind.DIRECT
+                    }
                     updateActiveSession(sessionId) { cur ->
-                        val switched = cur.channelKind != ChannelKind.DIRECT
+                        val switched = cur.channelKind != kind
                         cur.copy(
                             ackedKeyCount = cur.ackedKeyCount + batch.size,
-                            channelKind = ChannelKind.DIRECT,
+                            lastRttMs = rtt,
+                            channelKind = kind,
+                            activeChannelLabel = formatDirectChannelLabel(verified, rtt),
                             consecutiveDirectFailures = 0,
                         ).also { if (switched) Ticker.refresh(type) }
                     }
@@ -667,7 +1056,7 @@ object RemoteKeyboardItem : ItemType(
                         cur.copy(
                             verifiedDirectEndpoint = null,
                             channelKind = ChannelKind.RELAY,
-                            activeChannelLabel = "VPS 极速中转",
+                            activeChannelLabel = "VPS 中转",
                             consecutiveDirectFailures = 0,
                         )
                     }
@@ -677,31 +1066,44 @@ object RemoteKeyboardItem : ItemType(
                         cur.copy(consecutiveDirectFailures = newFailures)
                     }
                 }
-            } else {
+            }
+
+            if (currentSession.verifiedTailscaleBridge == null && currentSession.verifiedDirectEndpoint == null) {
                 val nowMs = System.currentTimeMillis()
-                if (!isStoppingReleaseAll && nowMs - currentSession.lastDirectProbeMs >= 15_000L) {
-                    updateActiveSession(sessionId) { cur -> cur.copy(lastDirectProbeMs = nowMs) }
+                val lastProbe = maxOf(currentSession.lastTailscaleProbeMs, currentSession.lastDirectProbeMs)
+                if (!isStoppingReleaseAll && nowMs - lastProbe >= REPROBE_INTERVAL_MS) {
+                    updateActiveSession(sessionId) { cur ->
+                        cur.copy(lastTailscaleProbeMs = nowMs, lastDirectProbeMs = nowMs)
+                    }
                     probeDirectEndpointsAsync(currentSession)
                 }
             }
         }
 
         // 2. VPS Relay path (works across any NAT / network; reuses TLS Keep-Alive + retries on hiccups)
+        val relayT0 = System.nanoTime()
         runCatching {
             val reply = sendRelayWithRetry(id, req, sessionId, allowAbortCheck = !isStoppingReleaseAll)
+            val relayRtt = ((System.nanoTime() - relayT0) / 1_000_000L).toInt().coerceAtLeast(1)
             updateActiveSession(sessionId) { cur ->
-                val targetKind = if (cur.verifiedDirectEndpoint != null) cur.channelKind else ChannelKind.RELAY
+                val targetKind = when {
+                    cur.verifiedTailscaleBridge != null -> ChannelKind.TAILSCALE
+                    cur.verifiedDirectEndpoint != null -> cur.channelKind
+                    else -> ChannelKind.RELAY
+                }
                 val switched = cur.channelKind != targetKind
-                val label = if (cur.verifiedDirectEndpoint != null) {
+                val hasDirect = cur.verifiedTailscaleBridge != null || cur.verifiedDirectEndpoint != null
+                val label = if (hasDirect) {
                     cur.activeChannelLabel
                 } else if (reply.targetReceiverReady) {
-                    "VPS 极速中转 (对端已连接)"
+                    "VPS 中转 (对端已连接 · ${relayRtt}ms)"
                 } else {
-                    "VPS 中转 (等待对端轮询)"
+                    "VPS 中转 (等待对端 · ${relayRtt}ms)"
                 }
                 cur.copy(
                     channelKind = targetKind,
                     activeChannelLabel = label,
+                    lastRttMs = if (hasDirect) cur.lastRttMs else relayRtt,
                     ackedKeyCount = cur.ackedKeyCount + (reply.accepted.takeIf { it > 0 } ?: batch.size),
                     targetReceiverReady = reply.targetReceiverReady,
                 ).also { if (switched) Ticker.refresh(type) }
@@ -732,18 +1134,29 @@ object RemoteKeyboardItem : ItemType(
         ensureInitialized()
         refreshIdentityFromStore()
         val id = identityState.value
-        if (!id.isRegistered && id.sessionCookie.isBlank()) {
-            if (!quiet) {
-                errorMessageState.value = "请先在设置中完成 VPS 设备注册。"
-            }
-            return
-        }
         loadingDevicesState.value = true
         if (!quiet) errorMessageState.value = null
         deviceExecutor.execute {
-            val res = runCatching { RemoteKeyboardClient.fetchDevices(id) }
+            val useDirectVps = id.isRegistered || id.sessionCookie.isNotBlank()
+            val listRes: Result<List<RemoteDeviceSummary>> = if (useDirectVps) {
+                runCatching { RemoteKeyboardClient.fetchDevices(id) }
+            } else {
+                runCatching {
+                    val bridgeRes = VmKeyboardBridgeClient.fetchDevicesViaBridge(executor = deviceExecutor)
+                    bridgeIdentityState.value = VmKeyboardBridgeHealthResponse(
+                        ok = true,
+                        port = VmKeyboardBridgeClient.BRIDGE_PORT,
+                        identityReady = true,
+                        selfDeviceId = bridgeRes.selfDeviceId,
+                        selfDisplayName = bridgeRes.selfDisplayName,
+                    )
+                    bridgeRes.devices
+                }.onFailure {
+                    bridgeIdentityState.value = null
+                }
+            }
             loadingDevicesState.value = false
-            res.onSuccess { list ->
+            listRes.onSuccess { list ->
                 devicesState.value = list
                 // Update active session's target summary if active
                 activeSessionState.value?.let { cur ->
@@ -756,7 +1169,8 @@ object RemoteKeyboardItem : ItemType(
                     }
                 }
                 if (!quiet) {
-                    statusMessageState.value = "已同步 ${list.size} 台设备"
+                    val viaHint = if (useDirectVps) "" else "（经由 VM 网桥）"
+                    statusMessageState.value = "已同步 ${list.size} 台设备$viaHint"
                 }
                 errorMessageState.value = null
             }.onFailure { e ->
@@ -784,7 +1198,7 @@ object RemoteKeyboardItem : ItemType(
     }
 
     internal fun iconNameForSession(session: ActiveSession?): String = when (session?.channelKind) {
-        ChannelKind.DIRECT -> "brand:remote_keyboard_direct"
+        ChannelKind.TAILSCALE, ChannelKind.DIRECT -> "brand:remote_keyboard_direct"
         ChannelKind.RELAY -> "brand:remote_keyboard_relay"
         else -> "brand:remote_keyboard"
     }
@@ -799,19 +1213,43 @@ object RemoteKeyboardItem : ItemType(
         val iconName = iconNameForSession(session)
 
         val barText = if (session != null && showTextInBar) {
-            session.target.displayTitle.take(10)
+            val badge = shortChannelBadge(session)
+            "${session.target.displayTitle.take(7)} · $badge"
         } else {
             null
         }
 
+        val channelIp = session?.verifiedTailscaleBridge?.targetEndpoint?.host
+            ?: session?.verifiedDirectEndpoint?.host
+            ?: ""
+
         val statusSummary = when {
-            session != null -> "正在控制 ${session.target.displayTitle} (${session.activeChannelLabel}) · 按 ${exitShortcut.format()} 或点击图标退出"
-            error != null -> error
-            devices.isNotEmpty() -> {
-                val onlineCount = devices.count { it.isDesktopTarget && it.online }
-                "就绪 · $onlineCount/${devices.count { it.isDesktopTarget }} 台电脑在线"
+            session != null -> buildString {
+                append(session.target.displayTitle)
+                append(" [")
+                append(shortChannelBadge(session))
+                append("]")
+                if (channelIp.isNotEmpty()) {
+                    append(" ")
+                    append(channelIp)
+                }
+                append(" · 已发 ")
+                append(session.sentKeyCount)
+                append("/")
+                append(session.ackedKeyCount)
+                append(" 键 · 按 ")
+                append(exitShortcut.format())
+                append("退出")
             }
+            error != null -> error
+            devices.any { it.isKeyboardMenuVisible } -> {
+                val onlineCount = devices.count { it.isKeyboardMenuVisible }
+                "就绪 · $onlineCount 台可映射电脑在线"
+            }
+            devices.isNotEmpty() -> "暂无在线的可映射电脑"
             identityState.value.isRegistered -> "就绪 · 点击选择目标电脑开启映射"
+            bridgeIdentityState.value?.identityReady == true ->
+                "已通过 VM 网桥接入 (${bridgeIdentityState.value?.selfDisplayName?.ifBlank { "googlebook" }})"
             else -> "未注册 VPS 设备"
         }
 
@@ -828,7 +1266,7 @@ object RemoteKeyboardItem : ItemType(
             },
             desc = "远程键盘映射: $statusSummary",
             tooltip = "远程键盘映射 · $statusSummary",
-            textLimit = 12,
+            textLimit = 22,
             widthKey = if (session != null) "rk_active" else null,
         )
     }
@@ -840,6 +1278,7 @@ object RemoteKeyboardItem : ItemType(
         rememberTick()
         ensureInitialized()
         val id by identityState.collectAsState()
+        val bridgeInfo by bridgeIdentityState.collectAsState()
         val devices by devicesState.collectAsState()
         val session by activeSessionState.collectAsState()
         val loading by loadingDevicesState.collectAsState()
@@ -853,15 +1292,15 @@ object RemoteKeyboardItem : ItemType(
 
         LaunchedEffect(Unit) {
             refreshIdentityFromStore()
-            if (id.isRegistered || id.sessionCookie.isNotBlank()) {
-                refreshDevices(quiet = true)
-            }
+            refreshDevices(quiet = true)
         }
 
+        val bridgeReady = bridgeInfo?.identityReady == true
         val subtitle = when {
             session != null -> "映射中 → ${session!!.target.displayTitle} · ${session!!.activeChannelLabel}"
-            loading -> "正在从 vps.why.band 同步设备列表…"
+            loading -> "正在同步设备列表…"
             id.isRegistered -> "已连接 (${id.displayName.ifBlank { "本机" }}) · 退出键 ${exitShortcut.format()}"
+            bridgeReady -> "已通过 VM 网桥接入 (${bridgeInfo?.selfDisplayName?.ifBlank { "googlebook" }}) · 退出键 ${exitShortcut.format()}"
             else -> "未注册设备 · 请先在设置或云剪切板中绑定 VPS"
         }
 
@@ -910,6 +1349,8 @@ object RemoteKeyboardItem : ItemType(
                             )
                             Text(
                                 text = buildString {
+                                    append(shortChannelBadge(active))
+                                    append(" · ")
                                     append(active.activeChannelLabel)
                                     append(" · 已发 ")
                                     append(active.sentKeyCount)
@@ -1012,8 +1453,13 @@ object RemoteKeyboardItem : ItemType(
 
             // 2. Transport mode selector
             SectionLabel("传输通道模式")
-            val modeLabels = listOf("自动 (优先直连/打洞，回退 VPS)", "仅 VPS 中转", "仅局域网直连")
-            val modeValues = listOf(RemoteKeyboardProtocol.MODE_AUTO, RemoteKeyboardProtocol.MODE_RELAY, RemoteKeyboardProtocol.MODE_DIRECT)
+            val modeLabels = listOf("自动 (TS 优先)", "强制 Tailscale", "局域网直连", "VPS 中转")
+            val modeValues = listOf(
+                RemoteKeyboardProtocol.MODE_AUTO,
+                RemoteKeyboardProtocol.MODE_TAILSCALE,
+                RemoteKeyboardProtocol.MODE_DIRECT,
+                RemoteKeyboardProtocol.MODE_RELAY,
+            )
             val currentModeIdx = modeValues.indexOf(transportMode).coerceAtLeast(0)
             ChipRow(
                 labels = modeLabels,
@@ -1033,7 +1479,7 @@ object RemoteKeyboardItem : ItemType(
 
             // 3. Target device list from vps.why.band
             MenuDivider()
-            val desktopDevices = devices.filter { it.isDesktopTarget }
+            val desktopDevices = menuTargetsFor(devices, session?.target?.id)
             SectionLabel("目标电脑列表 (${desktopDevices.size})")
 
             if (desktopDevices.isNotEmpty()) {
@@ -1041,7 +1487,8 @@ object RemoteKeyboardItem : ItemType(
                     val assignedShortcut = deviceShortcutOf(item, dev.id)
                     val isSelected = selectedTarget?.id == dev.id
                     val isCurrentlyMapped = session?.target?.id == dev.id
-                    val lanIp = dev.lanIpv4Addresses.firstOrNull()
+                    val tsIp = dev.tailscaleIpCandidates().firstOrNull()
+                    val lanIp = dev.lanIpv4Addresses.firstOrNull { !RemoteKeyboardProtocol.isTailscaleIpv4(it) }
                     val statusTag = buildString {
                         append(dev.platformLabel)
                         if (assignedShortcut != null) {
@@ -1049,8 +1496,9 @@ object RemoteKeyboardItem : ItemType(
                         }
                         append(if (dev.online) " · 在线" else " · 离线")
                         if (dev.keyboardActive) append(" · 接收就绪")
+                        if (!tsIp.isNullOrBlank()) append(" · TS $tsIp")
                         if (!lanIp.isNullOrBlank()) append(" · LAN $lanIp")
-                        else if (dev.sourceIp.isNotBlank()) append(" · ${dev.sourceIp}")
+                        else if (dev.sourceIp.isNotBlank() && tsIp.isNullOrBlank()) append(" · ${dev.sourceIp}")
                     }
                     MenuEntry(
                         icon = if (isCurrentlyMapped) Sym.BOLT else if (isSelected) Sym.CHECK else Sym.DESKTOP_WINDOWS,
@@ -1069,10 +1517,10 @@ object RemoteKeyboardItem : ItemType(
                 }
             } else {
                 MenuNote(
-                    if (id.isRegistered) {
-                        "暂未发现其他桌面设备。请点击右上角刷新，或确认对端电脑已在 vps.why.band 注册。"
+                    if (id.isRegistered || bridgeReady) {
+                        "当前没有在线且支持键盘映射的桌面设备（仅显示在线的 Windows / macOS 设备）。"
                     } else {
-                        "尚未连接云服务器。请打开下方设置填写面板地址与注册码（与云剪切板共用同一设备凭证）。"
+                        "尚未连接云服务器。请打开下方设置填写面板地址与注册码（与云剪切板共用同一设备凭证），或确认 Debian VM 守护服务已运行。"
                     }
                 )
             }
@@ -1115,6 +1563,7 @@ object RemoteKeyboardItem : ItemType(
     override val options: @Composable (ItemConfig, (ItemConfig) -> Unit) -> Unit = { item, set ->
         ensureInitialized()
         val id by identityState.collectAsState()
+        val bridgeInfo by bridgeIdentityState.collectAsState()
         val devices by devicesState.collectAsState()
         val loading by loadingDevicesState.collectAsState()
         val statusMsg by statusMessageState.collectAsState()
@@ -1251,7 +1700,7 @@ object RemoteKeyboardItem : ItemType(
             )
             Spacer(Modifier.height(6.dp))
 
-            val desktopList = devices.filter { it.isDesktopTarget }
+            val desktopList = shortcutEligibleTargetsFor(item, devices)
             if (desktopList.isNotEmpty()) {
                 desktopList.forEach { dev ->
                     val isRecordingThis = recordingDeviceId == dev.id
@@ -1366,14 +1815,19 @@ object RemoteKeyboardItem : ItemType(
         Column(Modifier.fillMaxWidth().padding(vertical = 4.dp)) {
             Text("云服务器与设备列表状态 (共享 NetTransfer 凭证)", style = MaterialTheme.typography.labelLarge)
             Spacer(Modifier.height(4.dp))
+            val bridgeReady = bridgeInfo?.identityReady == true
             InfoRow(
                 label = "VPS 凭证状态",
-                value = if (id.isRegistered) "已注册 (${id.displayName.ifBlank { "本机" }})" else "未注册设备",
-                valueColor = if (id.isRegistered) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant,
+                value = when {
+                    id.isRegistered -> "已注册 (${id.displayName.ifBlank { "本机" }})"
+                    bridgeReady -> "已通过 VM 网桥接入 (${bridgeInfo?.selfDisplayName?.ifBlank { "googlebook" }})"
+                    else -> "未注册设备"
+                },
+                valueColor = if (id.isRegistered || bridgeReady) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant,
             )
             InfoRow(
-                label = "发现的桌面设备",
-                value = "${devices.count { it.isDesktopTarget }} 台 (${devices.count { it.isDesktopTarget && it.online }} 台在线)",
+                label = "可映射桌面设备",
+                value = "${devices.count { it.isKeyboardMenuVisible }} 台在线（已隐藏离线及 Linux 服务器）",
             )
             if (errorMsg != null) {
                 Text(

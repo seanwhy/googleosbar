@@ -673,6 +673,17 @@ data class VmTailnetFallback(
 )
 
 @Serializable
+data class VmBuiltInUpdaterState(
+    @SerialName("pending_target_version") val pendingTargetVersion: String = "",
+    @SerialName("previous_version") val previousVersion: String = "",
+    @SerialName("last_check_at") val lastCheckAt: String = "",
+    @SerialName("last_error") val lastError: String = "",
+    @SerialName("failure_count") val failureCount: Int = 0,
+    @SerialName("next_retry_at") val nextRetryAt: String = "",
+    val summary: String = "",
+)
+
+@Serializable
 data class VmNetTransferAgentStatus(
     val installed: Boolean = false,
     @SerialName("binary_exists") val binaryExists: Boolean = false,
@@ -688,8 +699,31 @@ data class VmNetTransferAgentStatus(
     val revoked: Boolean = false,
     @SerialName("has_backup") val hasBackup: Boolean = false,
     @SerialName("latest_backup") val latestBackup: String = "",
+    @SerialName("supports_auto_update") val supportsAutoUpdate: Boolean = false,
+    @SerialName("built_in_updater") val builtInUpdater: VmBuiltInUpdaterState? = null,
+    @SerialName("auto_update_note") val autoUpdateNote: String = "",
     @SerialName("recent_logs") val recentLogs: List<String> = emptyList(),
-)
+) {
+    val isV040OrNewer: Boolean
+        get() = supportsAutoUpdate || isSemverAtLeast(version, 0, 4, 0)
+
+    companion object {
+        internal fun isSemverAtLeast(raw: String, targetMajor: Int, targetMinor: Int, targetPatch: Int): Boolean {
+            val clean = raw.trim().removePrefix("v").removePrefix("V").substringBefore('-').substringBefore(' ')
+            if (clean.isEmpty()) return false
+            val parts = clean.split('.')
+            if (parts.size < 2) return false
+            val maj = parts[0].toIntOrNull() ?: return false
+            val min = parts[1].toIntOrNull() ?: return false
+            val pat = parts.getOrNull(2)?.toIntOrNull() ?: 0
+            return when {
+                maj != targetMajor -> maj > targetMajor
+                min != targetMinor -> min > targetMinor
+                else -> pat >= targetPatch
+            }
+        }
+    }
+}
 
 @Serializable
 data class VmTailnetStatusResponse(

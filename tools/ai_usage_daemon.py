@@ -89,6 +89,7 @@ import http.server
 
 
 import nettransfer_bridge
+import keyboard_bridge
 
 
 def start_server(port=SERVER_PORT):
@@ -819,6 +820,9 @@ def main():
     if not once:
         start_server(SERVER_PORT)
         print(f"Local quota responder listening on port {SERVER_PORT}")
+        kb_srv, _kb_thread = keyboard_bridge.start_keyboard_bridge_thread(keyboard_bridge.BRIDGE_PORT)
+        if kb_srv is not None:
+            print(f"Tailscale keyboard bridge listening on port {keyboard_bridge.BRIDGE_PORT}")
 
     while True:
         try:

@@ -23,11 +23,13 @@ import urllib.parse
 
 AGENTD_BIN = "/usr/local/bin/nettransfer-agentd"
 AGENT_CONFIG = "/etc/nettransfer/agent.json"
+AGENT_STATE_FILE = "/etc/nettransfer/updater/state-agentd.json"
 AGENT_SERVICE = "nettransfer-agentd"
 DEFAULT_VPS_URL = "https://vps.why.band"
 ALIYUN_TAILSCALE_IP = "100.79.26.61"
 MANIFEST_PATH = "/download/agent-manifest.json"
 MAX_BINARY_BYTES = 128 * 1024 * 1024
+AUTO_UPDATE_NOTE = "v0.4.0+ Agent 已内置随服务端自动静默更新；此处保留启停/重启/注册/手动触发与日志排查"
 
 _action_lock = threading.Lock()
 _SEMVER_RE = re.compile(r"\b(?:nettransfer-agent[d]?\s+)?v?(\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?)\b", re.IGNORECASE)
@@ -291,12 +293,112 @@ def _read_safe_agent_config() -> dict:
         return {"deviceId": "", "vpsUrl": DEFAULT_VPS_URL, "revoked": False}
 
 
-def _find_latest_backup() -> str:
-    candidates = glob.glob(AGENTD_BIN + ".bak.*")
+def _find_latest_backup(bin_path: str = AGENTD_BIN) -> str:
+    candidates = []
+    exact = bin_path + ".bak"
+    if os.path.exists(exact):
+        candidates.append(exact)
+    candidates.extend(glob.glob(bin_path + ".bak.*"))
     if not candidates:
         return ""
     candidates.sort(key=lambda p: os.path.getmtime(p), reverse=True)
     return candidates[0]
+
+
+def _format_short_iso(raw: str) -> str:
+    text = (raw or "").strip()
+    if not text:
+        return ""
+    try:
+        iso = text[:-1] + "+00:00" if text.endswith("Z") else text
+        dt = datetime.datetime.fromisoformat(iso)
+        if dt.tzinfo is not None:
+            dt = dt.astimezone()
+        return dt.strftime("%m-%d %H:%M")
+    except Exception:
+        return text[:16]
+
+
+def parse_built_in_updater_state_json(raw_json: str | None) -> dict | None:
+    if not raw_json or not raw_json.strip():
+        return None
+    try:
+        data = json.loads(raw_json)
+    except Exception:
+        return None
+    if not isinstance(data, dict):
+        return None
+
+    pending = str(data.get("pendingTargetVersion") or "").strip()
+    previous = str(data.get("previousVersion") or "").strip()
+    last_check = str(data.get("lastCheckAt") or "").strip()
+    last_error = str(data.get("lastError") or "").strip()
+
+    failure_count = 0
+    next_retry = ""
+    failure_error = ""
+    failures = data.get("failures")
+    if isinstance(failures, dict):
+        for entry in failures.values():
+            if not isinstance(entry, dict):
+                continue
+            try:
+                cnt = int(entry.get("count") or 0)
+            except (TypeError, ValueError):
+                cnt = 0
+            if cnt >= failure_count:
+                failure_count = cnt
+                next_retry = str(entry.get("nextRetryAt") or "").strip()
+                failure_error = str(entry.get("lastError") or "").strip()
+
+    if not last_error:
+        last_error = failure_error
+
+    if pending:
+        summary = f"待重启确认 v{pending}"
+    elif failure_count > 0:
+        retry_short = _format_short_iso(next_retry)
+        summary = (
+            f"自动更新退避中（失败 {failure_count} 次，下次 {retry_short}）"
+            if retry_short
+            else f"自动更新退避中（失败 {failure_count} 次）"
+        )
+    elif last_error:
+        summary = f"最近检查错误: {last_error}"
+    elif last_check:
+        summary = f"已启用内置自更新（上次检查 {_format_short_iso(last_check)}）"
+    else:
+        summary = "已启用内置自更新"
+
+    return {
+        "pending_target_version": pending,
+        "previous_version": previous,
+        "last_check_at": last_check,
+        "last_error": last_error,
+        "failure_count": failure_count,
+        "next_retry_at": next_retry,
+        "summary": summary,
+    }
+
+
+def _read_built_in_updater_state(state_path: str = AGENT_STATE_FILE) -> dict | None:
+    try:
+        if os.path.exists(state_path):
+            with open(state_path, "r", encoding="utf-8") as f:
+                return parse_built_in_updater_state_json(f.read())
+    except OSError:
+        pass
+
+    py = (
+        "import os, sys; p=%r\n"
+        "if os.path.exists(p):\n"
+        "  sys.stdout.write(open(p,'r',encoding='utf-8').read())"
+        % state_path
+    )
+    rc, out, _ = _run(["sudo", "-n", "python3", "-c", py], timeout=3.0)
+    if rc != 0 or not out:
+        return None
+    return parse_built_in_updater_state_json(out)
 
 
 def read_nettransfer_agent_status() -> dict:
@@ -322,6 +424,8 @@ def read_nettransfer_agent_status() -> dict:
     revoked = bool(cfg.get("revoked", False))
 
     latest_backup = _find_latest_backup()
+    supports_auto_update = bool(version) and compare_semver(version, "0.4.0") >= 0
+    built_in_updater = _read_built_in_updater_state()
     _, log_out, _ = _run(
         ["sudo", "-n", "journalctl", "-u", AGENT_SERVICE, "-n", "12", "--no-pager", "--output=short-iso"],
         timeout=4.0,
@@ -343,6 +447,9 @@ def read_nettransfer_agent_status() -> dict:
         "revoked": revoked,
         "has_backup": bool(latest_backup),
         "latest_backup": os.path.basename(latest_backup) if latest_backup else "",
+        "supports_auto_update": supports_auto_update,
+        "built_in_updater": built_in_updater,
+        "auto_update_note": AUTO_UPDATE_NOTE,
         "recent_logs": recent_logs,
     }
 

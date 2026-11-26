@@ -91,4 +91,28 @@ class TailnetItemTest {
         val unreachableState = TailnetUiSnapshot(vmReachable = false, vpsSummary = null)
         assertEquals(Tone.WARN, TailnetItem.buildState(unreachableState).tone)
     }
+
+    @Test fun parsesV040BuiltInUpdaterAndGeneratesSummary() {
+        val httpRaw = "HTTP/1.0 200 OK\r\nContent-Type: application/json\r\n\r\n" +
+            """{"updated_at":1795500500.0,"tailnet":{"available":true,"total_nodes":13,"online_nodes":11},"agent":{"installed":true,"binary_exists":true,"active":true,"enabled":true,"state":"active","pid":5120,"version":"0.4.0","arch":"arm64","vps_url":"https://vps.why.band","registered":true,"device_id":"b28f7bb3","revoked":false,"has_backup":true,"latest_backup":"nettransfer-agentd.bak","supports_auto_update":true,"auto_update_note":"v0.4.0+ Agent 已内置随服务端自动静默更新；此处保留启停/重启/注册/手动触发与日志排查","built_in_updater":{"pending_target_version":"","previous_version":"0.3.3","last_check_at":"2026-11-25T03:30:00Z","last_error":"","failure_count":0,"next_retry_at":"","summary":"已启用内置自更新（上次检查 11-25 11:30）"},"recent_logs":["healthy"]}}"""
+        val status = requireNotNull(TailnetVmBridge.parseStatus(httpRaw))
+        assertTrue(status.agent.isV040OrNewer)
+        assertTrue(status.agent.hasBackup)
+        assertEquals("nettransfer-agentd.bak", status.agent.latestBackup)
+        val updater = requireNotNull(status.agent.builtInUpdater)
+        assertEquals("0.3.3", updater.previousVersion)
+
+        val (summary, warn) = TailnetItem.builtInAutoUpdateSummary(status.agent)
+        assertFalse(warn)
+        assertEquals("已启用内置自更新（上次检查 11-25 11:30）", summary)
+
+        val tip = TailnetItem.buildState(TailnetUiSnapshot(vmReachable = true, vmStatus = status)).tooltip
+        assertTrue(tip?.contains("已启用内置自更新") == true)
+
+        val legacy = status.agent.copy(version = "0.3.3", supportsAutoUpdate = false, builtInUpdater = null)
+        assertFalse(legacy.isV040OrNewer)
+        val (legacySummary, legacyWarn) = TailnetItem.builtInAutoUpdateSummary(legacy)
+        assertTrue(legacyWarn)
+        assertTrue(legacySummary.contains("0.4.0"))
+    }
 }

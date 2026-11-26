@@ -11,6 +11,8 @@ import org.junit.Assert.fail
 import org.junit.Test
 import java.io.BufferedReader
 import java.io.ByteArrayOutputStream
+import java.nio.file.Files
+import java.io.File
 import java.io.InputStreamReader
 import java.net.DatagramPacket
 import java.net.DatagramSocket
@@ -1143,7 +1145,7 @@ class CloudClipboardTest {
             ),
         )
         assertEquals(
-            listOf("192.168.1.50", "192.168.64.1", "100.80.1.2"),
+            listOf("192.168.1.50", "100.80.1.2", "192.168.64.1"),
             mac.lanIpv4Addresses,
         )
         val session = RemoteKeyboardItem.ActiveSession(
@@ -1156,8 +1158,8 @@ class CloudClipboardTest {
             listOf(
                 DirectTargetEndpoint("10.0.0.2", 20001),
                 DirectTargetEndpoint("192.168.1.50", 20001),
-                DirectTargetEndpoint("192.168.64.1", 20001),
                 DirectTargetEndpoint("100.80.1.2", 20001),
+                DirectTargetEndpoint("192.168.64.1", 20001),
                 DirectTargetEndpoint("203.0.113.5", 20001),
             ),
             candidates,
@@ -1305,5 +1307,405 @@ class CloudClipboardTest {
             pool.shutdownNow()
         }
     }
-}
 
+    @Test
+    fun remoteDeviceSummaryExtractsTailscaleIpCandidatesAndRankWithoutPenalty() {
+        val rawJson = """
+            {
+              "id": "mac-ts-1",
+              "name": "Mac-mini",
+              "platform": "darwin",
+              "tailscaleIp": "100.92.145.10",
+              "sourceIp": "100.92.145.99",
+              "directPort": 19878,
+              "online": true,
+              "inventory": {
+                "os": "darwin",
+                "networks": [
+                  {"name": "tailscale0", "ipv4": ["100.64.12.34"]},
+                  {"name": "bridge100", "ipv4": ["192.168.64.1"]},
+                  {"name": "en0", "ipv4": ["192.168.1.25"]}
+                ]
+              }
+            }
+        """.trimIndent()
+        val dev = CloudClipboardProtocol.json.decodeFromString<RemoteDeviceSummary>(rawJson)
+        assertEquals("100.92.145.10", dev.tailscaleIp)
+        assertEquals(
+            listOf("100.92.145.10", "100.64.12.34", "100.92.145.99"),
+            dev.tailscaleIpCandidates(),
+        )
+        assertEquals(
+            listOf(
+                DirectTargetEndpoint("100.92.145.10", 19878),
+                DirectTargetEndpoint("100.64.12.34", 19878),
+                DirectTargetEndpoint("100.92.145.99", 19878),
+            ),
+            dev.candidateTailscaleEndpoints(),
+        )
+        assertTrue(RemoteKeyboardProtocol.isTailscaleIpv4("100.92.145.10"))
+        assertFalse(RemoteKeyboardProtocol.isTailscaleIpv4("192.168.1.25"))
+        // CGNAT & tailscale0 must NOT receive the +10 virtual bridge penalty
+        assertEquals(4, RemoteKeyboardProtocol.rankLanIpv4("100.64.12.34", "tailscale0"))
+        assertEquals(10, RemoteKeyboardProtocol.rankLanIpv4("192.168.64.1", "bridge100"))
+    }
+
+    @Test
+    fun remoteKeyboardTailscaleModeAndChannelBadgeFormatting() {
+        val dev = RemoteDeviceSummary(
+            id = "dev-win-ts",
+            name = "Workstation",
+            platform = "windows",
+            tailscaleIp = "100.88.1.5",
+            directPort = 19878,
+        )
+        val cfg = com.meridian11.books.bentobar.data.ItemConfig(id = "rk1", type = "remote_keyboard")
+            .with("transportMode", RemoteKeyboardProtocol.MODE_TAILSCALE)
+        assertEquals(RemoteKeyboardProtocol.MODE_TAILSCALE, RemoteKeyboardItem.transportModeOf(cfg))
+
+        val tsDirectBridge = VerifiedTailscaleBridge(
+            bridgeHost = "127.0.0.1",
+            targetEndpoint = DirectTargetEndpoint("100.88.1.5", 19878),
+            direct = true,
+            relay = "",
+            rttMs = 8,
+        )
+        val tsDirectSession = RemoteKeyboardItem.ActiveSession(
+            target = dev,
+            transportMode = RemoteKeyboardProtocol.MODE_TAILSCALE,
+            customDirectAddress = "100.77.77.7:19878",
+            channelKind = RemoteKeyboardItem.ChannelKind.TAILSCALE,
+            verifiedTailscaleBridge = tsDirectBridge,
+            lastRttMs = 8,
+        )
+        assertEquals("brand:remote_keyboard_direct", RemoteKeyboardItem.iconNameForSession(tsDirectSession))
+        assertEquals("TS 直连 · 8ms", RemoteKeyboardItem.shortChannelBadge(tsDirectSession))
+        assertEquals("TS 直连 (100.88.1.5:19878 · 8ms)", RemoteKeyboardItem.formatTailscaleChannelLabel(tsDirectBridge))
+        assertEquals(
+            listOf(
+                DirectTargetEndpoint("100.88.1.5", 19878),
+                DirectTargetEndpoint("100.77.77.7", 19878),
+            ),
+            RemoteKeyboardItem.tailscaleCandidatesFor(tsDirectSession),
+        )
+        assertEquals(
+            listOf(
+                DirectTargetEndpoint("100.77.77.7", 19878),
+                DirectTargetEndpoint("100.88.1.5", 19878),
+            ),
+            RemoteKeyboardItem.tailscaleCandidatesFor(tsDirectSession.copy(verifiedTailscaleBridge = null)),
+        )
+
+        val tsDerpSession = tsDirectSession.copy(
+            verifiedTailscaleBridge = tsDirectBridge.copy(direct = false, relay = "hkg", rttMs = 19),
+            lastRttMs = 19,
+        )
+        assertEquals("TS DERP · 19ms", RemoteKeyboardItem.shortChannelBadge(tsDerpSession))
+
+        val lanSession = tsDirectSession.copy(
+            verifiedTailscaleBridge = null,
+            channelKind = RemoteKeyboardItem.ChannelKind.DIRECT,
+            lastRttMs = 2,
+        )
+        assertEquals("LAN 直连 · 2ms", RemoteKeyboardItem.shortChannelBadge(lanSession))
+
+        val relaySession = tsDirectSession.copy(
+            verifiedTailscaleBridge = null,
+            channelKind = RemoteKeyboardItem.ChannelKind.RELAY,
+            lastRttMs = 0,
+        )
+        assertEquals("VPS 中转", RemoteKeyboardItem.shortChannelBadge(relaySession))
+    }
+
+    @Test
+    fun vmKeyboardBridgeClientPingAndForwardKeepAliveReuse() {
+        VmKeyboardBridgeClient.closeConnections()
+        val acceptedSockets = AtomicInteger(0)
+        val handledRequests = AtomicInteger(0)
+        val pool = Executors.newCachedThreadPool()
+        ServerSocket(0, 50, InetAddress.getByName("127.0.0.1")).use { server ->
+            val bridgePort = server.localPort
+            val serverThread = Thread {
+                while (!server.isClosed) {
+                    val client = try {
+                        server.accept()
+                    } catch (_: Exception) {
+                        break
+                    }
+                    acceptedSockets.incrementAndGet()
+                    Thread {
+                        client.use { sock ->
+                            val reader = BufferedReader(InputStreamReader(sock.getInputStream(), StandardCharsets.ISO_8859_1))
+                            val out = sock.getOutputStream()
+                            while (true) {
+                                val requestLine = reader.readLine() ?: break
+                                var contentLength = 0
+                                var closeRequested = false
+                                while (true) {
+                                    val line = reader.readLine() ?: break
+                                    if (line.isEmpty()) break
+                                    val lower = line.lowercase()
+                                    if (lower.startsWith("content-length:")) {
+                                        contentLength = line.substringAfter(':').trim().toIntOrNull() ?: 0
+                                    } else if (lower.startsWith("connection:") && lower.contains("close")) {
+                                        closeRequested = true
+                                    }
+                                }
+                                var read = 0
+                                val buf = CharArray(contentLength)
+                                while (read < contentLength) {
+                                    val n = reader.read(buf, read, contentLength - read)
+                                    if (n == -1) break
+                                    read += n
+                                }
+                                handledRequests.incrementAndGet()
+                                val bodyStr = when {
+                                    requestLine.startsWith("GET /health ") ->
+                                        "{\"ok\":true,\"port\":$bridgePort,\"tailscalePeers\":2,\"poolSize\":0}"
+                                    requestLine.startsWith("POST /keyboard/ping ") ->
+                                        "{\"ok\":true,\"host\":\"100.92.145.3\",\"port\":19878,\"deviceId\":\"mac-1\",\"rttMs\":7.4,\"via\":\"tailscale\",\"direct\":true,\"relay\":\"\",\"error\":\"\"}"
+                                    requestLine.startsWith("POST /keyboard/forward ") ->
+                                        "{\"ok\":true,\"accepted\":1,\"lastSeq\":11,\"rttMs\":5.8,\"error\":\"\"}"
+                                    else ->
+                                        "{\"ok\":false,\"error\":\"unknown\"}"
+                                }
+                                val bodyBytes = bodyStr.toByteArray(StandardCharsets.UTF_8)
+                                val connHdr = if (closeRequested) "close" else "keep-alive"
+                                val header = "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: ${bodyBytes.size}\r\nConnection: $connHdr\r\n\r\n"
+                                out.write(header.toByteArray(StandardCharsets.ISO_8859_1))
+                                out.write(bodyBytes)
+                                out.flush()
+                                if (closeRequested) break
+                            }
+                        }
+                    }.apply { isDaemon = true; start() }
+                }
+            }.apply { isDaemon = true; start() }
+
+            try {
+                val ep = DirectTargetEndpoint("100.92.145.3", 19878)
+                val outcome = VmKeyboardBridgeClient.probeTailscaleCandidates(
+                    candidates = listOf(ep),
+                    executor = pool,
+                    expectedDeviceId = "mac-1",
+                    bridgePort = bridgePort,
+                    bridgeHosts = listOf("127.0.0.1"),
+                )
+                assertTrue(outcome is TailscaleBridgeProbeOutcome.Connected)
+                val connected = (outcome as TailscaleBridgeProbeOutcome.Connected).bridge
+                assertEquals("127.0.0.1", connected.bridgeHost)
+                assertEquals(bridgePort, connected.bridgePort)
+                assertTrue(connected.direct)
+                assertTrue(connected.rttMs >= 1)
+
+                val f1 = VmKeyboardBridgeClient.sendForwardOverBridge(connected, "{\"events\":[{\"seq\":1}]}")
+                val f2 = VmKeyboardBridgeClient.sendForwardOverBridge(connected, "{\"events\":[{\"seq\":2}]}")
+                assertTrue(f1.ok)
+                assertTrue(f2.ok)
+                assertEquals(1, f1.accepted)
+                assertEquals(1, f2.accepted)
+                assertEquals(4, handledRequests.get())
+                // /health uses 1 short requestStream socket; /keyboard/ping + 2x /keyboard/forward share 1 Keep-Alive socket
+                assertTrue("Expected <= 2 sockets, got ${acceptedSockets.get()}", acceptedSockets.get() <= 2)
+            } finally {
+                VmKeyboardBridgeClient.closeConnections()
+                pool.shutdownNow()
+                server.close()
+                serverThread.join(1000)
+            }
+        }
+    }
+
+    @Test
+    fun remoteKeyboardPrefersTailscaleNameAndHidesUnsupportedOrOfflineDevices() {
+        val rawJson = """{
+          "devices": [
+            {"id":"win-online","displayName":"DESKTOP-9950","tailscaleName":"amd9950x3d","platform":"windows","online":true,"keyboardSupported":true,"keyboardActive":true},
+            {"id":"mac-online","displayName":"MacBook-Old","tailscaleName":"mac-mini","platform":"darwin","online":true,"keyboardSupported":true,"keyboardActive":true},
+            {"id":"win-offline","displayName":"OFFICE-PC","tailscaleName":"kelan235","platform":"windows","online":false,"keyboardSupported":true,"keyboardActive":false},
+            {"id":"linux-vps","displayName":"ali-vps","tailscaleName":"ali-derp","platform":"linux","online":true,"keyboardSupported":false,"keyboardActive":false},
+            {"id":"android-pad","displayName":"Pad","tailscaleName":"googlebook","platform":"android","online":true,"keyboardSupported":false,"keyboardActive":false}
+          ]
+        }"""
+        val parsed = RemoteKeyboardClient.parseDevicesPayload(rawJson, "self")
+        assertEquals(5, parsed.size)
+        val byId = parsed.associateBy { it.id }
+        assertEquals("amd9950x3d", byId["win-online"]!!.displayTitle)
+        assertEquals("mac-mini", byId["mac-online"]!!.displayTitle)
+
+        val menuVisible = RemoteKeyboardItem.menuTargetsFor(parsed)
+        assertEquals(listOf("amd9950x3d", "mac-mini"), menuVisible.map { it.displayTitle })
+
+        // Active mapped device stays visible even if offline briefly
+        val whileActive = RemoteKeyboardItem.menuTargetsFor(parsed, activeTargetId = "win-offline")
+        assertTrue(whileActive.any { it.id == "win-offline" })
+
+        // Shortcut config retains offline Windows/macOS targets when configured or capable
+        val shortcuts = RemoteKeyboardItem.shortcutEligibleTargetsFor(null, parsed)
+        assertEquals(setOf("win-online", "mac-online", "win-offline"), shortcuts.map { it.id }.toSet())
+    }
+
+    @Test
+    fun cloudClipboardStorePrefersRegisteredExternalOverPlaceholderAndBackfillsPrimary() {
+        val dir = Files.createTempDirectory("cc_store_recover").toFile()
+        try {
+            val primary = File(dir, "primary/cloud_clipboard_agent.json")
+            val external = File(dir, "external/agent.json")
+            primary.parentFile.mkdirs()
+            external.parentFile.mkdirs()
+
+            // Simulate post-reinstall unregistered placeholder in primary + surviving backup in external
+            primary.writeText("""{"vpsUrl":"https://vps.why.band","displayName":"Googlebook"}""")
+            external.writeText(
+                CloudClipboardProtocol.json.encodeToString(
+                    NetTransferIdentity(
+                        vpsUrl = "https://vps.why.band/",
+                        displayName = "googlebook",
+                        deviceId = "dev-surviving-1",
+                        privateKey = FIXTURE_KEY,
+                    )
+                )
+            )
+
+            val loaded = CloudClipboardStore.loadIdentityFromFiles(primary, listOf(external))
+            assertTrue(loaded.isRegistered)
+            assertEquals("dev-surviving-1", loaded.deviceId)
+            assertEquals("googlebook", loaded.displayName)
+
+            // Verify primary was backfilled
+            val primaryReloaded = CloudClipboardStore.loadIdentityFromFiles(primary, emptyList())
+            assertTrue(primaryReloaded.isRegistered)
+            assertEquals("dev-surviving-1", primaryReloaded.deviceId)
+        } finally {
+            dir.deleteRecursively()
+        }
+    }
+
+    @Test
+    fun cloudClipboardStoreSaveSyncsExternalAndClearsOnlyOnExplicitUnregister() {
+        val dir = Files.createTempDirectory("cc_store_save").toFile()
+        try {
+            val primary = File(dir, "primary/cloud_clipboard_agent.json")
+            val external = File(dir, "external/agent.json")
+            val registered = NetTransferIdentity(
+                vpsUrl = "https://vps.why.band",
+                displayName = "googlebook",
+                deviceId = "dev-1",
+                privateKey = FIXTURE_KEY,
+            )
+            CloudClipboardStore.saveIdentityToFiles(
+                identity = registered,
+                clearExternalOnUnregister = false,
+                primaryFile = primary,
+                externalWriteFiles = listOf(external),
+            )
+            assertTrue(primary.exists())
+            assertTrue(external.exists())
+
+            // Saving an unregistered URL-only update must NOT erase persisted external backup
+            val placeholder = NetTransferIdentity(vpsUrl = "https://vps.why.band", displayName = "googlebook")
+            CloudClipboardStore.saveIdentityToFiles(
+                identity = placeholder,
+                clearExternalOnUnregister = false,
+                primaryFile = primary,
+                externalWriteFiles = listOf(external),
+            )
+            assertTrue(external.exists())
+
+            // Explicit unbind deletes external backup as well
+            CloudClipboardStore.saveIdentityToFiles(
+                identity = placeholder,
+                clearExternalOnUnregister = true,
+                primaryFile = primary,
+                externalWriteFiles = listOf(external),
+            )
+            assertFalse(external.exists())
+        } finally {
+            dir.deleteRecursively()
+        }
+    }
+
+    @Test
+    fun vmKeyboardBridgeClientFetchesDevicesAndRelaysWithZeroLocalIdentity() {
+        val relayBodies = CopyOnWriteArrayList<String>()
+        ServerSocket(0, 50, InetAddress.getByName("127.0.0.1")).use { server ->
+            val bridgePort = server.localPort
+            val serverThread = Thread {
+                while (!server.isClosed) {
+                    val client = try {
+                        server.accept()
+                    } catch (_: Exception) {
+                        break
+                    }
+                    client.use { sock ->
+                        val reader = BufferedReader(InputStreamReader(sock.getInputStream(), StandardCharsets.ISO_8859_1))
+                        val requestLine = reader.readLine() ?: return@use
+                        var contentLength = 0
+                        while (true) {
+                            val line = reader.readLine() ?: break
+                            if (line.isEmpty()) break
+                            if (line.lowercase().startsWith("content-length:")) {
+                                contentLength = line.substringAfter(':').trim().toIntOrNull() ?: 0
+                            }
+                        }
+                        val bodyChars = CharArray(contentLength)
+                        var read = 0
+                        while (read < contentLength) {
+                            val n = reader.read(bodyChars, read, contentLength - read)
+                            if (n == -1) break
+                            read += n
+                        }
+                        val reqBody = String(bodyChars, 0, read)
+                        val respJson = when {
+                            requestLine.startsWith("GET /health ") ->
+                                "{\"ok\":true,\"port\":$bridgePort,\"identityReady\":true,\"selfDeviceId\":\"vm-self\",\"selfDisplayName\":\"googlebook\"}"
+                            requestLine.startsWith("GET /keyboard/devices ") ->
+                                "{\"ok\":true,\"selfDeviceId\":\"vm-self\",\"selfDisplayName\":\"googlebook\",\"devices\":[{\"id\":\"vm-self\",\"displayName\":\"Self\",\"platform\":\"android\",\"online\":true},{\"id\":\"win-9950\",\"displayName\":\"DESKTOP-9950\",\"tailscaleName\":\"amd9950x3d\",\"platform\":\"windows\",\"online\":true,\"keyboardSupported\":true,\"keyboardActive\":true}]}"
+                            requestLine.startsWith("POST /keyboard/relay ") -> {
+                                relayBodies.add(reqBody)
+                                "{\"ok\":true,\"accepted\":1,\"targetOnline\":true,\"queued\":1}"
+                            }
+                            else -> "{\"ok\":false,\"error\":\"not found\"}"
+                        }
+                        val bytes = respJson.toByteArray(StandardCharsets.UTF_8)
+                        val out = sock.getOutputStream()
+                        out.write("HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: ${bytes.size}\r\nConnection: close\r\n\r\n".toByteArray(StandardCharsets.ISO_8859_1))
+                        out.write(bytes)
+                        out.flush()
+                    }
+                }
+            }.apply { isDaemon = true; start() }
+
+            val pool = Executors.newFixedThreadPool(2)
+            try {
+                val res = VmKeyboardBridgeClient.fetchDevicesViaBridge(
+                    executor = pool,
+                    bridgePort = bridgePort,
+                    bridgeHosts = listOf("127.0.0.1"),
+                )
+                assertEquals("vm-self", res.selfDeviceId)
+                assertEquals("googlebook", res.selfDisplayName)
+                assertEquals(1, res.devices.size)
+                assertEquals("amd9950x3d", res.devices[0].displayTitle)
+
+                val relayRes = VmKeyboardBridgeClient.sendRelayViaBridge(
+                    request = RemoteKeyboardSendRequest(
+                        targetDeviceId = "win-9950",
+                        events = listOf(RemoteKeyboardEvent(seq = 1, action = "text", text = "hi")),
+                    ),
+                    executor = pool,
+                    bridgePort = bridgePort,
+                    bridgeHosts = listOf("127.0.0.1"),
+                )
+                assertEquals(1, relayRes.accepted)
+                assertTrue(relayRes.targetOnline)
+                assertEquals(1, relayBodies.size)
+            } finally {
+                VmKeyboardBridgeClient.closeConnections()
+                pool.shutdownNow()
+                server.close()
+                serverThread.join(1000)
+            }
+        }
+    }
+}

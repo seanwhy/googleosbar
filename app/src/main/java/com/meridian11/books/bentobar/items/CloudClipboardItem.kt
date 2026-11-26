@@ -2036,7 +2036,7 @@ object CloudClipboardItem : ItemType(
                                 displayName = id.displayName,
                             )
                             identityState.value = cleared
-                            CloudClipboardStore.saveIdentity(cleared)
+                            CloudClipboardStore.saveIdentity(cleared, clearExternalOnUnregister = true)
                             statusMessageState.value = "已清除本机设备注册凭证"
                             Ticker.refresh(type)
                         },

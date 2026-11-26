@@ -1904,10 +1904,20 @@ object CloudClipboardStore {
     private const val MAX_HISTORY = 25
 
     private val externalIdentityPaths = listOf(
+        "/storage/emulated/0/Codes/.nettransfer/agent.json",
+        "/storage/emulated/10/Codes/.nettransfer/agent.json",
+        "/storage/emulated/0/Documents/.nettransfer/agent.json",
         "/storage/emulated/10/.nettransfer/agent.json",
         "/storage/emulated/0/.nettransfer/agent.json",
-        "/storage/emulated/10/Android/data/com.meridian11.books.bentobar/files/cloud_clipboard_agent.json",
         "/storage/emulated/0/Android/data/com.meridian11.books.bentobar/files/cloud_clipboard_agent.json",
+        "/storage/emulated/10/Android/data/com.meridian11.books.bentobar/files/cloud_clipboard_agent.json",
+    )
+
+    private val externalBackupWritePaths = listOf(
+        "/storage/emulated/0/Codes/.nettransfer/agent.json",
+        "/storage/emulated/10/Codes/.nettransfer/agent.json",
+        "/storage/emulated/0/Android/data/com.meridian11.books.bentobar/files/cloud_clipboard_agent.json",
+        "/storage/emulated/10/Android/data/com.meridian11.books.bentobar/files/cloud_clipboard_agent.json",
     )
 
     private fun primaryIdentityFile(): File? =
@@ -1916,22 +1926,61 @@ object CloudClipboardStore {
     private fun historyFile(): File? =
         runCatching { File(Env.app.noBackupFilesDir, HISTORY_FILE) }.getOrNull()
 
-    fun loadIdentity(): NetTransferIdentity {
-        val candidates = buildList {
-            primaryIdentityFile()?.let { add(it) }
-            externalIdentityPaths.forEach { add(File(it)) }
+    private fun parseIdentityFile(file: File): NetTransferIdentity? {
+        if (!file.exists() || !file.canRead()) return null
+        val loaded = runCatching {
+            CloudClipboardProtocol.json.decodeFromString<NetTransferIdentity>(file.readText())
+        }.getOrNull() ?: return null
+        if (!loaded.isRegistered && loaded.sessionCookie.isBlank() && loaded.vpsUrl.isBlank()) {
+            return null
         }
-        for (file in candidates) {
-            if (file.exists() && file.canRead()) {
-                val loaded = runCatching {
-                    CloudClipboardProtocol.json.decodeFromString<NetTransferIdentity>(file.readText())
-                }.getOrNull()
-                if (loaded != null && (loaded.deviceId.isNotBlank() || loaded.vpsUrl.isNotBlank())) {
-                    return loaded.copy(
-                        vpsUrl = loaded.vpsUrl.ifBlank { CloudClipboardProtocol.DEFAULT_VPS_URL }.trimEnd('/'),
-                        displayName = CloudClipboardProtocol.normalizeDisplayName(loaded.displayName),
-                    )
+        return loaded.copy(
+            vpsUrl = loaded.vpsUrl.ifBlank { CloudClipboardProtocol.DEFAULT_VPS_URL }.trimEnd('/'),
+            displayName = CloudClipboardProtocol.normalizeDisplayName(loaded.displayName),
+        )
+    }
+
+    private fun writeAtomicJson(file: File, raw: String): Boolean {
+        return runCatching {
+            file.parentFile?.mkdirs()
+            val tmp = File(file.parentFile, "${file.name}.tmp")
+            tmp.writeText(raw)
+            if (!tmp.renameTo(file)) {
+                file.writeText(raw)
+                tmp.delete()
+            }
+            true
+        }.getOrDefault(false)
+    }
+
+    fun loadIdentity(): NetTransferIdentity = loadIdentityFromFiles(
+        primaryFile = primaryIdentityFile(),
+        externalFiles = externalIdentityPaths.map { File(it) },
+    )
+
+    internal fun loadIdentityFromFiles(
+        primaryFile: File?,
+        externalFiles: List<File>,
+    ): NetTransferIdentity {
+        val candidates = buildList {
+            primaryFile?.let { add(it to true) }
+            externalFiles.forEach { add(it to false) }
+        }
+        // Pass 1: Registered identity takes strict priority over unregistered vpsUrl placeholders.
+        for ((file, isPrimary) in candidates) {
+            val parsed = parseIdentityFile(file)
+            if (parsed != null && parsed.isRegistered) {
+                if (!isPrimary && primaryFile != null) {
+                    writeAtomicJson(primaryFile, CloudClipboardProtocol.json.encodeToString(parsed))
                 }
+                return parsed
+            }
+        }
+        // Pass 2: Fall back to session cookie / custom vpsUrl placeholder.
+        for ((file, _) in candidates) {
+            val parsed = parseIdentityFile(file)
+            if (parsed != null) {
+                return parsed
             }
         }
         return NetTransferIdentity(
@@ -1940,18 +1989,39 @@ object CloudClipboardStore {
         )
     }
 
-    fun saveIdentity(identity: NetTransferIdentity) {
+    fun saveIdentity(identity: NetTransferIdentity, clearExternalOnUnregister: Boolean = false) =
+        saveIdentityToFiles(
+            identity = identity,
+            clearExternalOnUnregister = clearExternalOnUnregister,
+            primaryFile = primaryIdentityFile(),
+            externalWriteFiles = externalBackupWritePaths.mapNotNull { path ->
+                val f = File(path)
+                val anchor = f.parentFile?.parentFile
+                if (anchor != null && anchor.exists()) f else null
+            },
+            externalClearFiles = externalIdentityPaths.map { File(it) },
+        )
+
+    internal fun saveIdentityToFiles(
+        identity: NetTransferIdentity,
+        clearExternalOnUnregister: Boolean = false,
+        primaryFile: File?,
+        externalWriteFiles: List<File>,
+        externalClearFiles: List<File> = externalWriteFiles,
+    ) {
         val normalized = identity.copy(
             vpsUrl = identity.vpsUrl.ifBlank { CloudClipboardProtocol.DEFAULT_VPS_URL }.trim().trimEnd('/'),
             displayName = CloudClipboardProtocol.normalizeDisplayName(identity.displayName),
         )
         val raw = CloudClipboardProtocol.json.encodeToString(normalized)
-        primaryIdentityFile()?.let { file ->
-            runCatching {
-                file.parentFile?.mkdirs()
-                val tmp = File(file.parentFile, "${file.name}.tmp")
-                tmp.writeText(raw)
-                tmp.renameTo(file)
+        primaryFile?.let { writeAtomicJson(it, raw) }
+        if (normalized.isRegistered) {
+            for (ext in externalWriteFiles) {
+                writeAtomicJson(ext, raw)
+            }
+        } else if (clearExternalOnUnregister) {
+            for (ext in externalClearFiles) {
+                runCatching { if (ext.exists()) ext.delete() }
             }
         }
     }
@@ -2042,6 +2112,7 @@ data class DirectTargetEndpoint(
 data class RemoteDeviceSummary(
     val id: String = "",
     val displayName: String = "",
+    val tailscaleName: String = "",
     val name: String = "",
     val hostname: String = "",
     val platform: String = "",
@@ -2050,23 +2121,39 @@ data class RemoteDeviceSummary(
     val arch: String = "",
     val agentVersion: String = "",
     val sourceIp: String = "",
+    val tailscaleIp: String = "",
     val online: Boolean = false,
     val revoked: Boolean = false,
     val directPort: Int = RemoteKeyboardProtocol.DEFAULT_DIRECT_PORT,
     val keyboardActive: Boolean = false,
+    val keyboardSupported: Boolean? = null,
     val lastSeenAt: String = "",
     val inventory: RemoteDeviceInventory = RemoteDeviceInventory(),
 ) {
     val displayTitle: String
-        get() = displayName.trim().ifBlank {
-            inventory.hostname.trim().ifBlank {
-                name.trim().ifBlank {
-                    hostname.trim().ifBlank {
-                        platformLabel
+        get() = tailscaleName.trim().ifBlank {
+            displayName.trim().ifBlank {
+                inventory.hostname.trim().ifBlank {
+                    name.trim().ifBlank {
+                        hostname.trim().ifBlank {
+                            platformLabel
+                        }
                     }
                 }
             }
         }
+
+    val isKeyboardCapable: Boolean
+        get() {
+            if (revoked) return false
+            if (keyboardActive) return true
+            if (keyboardSupported != null) return keyboardSupported
+            val lbl = platformLabel
+            return lbl == "Windows" || lbl == "macOS"
+        }
+
+    val isKeyboardMenuVisible: Boolean
+        get() = online && isKeyboardCapable
 
     val platformLabel: String
         get() {
@@ -2110,6 +2197,43 @@ data class RemoteDeviceSummary(
             .map { it.key }
     }
 
+    fun tailscaleIpCandidates(): List<String> {
+        val out = LinkedHashSet<String>()
+        val explicit = tailscaleIp.substringBefore('/').trim()
+        if (RemoteKeyboardProtocol.isTailscaleIpv4(explicit)) {
+            out.add(explicit)
+        }
+        for (net in inventory.networks) {
+            val lower = net.name.trim().lowercase(Locale.ROOT)
+            if (lower.startsWith("tailscale") || lower.startsWith("utun")) {
+                for (raw in (net.ipv4 + net.addresses)) {
+                    val ip = raw.substringBefore('/').trim()
+                    if (RemoteKeyboardProtocol.isTailscaleIpv4(ip)) {
+                        out.add(ip)
+                    }
+                }
+            }
+        }
+        for (net in inventory.networks) {
+            for (raw in (net.ipv4 + net.addresses)) {
+                val ip = raw.substringBefore('/').trim()
+                if (RemoteKeyboardProtocol.isTailscaleIpv4(ip)) {
+                    out.add(ip)
+                }
+            }
+        }
+        val src = sourceIp.substringBefore('/').trim()
+        if (RemoteKeyboardProtocol.isTailscaleIpv4(src)) {
+            out.add(src)
+        }
+        return out.toList()
+    }
+
+    fun candidateTailscaleEndpoints(): List<DirectTargetEndpoint> {
+        val port = if (directPort in 1..65535) directPort else RemoteKeyboardProtocol.DEFAULT_DIRECT_PORT
+        return tailscaleIpCandidates().map { ip -> DirectTargetEndpoint(ip, port) }
+    }
+
     val candidateDirectEndpoints: List<DirectTargetEndpoint>
         get() = candidateDirectEndpointsFor(RemoteKeyboardProtocol.currentLocalLanSubnets())
 
@@ -2120,6 +2244,11 @@ data class RemoteDeviceSummary(
         for (ip in rankedLanIpv4Addresses(localSubnets)) {
             if (seen.add("$ip:$port")) {
                 out.add(DirectTargetEndpoint(ip, port))
+            }
+        }
+        for (tsIp in tailscaleIpCandidates()) {
+            if (seen.add("$tsIp:$port")) {
+                out.add(DirectTargetEndpoint(tsIp, port))
             }
         }
         val src = sourceIp.trim()
@@ -2192,6 +2321,7 @@ data class RemoteKeyboardSendResponse(
 object RemoteKeyboardProtocol {
     const val DEFAULT_DIRECT_PORT = 19878
     const val MODE_AUTO = "auto"
+    const val MODE_TAILSCALE = "tailscale"
     const val MODE_RELAY = "relay"
     const val MODE_DIRECT = "direct"
 
@@ -2311,6 +2441,18 @@ object RemoteKeyboardProtocol {
         return best
     }
 
+    fun isTailscaleIpv4(ip: String): Boolean {
+        val parts = ip.trim().split('.')
+        if (parts.size != 4) return false
+        val octets = IntArray(4)
+        for (i in 0..3) {
+            val v = parts[i].toIntOrNull() ?: return false
+            if (v !in 0..255) return false
+            octets[i] = v
+        }
+        return octets[0] == 100 && octets[1] in 64..127
+    }
+
     fun isUsableLanIpv4(ip: String): Boolean {
         val parts = ip.trim().split('.')
         if (parts.size != 4) return false
@@ -2344,7 +2486,12 @@ object RemoteKeyboardProtocol {
             else -> 3
         }
         val cleanIface = ifaceName.trim().lowercase(Locale.ROOT)
-        val isVirtual = cleanIface.isNotEmpty() && VIRTUAL_IFACE_PREFIXES.any { cleanIface.startsWith(it) }
+        // Tailscale interfaces / 100.64.0.0/10 CGNAT addresses remain high-priority overlay links
+        // instead of being penalized +10 behind VM/container virtual bridges.
+        val isTailscaleOverlay = (a == 100 && b in 64..127) || cleanIface.startsWith("tailscale")
+        val isVirtual = !isTailscaleOverlay &&
+            cleanIface.isNotEmpty() &&
+            VIRTUAL_IFACE_PREFIXES.any { cleanIface.startsWith(it) }
         val base = if (isVirtual) subnetRank + 10 else subnetRank
         return base + subnetAffinityBonus(ip, localSubnets)
     }
@@ -2626,7 +2773,7 @@ object RemoteKeyboardClient {
         return rawList
             .filter { !it.revoked && it.id.isNotBlank() && it.id != selfDeviceId }
             .sortedWith(
-                compareByDescending<RemoteDeviceSummary> { it.isDesktopTarget }
+                compareByDescending<RemoteDeviceSummary> { it.isKeyboardCapable }
                     .thenByDescending { it.online }
                     .thenByDescending { it.keyboardActive }
                     .thenBy { it.displayTitle.lowercase(Locale.ROOT) }
@@ -2808,4 +2955,439 @@ object RemoteKeyboardClient {
         throw IllegalStateException("VPS 转发失败：$detail")
     }
 }
+// ============================================================================
+// Debian VM Tailscale Keyboard Bridge Client (HTTP/1.1 Keep-Alive on port 19879)
+// ============================================================================
 
+@Serializable
+data class VmKeyboardBridgeHealthResponse(
+    val ok: Boolean = false,
+    val port: Int = 0,
+    val tailscalePeers: Int = 0,
+    val poolSize: Int = 0,
+    val identityReady: Boolean = false,
+    val selfDeviceId: String = "",
+    val selfDisplayName: String = "",
+    val vpsUrl: String = "",
+)
+
+@Serializable
+data class VmKeyboardBridgeDevicesResponse(
+    val ok: Boolean = false,
+    val selfDeviceId: String = "",
+    val selfDisplayName: String = "",
+    val devices: List<RemoteDeviceSummary> = emptyList(),
+    val error: String = "",
+)
+
+@Serializable
+data class VmKeyboardBridgeRelayResponse(
+    val ok: Boolean = false,
+    val accepted: Int = 0,
+    val targetOnline: Boolean = false,
+    val queued: Int = 0,
+    val error: String = "",
+)
+
+data class VmKeyboardBridgeDevicesResult(
+    val bridgeHost: String,
+    val selfDeviceId: String,
+    val selfDisplayName: String,
+    val devices: List<RemoteDeviceSummary>,
+)
+
+@Serializable
+data class VmKeyboardBridgePingRequest(
+    val host: String,
+    val port: Int = RemoteKeyboardProtocol.DEFAULT_DIRECT_PORT,
+    val expectedDeviceId: String = "",
+)
+
+@Serializable
+data class VmKeyboardBridgePingResponse(
+    val ok: Boolean = false,
+    val host: String = "",
+    val port: Int = RemoteKeyboardProtocol.DEFAULT_DIRECT_PORT,
+    val deviceId: String = "",
+    val rttMs: Double = 0.0,
+    val via: String = "tailscale",
+    val direct: Boolean = false,
+    val relay: String = "",
+    val error: String = "",
+)
+
+@Serializable
+data class VmKeyboardBridgeForwardRequest(
+    val host: String,
+    val port: Int = RemoteKeyboardProtocol.DEFAULT_DIRECT_PORT,
+    val payload: String,
+)
+
+@Serializable
+data class VmKeyboardBridgeForwardResponse(
+    val ok: Boolean = false,
+    val accepted: Int = 0,
+    val lastSeq: Int = 0,
+    val rttMs: Double = 0.0,
+    val error: String = "",
+)
+
+data class VerifiedTailscaleBridge(
+    val bridgeHost: String,
+    val bridgePort: Int = VmKeyboardBridgeClient.BRIDGE_PORT,
+    val targetEndpoint: DirectTargetEndpoint,
+    val direct: Boolean = false,
+    val relay: String = "",
+    val rttMs: Int = 0,
+)
+
+data class TailscaleBridgeForwardResult(
+    val ok: Boolean,
+    val accepted: Int = 0,
+    val rttMs: Int = 0,
+    val detail: String = "",
+)
+
+sealed interface TailscaleBridgeProbeOutcome {
+    data class Connected(val bridge: VerifiedTailscaleBridge) : TailscaleBridgeProbeOutcome
+    data class BridgeUnreachable(val triedHosts: List<String>) : TailscaleBridgeProbeOutcome
+    data class TargetUnreachable(
+        val bridgeHost: String,
+        val endpoint: DirectTargetEndpoint,
+        val detail: String,
+    ) : TailscaleBridgeProbeOutcome
+}
+
+object VmKeyboardBridgeClient {
+    const val BRIDGE_PORT = 19879
+    private const val BRIDGE_HEALTH_CONNECT_MS = 280
+    private const val BRIDGE_HEALTH_READ_MS = 500
+    private const val BRIDGE_CONNECT_TIMEOUT_MS = 450
+    private const val BRIDGE_READ_TIMEOUT_MS = 1_800
+
+    val DEFAULT_BRIDGE_HOSTS: List<String> = listOf(
+        "127.0.0.1",
+        "10.192.190.115",
+        "10.192.190.62",
+        "localhost",
+    )
+
+    @Volatile
+    private var cachedBridgeHost: String? = null
+
+    private val persistentBridgeConnection = CloudClipboardClient.PersistentHttpConnection(
+        connectTimeoutMs = BRIDGE_CONNECT_TIMEOUT_MS,
+        readTimeoutMs = BRIDGE_READ_TIMEOUT_MS,
+        splitTlsFirstByte = false,
+        maxIdleMs = 60_000L,
+    )
+
+    fun closeConnections() {
+        persistentBridgeConnection.close()
+    }
+
+    internal fun candidateBridgeHosts(preferredHosts: List<String> = DEFAULT_BRIDGE_HOSTS): List<String> {
+        val out = LinkedHashSet<String>()
+        cachedBridgeHost?.takeIf { it.isNotBlank() }?.let { out.add(it) }
+        for (h in preferredHosts) {
+            val clean = h.trim()
+            if (clean.isNotEmpty()) out.add(clean)
+        }
+        return out.toList()
+    }
+
+    internal fun isBridgeHealthy(host: String, port: Int = BRIDGE_PORT): Boolean {
+        return try {
+            val resp = CloudClipboardClient.requestStream(
+                url = "http://$host:$port/health",
+                method = "GET",
+                splitTlsFirstByte = false,
+                connectTimeoutMs = BRIDGE_HEALTH_CONNECT_MS,
+                readTimeoutMs = BRIDGE_HEALTH_READ_MS,
+            )
+            if (resp.statusCode !in 200..299) return false
+            runCatching {
+                CloudClipboardProtocol.json.decodeFromString<VmKeyboardBridgeHealthResponse>(resp.bodyText).ok
+            }.getOrDefault(false)
+        } catch (_: Exception) {
+            false
+        }
+    }
+
+    fun discoverBridgeHost(
+        executor: ExecutorService,
+        bridgePort: Int = BRIDGE_PORT,
+        hosts: List<String> = candidateBridgeHosts(),
+    ): String? {
+        if (hosts.isEmpty()) return null
+        val cached = cachedBridgeHost?.takeIf { it in hosts }
+        if (cached != null && isBridgeHealthy(cached, bridgePort)) {
+            return cached
+        }
+        val futures = hosts.map { host ->
+            executor.submit(Callable {
+                runCatching { isBridgeHealthy(host, bridgePort) }.getOrDefault(false)
+            })
+        }
+        val waitBudgetMs = (BRIDGE_HEALTH_CONNECT_MS + BRIDGE_HEALTH_READ_MS + 100).toLong()
+        for ((idx, host) in hosts.withIndex()) {
+            val ok = runCatching { futures[idx].get(waitBudgetMs, TimeUnit.MILLISECONDS) }.getOrDefault(false)
+            if (ok) {
+                for (j in (idx + 1) until futures.size) {
+                    futures[j].cancel(true)
+                }
+                cachedBridgeHost = host
+                return host
+            }
+        }
+        cachedBridgeHost = null
+        return null
+    }
+
+    fun pingTargetOverBridge(
+        bridgeHost: String,
+        bridgePort: Int = BRIDGE_PORT,
+        target: DirectTargetEndpoint,
+        expectedDeviceId: String = "",
+    ): VmKeyboardBridgePingResponse {
+        val reqObj = VmKeyboardBridgePingRequest(
+            host = target.host,
+            port = target.port,
+            expectedDeviceId = expectedDeviceId,
+        )
+        val reqBytes = CloudClipboardProtocol.json.encodeToString(reqObj).toByteArray(StandardCharsets.UTF_8)
+        val startedNs = System.nanoTime()
+        return try {
+            val resp = persistentBridgeConnection.postJson(
+                url = "http://$bridgeHost:$bridgePort/keyboard/ping",
+                bodyBytes = reqBytes,
+                headersFactory = {
+                    mapOf("Content-Type" to "application/json; charset=utf-8")
+                },
+            )
+            val fallbackRtt = ((System.nanoTime() - startedNs) / 1_000_000.0).coerceAtLeast(1.0)
+            if (resp.statusCode !in 200..299) {
+                val detail = CloudClipboardProtocol.readErrorDetail(resp.bodyText, resp.statusCode, resp.reasonPhrase)
+                return VmKeyboardBridgePingResponse(
+                    ok = false,
+                    host = target.host,
+                    port = target.port,
+                    rttMs = fallbackRtt,
+                    error = detail,
+                )
+            }
+            val parsed = runCatching {
+                CloudClipboardProtocol.json.decodeFromString<VmKeyboardBridgePingResponse>(resp.bodyText)
+            }.getOrNull()
+            if (parsed == null) {
+                VmKeyboardBridgePingResponse(
+                    ok = false,
+                    host = target.host,
+                    port = target.port,
+                    rttMs = fallbackRtt,
+                    error = "invalid bridge ping JSON",
+                )
+            } else {
+                parsed.copy(rttMs = if (parsed.rttMs > 0.0) parsed.rttMs else fallbackRtt)
+            }
+        } catch (e: Exception) {
+            VmKeyboardBridgePingResponse(
+                ok = false,
+                host = target.host,
+                port = target.port,
+                error = e.message?.takeIf { it.isNotBlank() } ?: e.javaClass.simpleName,
+            )
+        }
+    }
+
+    fun probeTailscaleCandidates(
+        candidates: List<DirectTargetEndpoint>,
+        executor: ExecutorService,
+        expectedDeviceId: String = "",
+        bridgePort: Int = BRIDGE_PORT,
+        bridgeHosts: List<String> = candidateBridgeHosts(),
+    ): TailscaleBridgeProbeOutcome {
+        val discoveredHost = discoverBridgeHost(executor = executor, bridgePort = bridgePort, hosts = bridgeHosts)
+            ?: return TailscaleBridgeProbeOutcome.BridgeUnreachable(bridgeHosts)
+
+        var lastTarget = candidates.first()
+        var lastError = "目标未响应"
+        for (ep in candidates) {
+            lastTarget = ep
+            val pingRes = pingTargetOverBridge(
+                bridgeHost = discoveredHost,
+                bridgePort = bridgePort,
+                target = ep,
+                expectedDeviceId = expectedDeviceId,
+            )
+            if (pingRes.ok) {
+                val rtt = pingRes.rttMs.toInt().coerceAtLeast(1)
+                return TailscaleBridgeProbeOutcome.Connected(
+                    VerifiedTailscaleBridge(
+                        bridgeHost = discoveredHost,
+                        bridgePort = bridgePort,
+                        targetEndpoint = ep,
+                        direct = pingRes.direct,
+                        relay = pingRes.relay,
+                        rttMs = rtt,
+                    )
+                )
+            }
+            if (pingRes.error.isNotBlank()) {
+                lastError = pingRes.error
+            }
+        }
+        return TailscaleBridgeProbeOutcome.TargetUnreachable(
+            bridgeHost = discoveredHost,
+            endpoint = lastTarget,
+            detail = lastError,
+        )
+    }
+
+    fun sendForwardOverBridge(
+        bridge: VerifiedTailscaleBridge,
+        payloadJson: String,
+    ): TailscaleBridgeForwardResult {
+        val reqObj = VmKeyboardBridgeForwardRequest(
+            host = bridge.targetEndpoint.host,
+            port = bridge.targetEndpoint.port,
+            payload = payloadJson,
+        )
+        val reqBytes = CloudClipboardProtocol.json.encodeToString(reqObj).toByteArray(StandardCharsets.UTF_8)
+        val startedNs = System.nanoTime()
+        return try {
+            val resp = persistentBridgeConnection.postJson(
+                url = "http://${bridge.bridgeHost}:${bridge.bridgePort}/keyboard/forward",
+                bodyBytes = reqBytes,
+                headersFactory = {
+                    mapOf("Content-Type" to "application/json; charset=utf-8")
+                },
+            )
+            val measuredRtt = ((System.nanoTime() - startedNs) / 1_000_000.0).toInt().coerceAtLeast(1)
+            if (resp.statusCode !in 200..299) {
+                val detail = CloudClipboardProtocol.readErrorDetail(resp.bodyText, resp.statusCode, resp.reasonPhrase)
+                return TailscaleBridgeForwardResult(ok = false, rttMs = measuredRtt, detail = detail)
+            }
+            val parsed = runCatching {
+                CloudClipboardProtocol.json.decodeFromString<VmKeyboardBridgeForwardResponse>(resp.bodyText)
+            }.getOrNull()
+            if (parsed == null) {
+                TailscaleBridgeForwardResult(ok = false, rttMs = measuredRtt, detail = "invalid bridge forward JSON")
+            } else if (!parsed.ok) {
+                TailscaleBridgeForwardResult(
+                    ok = false,
+                    rttMs = parsed.rttMs.toInt().takeIf { it > 0 } ?: measuredRtt,
+                    detail = parsed.error.ifBlank { "bridge forward failed" },
+                )
+            } else {
+                TailscaleBridgeForwardResult(
+                    ok = true,
+                    accepted = parsed.accepted,
+                    rttMs = parsed.rttMs.toInt().takeIf { it > 0 } ?: measuredRtt,
+                )
+            }
+        } catch (e: Exception) {
+            TailscaleBridgeForwardResult(
+                ok = false,
+                detail = e.message?.takeIf { it.isNotBlank() } ?: e.javaClass.simpleName,
+            )
+        }
+    }
+
+    fun fetchBridgeHealth(host: String, port: Int = BRIDGE_PORT): VmKeyboardBridgeHealthResponse? {
+        return try {
+            val resp = CloudClipboardClient.requestStream(
+                url = "http://$host:$port/health",
+                method = "GET",
+                splitTlsFirstByte = false,
+                connectTimeoutMs = BRIDGE_HEALTH_CONNECT_MS,
+                readTimeoutMs = BRIDGE_HEALTH_READ_MS,
+            )
+            if (resp.statusCode !in 200..299) return null
+            CloudClipboardProtocol.json.decodeFromString<VmKeyboardBridgeHealthResponse>(resp.bodyText)
+        } catch (_: Exception) {
+            null
+        }
+    }
+
+    fun fetchDevicesViaBridge(
+        executor: ExecutorService? = null,
+        bridgePort: Int = BRIDGE_PORT,
+        bridgeHosts: List<String> = candidateBridgeHosts(),
+    ): VmKeyboardBridgeDevicesResult {
+        val discoveredHost = if (executor != null) {
+            discoverBridgeHost(executor = executor, bridgePort = bridgePort, hosts = bridgeHosts)
+        } else {
+            bridgeHosts.firstOrNull { isBridgeHealthy(it, bridgePort) }?.also { cachedBridgeHost = it }
+        } ?: throw IllegalStateException("本地 VM 网桥不可达")
+
+        val resp = CloudClipboardClient.requestStream(
+            url = "http://$discoveredHost:$bridgePort/keyboard/devices",
+            method = "GET",
+            splitTlsFirstByte = false,
+            connectTimeoutMs = 1_500,
+            readTimeoutMs = 6_000,
+        )
+        val parsed = runCatching {
+            CloudClipboardProtocol.json.decodeFromString<VmKeyboardBridgeDevicesResponse>(resp.bodyText)
+        }.getOrNull()
+        if (resp.statusCode !in 200..299 || parsed == null || !parsed.ok) {
+            val detail = parsed?.error?.takeIf { it.isNotBlank() }
+                ?: CloudClipboardProtocol.readErrorDetail(resp.bodyText, resp.statusCode, resp.reasonPhrase)
+            throw IllegalStateException("VM 网桥获取设备失败：$detail")
+        }
+        val filtered = parsed.devices
+            .filter { !it.revoked && it.id.isNotBlank() && it.id != parsed.selfDeviceId }
+            .sortedWith(
+                compareByDescending<RemoteDeviceSummary> { it.isKeyboardCapable }
+                    .thenByDescending { it.online }
+                    .thenByDescending { it.keyboardActive }
+                    .thenBy { it.displayTitle.lowercase(Locale.ROOT) }
+            )
+        return VmKeyboardBridgeDevicesResult(
+            bridgeHost = discoveredHost,
+            selfDeviceId = parsed.selfDeviceId,
+            selfDisplayName = parsed.selfDisplayName.ifBlank { "googlebook" },
+            devices = filtered,
+        )
+    }
+
+    fun sendRelayViaBridge(
+        request: RemoteKeyboardSendRequest,
+        executor: ExecutorService? = null,
+        bridgePort: Int = BRIDGE_PORT,
+        bridgeHosts: List<String> = candidateBridgeHosts(),
+    ): RemoteKeyboardSendResponse {
+        val discoveredHost = cachedBridgeHost?.takeIf { it in bridgeHosts }
+            ?: if (executor != null) {
+                discoverBridgeHost(executor = executor, bridgePort = bridgePort, hosts = bridgeHosts)
+            } else {
+                bridgeHosts.firstOrNull { isBridgeHealthy(it, bridgePort) }?.also { cachedBridgeHost = it }
+            }
+            ?: throw IllegalStateException("本地 VM 网桥不可达")
+
+        val bodyBytes = CloudClipboardProtocol.json.encodeToString(request).toByteArray(StandardCharsets.UTF_8)
+        val resp = persistentBridgeConnection.postJson(
+            url = "http://$discoveredHost:$bridgePort/keyboard/relay",
+            bodyBytes = bodyBytes,
+            headersFactory = {
+                mapOf("Content-Type" to "application/json; charset=utf-8")
+            },
+        )
+        val parsed = runCatching {
+            CloudClipboardProtocol.json.decodeFromString<VmKeyboardBridgeRelayResponse>(resp.bodyText)
+        }.getOrNull()
+        if (resp.statusCode !in 200..299 || parsed == null || !parsed.ok) {
+            if (resp.statusCode == 0 || resp.statusCode >= 502) {
+                cachedBridgeHost = null
+            }
+            val detail = parsed?.error?.takeIf { it.isNotBlank() }
+                ?: CloudClipboardProtocol.readErrorDetail(resp.bodyText, resp.statusCode, resp.reasonPhrase)
+            throw IllegalStateException("VM 网桥转发失败：$detail")
+        }
+        return RemoteKeyboardSendResponse(
+            accepted = parsed.accepted.takeIf { it > 0 } ?: request.events.size,
+            targetOnline = parsed.targetOnline,
+        )
+    }
+}

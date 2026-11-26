@@ -203,6 +203,23 @@ object TailnetItem : ItemType("tailnet", R.string.item_tailnet_title, "brand:tai
 
     override fun state(item: ItemConfig): ItemState = buildState(TailnetController.state.value)
 
+    internal const val AUTO_UPDATE_FALLBACK_NOTE =
+        "v0.4.0+ Agent 已内置随服务端自动静默更新；此处保留启停/重启/注册/手动触发与日志排查"
+
+    internal fun builtInAutoUpdateSummary(agent: VmNetTransferAgentStatus): Pair<String, Boolean> {
+        val updater = agent.builtInUpdater
+        return if (agent.isV040OrNewer) {
+            val hasWarn = updater != null && (updater.failureCount > 0 || updater.lastError.isNotBlank())
+            val label = updater?.summary?.takeIf { it.isNotBlank() }
+                ?: "v0.4.0+ 已内置随服务端自动静默更新"
+            label to hasWarn
+        } else if (agent.version.isNotBlank()) {
+            "当前 v${agent.version}，升级至 v0.4.0+ 后支持自动更新" to true
+        } else {
+            "v0.4.0+ Agent 已内置自动静默更新" to false
+        }
+    }
+
     internal fun buildState(snap: TailnetUiSnapshot): ItemState {
         val vps = snap.vpsSummary
         val vmTailnet = snap.vmStatus?.tailnet
@@ -241,11 +258,16 @@ object TailnetItem : ItemType("tailnet", R.string.item_tailnet_title, "brand:tai
             else -> "NetTransfer 已停止 (${agent.state})"
         }
         val tailnetDesc = if (online >= 0 && total >= 0) "$online/$total 节点在线" else "Tailnet 未就绪"
+        val updaterSummary = agent?.builtInUpdater?.summary?.takeIf { it.isNotBlank() }
         val tip = buildString {
             append("Tailscale ")
             append(tailnetDesc)
             append(" · ")
             append(agentDesc)
+            updaterSummary?.let {
+                append("\n")
+                append(it)
+            }
             vps?.topAlert?.takeIf { it.isNotBlank() }?.let {
                 append("\n告警: ")
                 append(it)
@@ -428,6 +450,13 @@ object TailnetItem : ItemType("tailnet", R.string.item_tailnet_title, "brand:tai
                     },
                     if (agent.registered && !agent.revoked) MaterialTheme.colorScheme.onSurface else MaterialTheme.colorScheme.error,
                 )
+                val (autoUpdateText, autoUpdateWarn) = builtInAutoUpdateSummary(agent)
+                InfoRow(
+                    "自动更新",
+                    autoUpdateText,
+                    if (autoUpdateWarn) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.primary,
+                )
+                MenuNote(agent.autoUpdateNote.takeIf { it.isNotBlank() } ?: AUTO_UPDATE_FALLBACK_NOTE)
 
                 snap.updateReply?.let { up ->
                     val updateLine = when {
